@@ -7,8 +7,17 @@ on:
   pull_request:
     branches:
       - main
-
-
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'
+        required: true
+        default: 'warning'
+        type: choice
+        options:
+        - info
+        - warning
+        - debug
 jobs:
   ubuntu-22-cmake-cpu-release:
     runs-on: ubuntu-22.04
