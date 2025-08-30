@@ -19,7 +19,7 @@ class GDLlama : public Node {
     GDCLASS(GDLlama, Node)
 
     private:
-        gpt_params params;
+        common_params params;
         bool should_output_prompt;
         std::string reverse_prompt;
         std::unique_ptr<LlamaRunner> llama_runner;

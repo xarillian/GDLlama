@@ -17,7 +17,7 @@ int main(int argc, char ** argv) {
     std::string prompt3 = "Hello world";
     std::cout << "Prompt 3: " << prompt3 << std::endl;
 
-    gpt_params params {gpt_params()};
+    common_params params {common_params()};
     params.model = "../../../models/mxbai-embed-large-v1.Q5_K_M.gguf";
     std::cout << "Model: " << params.model << std::endl;
 

@@ -11,7 +11,7 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <common/common.h>
-#include <common/json.hpp>
+#include <nlohmann/json.hpp>
 #include <common/json-schema-to-grammar.h>
 #include <cstdint>
 #include <memory>
@@ -132,7 +132,7 @@ void GDLlama::_bind_methods() {
 
 }
 
-GDLlama::GDLlama() : params {gpt_params()},
+GDLlama::GDLlama() : params {common_params()},
     reverse_prompt {""},
     llama_runner {new LlamaRunner(should_output_prompt)},
     should_output_prompt {true},

@@ -15,7 +15,7 @@ class GDEmbedding : public Node {
     GDCLASS(GDEmbedding, Node)
 
     private:
-        gpt_params params;
+        common_params params;
         std::unique_ptr<EmbeddingRunner> embedding_runner;
         Ref<Mutex> compute_embedding_mutex;
         Ref<Mutex> func_mutex;

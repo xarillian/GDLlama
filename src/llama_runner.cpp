@@ -17,6 +17,7 @@
 #endif
 #include <windows.h>
 #endif
+#include <log.h>
 
 LlamaRunner::LlamaRunner(
     bool should_output_prompt,
@@ -53,7 +54,7 @@ void LlamaRunner::llama_log_callback_logTee(ggml_log_level level, const char * t
 }
 
 std::string LlamaRunner::llama_generate_text(
-    std::string prompt, gpt_params params,
+    std::string prompt, common_params params,
     std::function<void(std::string)> on_generate_text_updated,
     std::function<void()> on_input_wait_started,
     std::function<void(std::string)> on_generate_text_finished
@@ -137,8 +138,8 @@ std::string LlamaRunner::llama_generate_text(
     LOG("%s: load the model and apply lora adapter, if any\n", __func__);
     std::tie(model, ctx) = llama_init_from_gpt_params(params);
     if (sparams.cfg_scale > 1.f) {
-        struct llama_context_params lparams = llama_context_params_from_gpt_params(params);
-        ctx_guidance = llama_new_context_with_model(model, lparams);
+        struct llama_context_params llama_params = llama_context_params_from_gpt_params(params);
+        ctx_guidance = llama_init_from_model(model, llama_params);
     }
 
     if (model == NULL) {
@@ -149,7 +150,7 @@ std::string LlamaRunner::llama_generate_text(
         return msg;
     }
 
-    const int n_ctx_train = llama_n_ctx_train(model);
+    const int n_ctx_train = llama_model_n_ctx_train(model);
     const int n_ctx = llama_n_ctx(ctx);
     LOG("n_ctx: %d\n", n_ctx);
 
@@ -190,7 +191,7 @@ std::string LlamaRunner::llama_generate_text(
     }
 
     const bool add_bos = llama_should_add_bos_token(model);
-    GGML_ASSERT(llama_add_eos_token(model) != 1);
+    GGML_ASSERT(llama_vocab_get_add_eos(llama_model_get_vocab(model)) != 1);
     LOG("add_bos: %d\n", add_bos);
 
     std::vector<llama_token> embd_inp;
@@ -208,7 +209,7 @@ std::string LlamaRunner::llama_generate_text(
 
     // Should not run without any tokens
     if (embd_inp.empty()) {
-        embd_inp.push_back(llama_token_bos(model));
+        embd_inp.push_back(llama_vocab_bos(llama_model_get_vocab(model)));
         LOG("embd_inp was considered empty and bos was added: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp).c_str());
     }
 
@@ -741,7 +742,7 @@ std::string LlamaRunner::llama_generate_text(
             }
 
             // deal with end of generation tokens in interactive mode
-            if (llama_token_is_eog(model, llama_sampling_last(ctx_sampling))) {
+            if (llama_vocab_is_eog(llama_model_get_vocab(model), llama_sampling_last(ctx_sampling))) {
                 LOG("found an EOG token\n");
 
                 if (params.interactive) {
@@ -849,7 +850,11 @@ std::string LlamaRunner::llama_generate_text(
         }
 
         // end of generation
-        if (!embd.empty() && llama_token_is_eog(model, embd.back()) && !(params.interactive)) {
+        if (
+            !embd.empty() &&
+            llama_vocab_is_eog(llama_model_get_vocab(model), embd.back()) &&
+            !(params.interactive)) 
+        {
             LOG(" [end of text]\n");
             break;
         }
@@ -872,7 +877,7 @@ std::string LlamaRunner::llama_generate_text(
 
     if (ctx_guidance) { llama_free(ctx_guidance); }
     llama_free(ctx);
-    llama_free_model(model);
+    llama_model_free(model);
 
     llama_sampling_free(ctx_sampling);
     llama_backend_free();

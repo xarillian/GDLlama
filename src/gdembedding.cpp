@@ -46,7 +46,7 @@ void GDEmbedding::_bind_methods() {
     ADD_SIGNAL(MethodInfo("similarity_cos_string_finished", PropertyInfo(Variant::FLOAT, "similarity")));
 }
 
-GDEmbedding::GDEmbedding() : params {gpt_params()},
+GDEmbedding::GDEmbedding() : params {common_params()},
     embedding_runner {new EmbeddingRunner()},
     glog {[](std::string s) {godot::UtilityFunctions::print(s.c_str());}},
     glog_verbose {[](std::string s) {godot::UtilityFunctions::print_verbose(s.c_str());}}

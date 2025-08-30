@@ -52,7 +52,7 @@ const char * LlavaRunner::sample(
     const llama_token id = llama_sampling_sample(ctx_sampling, ctx_llama, NULL);
     llama_sampling_accept(ctx_sampling, ctx_llama, id, true);
     static std::string ret;
-    if (llama_token_is_eog(llama_get_model(ctx_llama), id)) {
+    if (llama_vocab_is_eog(llama_model_get_vocab(llama_get_model(ctx_llama)), id)) {
         ret = "</s>";
     } else {
         ret = llama_token_to_piece(ctx_llama, id);
@@ -221,7 +221,7 @@ struct llama_model * LlavaRunner::llava_init(gpt_params * params) {
 
     llama_model_params model_params = llama_model_params_from_gpt_params(*params);
 
-    llama_model * model = llama_load_model_from_file(params->model.c_str(), model_params);
+    llama_model * model = llama_model_load_from_file(params->model.c_str(), model_params);
     if (model == NULL) {
         LOG_TEE("%s: error: unable to load model\n" , __func__);
         return NULL;
@@ -243,7 +243,7 @@ struct llava_context * LlavaRunner::llava_init_context(gpt_params * params, llam
     llama_context_params ctx_params = llama_context_params_from_gpt_params(*params);
     ctx_params.n_ctx           = params->n_ctx < 2048 ? 2048 : params->n_ctx; // we need a longer context size to process image embeddings
 
-    llama_context * ctx_llama = llama_new_context_with_model(model, ctx_params);
+    llama_context * ctx_llama = llama_init_from_model(model, ctx_params);
 
     if (ctx_llama == NULL) {
         LOG_TEE("%s: error: failed to create the llama_context\n" , __func__);
@@ -265,7 +265,7 @@ void LlavaRunner::llava_free(struct llava_context * ctx_llava) {
     }
 
     llama_free(ctx_llava->ctx_llama);
-    llama_free_model(ctx_llava->model);
+    llama_model_free(ctx_llava->model);
     llama_backend_free();
 }
 
@@ -370,7 +370,7 @@ std::string LlavaRunner::llava_generate_text_base64(
         }
     }
 
-    llama_free_model(model);
+    llama_model_free(model);
 
     on_generate_text_finished(generated_text);
 

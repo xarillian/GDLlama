@@ -87,10 +87,6 @@ set(src_files
   "src/llm_db.cpp"
   "src/register_types.hpp"
   "src/register_types.cpp"
-  "llama.cpp/examples/llava/llava.cpp"
-  "llama.cpp/examples/llava/llava.h"
-  "llama.cpp/examples/llava/clip.cpp"
-  "llama.cpp/examples/llava/clip.h"
 )
 
 if (APPLE)
