@@ -18,6 +18,7 @@
 #include <windows.h>
 #endif
 #include <log.h>
+#include <random>
 
 LlamaRunner::LlamaRunner(
     bool should_output_prompt,
@@ -64,13 +65,11 @@ std::string LlamaRunner::llama_generate_text(
     params.prompt = prompt;
     bool is_interacting = false;
 
-    llama_sampling_params & sparams = params.sparams;
-
-#ifndef LOG_DISABLE_LOGS
-//    log_set_target(log_filename_generator("main", "log"));
-    LOG("Log start\n");
-//    llama_log_set(llama_log_callback_logTee, nullptr);
-#endif // LOG_DISABLE_LOGS
+    #ifndef LOG_DISABLE_LOGS
+    //    log_set_target(log_filename_generator("main", "log"));
+        LOG("Log start\n");
+    //    llama_log_set(llama_log_callback_logTee, nullptr);
+    #endif // LOG_DISABLE_LOGS
 
     // TODO: Dump params ?
     //LOG("Params perplexity: %s\n", LOG_TOSTR(params.perplexity));
@@ -118,13 +117,13 @@ std::string LlamaRunner::llama_generate_text(
     LOG("%s: build = %d (%s)\n",      __func__, LLAMA_BUILD_NUMBER, LLAMA_COMMIT);
     LOG("%s: built with %s for %s\n", __func__, LLAMA_COMPILER, LLAMA_BUILD_TARGET);
 
-    if (params.seed == LLAMA_DEFAULT_SEED) {
-        params.seed = time(NULL);
+    if (params.sampling.seed == LLAMA_DEFAULT_SEED) {
+        params.sampling.seed = time(NULL);
     }
 
-    LOG("%s: seed  = %u\n", __func__, params.seed);
+    LOG("%s: seed  = %u\n", __func__, params.sampling.seed);
 
-    std::mt19937 rng(params.seed);
+    std::mt19937 rng(params.sampling.seed);
 
     LOG("%s: llama backend init\n", __func__);
     llama_backend_init();
@@ -137,7 +136,7 @@ std::string LlamaRunner::llama_generate_text(
     // load the model and apply lora adapter, if any
     LOG("%s: load the model and apply lora adapter, if any\n", __func__);
     std::tie(model, ctx) = llama_init_from_gpt_params(params);
-    if (sparams.cfg_scale > 1.f) {
+    if (params.sampling.cfg_scale > 1.f) {  // TODO where'd cfg_scale go?
         struct llama_context_params llama_params = llama_context_params_from_gpt_params(params);
         ctx_guidance = llama_init_from_model(model, llama_params);
     }
@@ -218,9 +217,10 @@ std::string LlamaRunner::llama_generate_text(
     int guidance_offset = 0;
     int original_prompt_len = 0;
     if (ctx_guidance) {
-        LOG("cfg_negative_prompt: \"%s\"\n", log_tostr(sparams.cfg_negative_prompt));
+        // TODO no seriously where is CFG
+        LOG("cfg_negative_prompt: \"%s\"\n", log_tostr(params.sampling.cfg_negative_prompt));
 
-        guidance_inp = ::llama_tokenize(ctx_guidance, sparams.cfg_negative_prompt, true, true);
+        guidance_inp = ::llama_tokenize(ctx_guidance, params.sampling.cfg_negative_prompt, true, true);
         LOG("guidance_inp tokenized: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx_guidance, guidance_inp).c_str());
 
         std::vector<llama_token> original_inp = ::llama_tokenize(ctx, params.prompt, true, true);
@@ -265,9 +265,9 @@ std::string LlamaRunner::llama_generate_text(
         llama_kv_cache_seq_rm(ctx, -1, n_matching_session_tokens, -1);
     }
 
-    LOGLN(
-            "recalculate the cached logits (check): embd_inp.empty() %s, n_matching_session_tokens %zu, embd_inp.size() %zu, session_tokens.size() %zu, embd_inp.size() %zu",
-            log_tostr(embd_inp.empty()), n_matching_session_tokens, embd_inp.size(), session_tokens.size(), embd_inp.size());
+    LOG_DBG("recalculate the cached logits (check): embd_inp.empty() %s, n_matching_session_tokens %zu, embd_inp.size() %zu, session_tokens.size() %zu, embd_inp.size() %zu\n",
+        log_tostr(embd_inp.empty()), n_matching_session_tokens, embd_inp.size(), session_tokens.size(), embd_inp.size()
+    );
 
     // if we will use the cache for the full prompt without reaching the end of the cache, force
     // reevaluation of the last token to recalculate the cached logits
@@ -303,7 +303,7 @@ std::string LlamaRunner::llama_generate_text(
 
         if (ctx_guidance) {
             LOG("\n");
-            LOG("%s: negative prompt: '%s'\n", __func__, sparams.cfg_negative_prompt.c_str());
+            LOG("%s: negative prompt: '%s'\n", __func__, params.sampling.cfg_negative_prompt.c_str());
             LOG("%s: number of tokens in negative prompt = %zu\n", __func__, guidance_inp.size());
             for (int i = 0; i < (int) guidance_inp.size(); i++) {
                 LOG("%6d -> '%s'\n", guidance_inp[i], llama_token_to_piece(ctx, guidance_inp[i]).c_str());
@@ -375,8 +375,8 @@ std::string LlamaRunner::llama_generate_text(
             }
         }
     }
-    LOG("sampling: \n%s\n", llama_sampling_print(sparams).c_str());
-    LOG("sampling order: \n%s\n", llama_sampling_order_print(sparams).c_str());
+    LOG("sampling: \n%s\n", llama_sampling_print(params.sampling).c_str());
+    LOG("sampling order: \n%s\n", llama_sampling_order_print(params.sampling).c_str());
     LOG("generate: n_ctx = %d, n_batch = %d, n_predict = %d, n_keep = %d\n", n_ctx, params.n_batch, params.n_predict, params.n_keep);
 
     // group-attention state
@@ -443,7 +443,7 @@ std::string LlamaRunner::llama_generate_text(
         antiprompt_ids.emplace_back(::llama_tokenize(ctx, antiprompt, false, true));
     }
 
-    struct llama_sampling_context * ctx_sampling = llama_sampling_init(sparams);
+    struct llama_sampling_context * ctx_sampling = llama_sampling_init(params.sampling);
     if (!ctx_sampling) {
         fprintf(stderr, "%s: failed to initialize sampling subsystem\n", __func__);
         std::string msg = std::string(__func__) + ": failed to initialize sampling subsystem";

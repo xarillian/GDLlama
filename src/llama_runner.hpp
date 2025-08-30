@@ -24,7 +24,7 @@ class LlamaRunner {
         static void llama_log_callback_logTee(ggml_log_level level, const char * text, void * user_data);
         std::string llama_generate_text(
             std::string prompt,
-            gpt_params params,
+            common_params params,
             std::function<void(std::string)> on_generate_text_updated,
             std::function<void()> on_input_wait_started,
             std::function<void(std::string)> on_generate_text_finished
