@@ -337,7 +337,6 @@ std::string LlavaRunner::llava_generate_text_base64(
             on_generate_text_updated
         );
 
-        llama_print_timings(ctx_llava->ctx_llama);
         llava_image_embed_free(image_embed);
         ctx_llava->model = NULL;
         llava_free(ctx_llava);
@@ -363,7 +362,6 @@ std::string LlavaRunner::llava_generate_text_base64(
                 on_generate_text_updated
             );
 
-            llama_print_timings(ctx_llava->ctx_llama);
             llava_image_embed_free(image_embed);
             ctx_llava->model = NULL;
             llava_free(ctx_llava);

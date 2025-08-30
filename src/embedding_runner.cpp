@@ -215,7 +215,6 @@ std::vector<float> EmbeddingRunner::compute_embedding(
     }
 
     // clean up
-    // llama_print_timings(ctx); // Function not defined or unavailable with no clear replacement
     llama_batch_free(batch);
     llama_free(ctx);
     llama_model_free(model);
