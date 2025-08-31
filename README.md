@@ -483,7 +483,7 @@ Run `cmake`.
 
 On Windows:
 ```
-cmake .. -GNinja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_CXX_FLAGS="/EHsc" -DLLAMA_NATIVE=OFF -DLLAMA_VULKAN=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DCMAKE_BUILD_TYPE=Release
+cmake --preset windows-vulkan-release ..
 ```
 
 On Linux:
