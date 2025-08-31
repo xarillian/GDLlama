@@ -76,14 +76,10 @@ set(src_files
   "src/gdembedding.cpp"
   "src/gdllama.hpp"
   "src/gdllama.cpp"
-  "src/gdllava.hpp"
-  "src/gdllava.cpp"
   "src/embedding_runner.hpp"
   "src/embedding_runner.cpp"
   "src/llama_runner.hpp"
   "src/llama_runner.cpp"
-  "src/llava_runner.hpp"
-  "src/llava_runner.cpp"
   "src/llm_db.hpp"
   "src/llm_db.cpp"
   "src/register_types.hpp"
@@ -153,19 +149,6 @@ target_link_libraries(embedding_runner_test PRIVATE godot-cpp common llama)
 add_test(
   NAME embedding_runner_test
   COMMAND embedding_runner_test
-)
-
-set(llava_runnner_test_files
-  "test/src/llava_runner_test.cpp"
-)
-
-add_executable(llava_runner_test ${llava_runnner_test_files} ${src_files})
-
-target_link_libraries(llava_runner_test PRIVATE godot-cpp common llama)
-
-add_test(
-  NAME llava_runner_test
-  COMMAND llava_runner_test
 )
 
 set(sqlite_test_files
