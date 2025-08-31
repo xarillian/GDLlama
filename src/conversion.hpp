@@ -9,13 +9,13 @@
 
 namespace godot {
 
-std::vector<float> float32_array_to_vec(PackedFloat32Array array);
-PackedFloat32Array float32_vec_to_array(std::vector<float> vec);
+    std::vector<float> float32_array_to_vec(PackedFloat32Array array);
+    PackedFloat32Array float32_vec_to_array(std::vector<float> vec);
 
-std::string string_gd_to_std(String s);
-String string_std_to_gd(std::string s);
+    std::string string_gd_to_std(String s);
+    String string_std_to_gd(std::string s);
 
-bool is_utf8(const char * string);
+    bool is_utf8(const char * string);
 
 } //namespace godot
 

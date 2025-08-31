@@ -5,21 +5,22 @@
 #include <string>
 
 int main(int argc, char ** argv) {
-    //Calling godot::String produces user mode data execution error exception
-    //Probably need the full engine to call godot-related classes
-    //Only test non-godot classes here
-    //godot::String prompt;
+    // Calling godot::String produces user mode data execution error exception
+    // Probably need the full engine to call godot-related classes
+    // Only test non-Godot classes here
+    // godot::String prompt;
 
     std::cout << "Start testing: " << std::endl;
 
-    std::unique_ptr<LlamaRunner> lr {new LlamaRunner()};
+    std::unique_ptr<LlamaRunner> lr {new LlamaRunner(false, [](std::string msg) {})}; 
     std::cout << "Created llama runner" << std::endl;
 
-    std::string prompt = "Tell me about vulkan: ";
+    std::string prompt = "Tell me about Vulkan: ";
     std::cout << "Prompt: " << prompt << std::endl;
 
-    gpt_params params1 {gpt_params()};
-    std::cout << "Model: " << params1.model << std::endl;
+    // First test: no model path provided, should fail to load
+    common_params params1 {common_params()};
+    std::cout << "Model path: " << params1.model.path << std::endl;
 
     std::string text1 = lr->llama_generate_text(prompt, params1, [](auto a) {}, []() {}, [](auto a){});
     std::cout << "Generated text: " << text1 << std::endl;
@@ -28,9 +29,10 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    gpt_params params2 {gpt_params()};
-    params2.model = "../../../models/Meta-Llama-3-8B-Instruct.Q5_K_M.gguf";
-    std::cout << "Model: " << params2.model << std::endl;
+    // Second test: a valid model path is set
+    common_params params2 {common_params()};
+    params2.model.path = "../../../models/Meta-Llama-3-8B-Instruct.Q5_K_M.gguf";
+    std::cout << "Model path: " << params2.model.path << std::endl;
     params2.n_predict = 10;
 
     std::string text2 = lr->llama_generate_text(prompt, params2, [](auto a) {}, []() {}, [](auto a){});

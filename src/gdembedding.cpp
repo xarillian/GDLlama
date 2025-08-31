@@ -46,7 +46,7 @@ void GDEmbedding::_bind_methods() {
     ADD_SIGNAL(MethodInfo("similarity_cos_string_finished", PropertyInfo(Variant::FLOAT, "similarity")));
 }
 
-GDEmbedding::GDEmbedding() : params {gpt_params()},
+GDEmbedding::GDEmbedding() : params {common_params()},
     embedding_runner {new EmbeddingRunner()},
     glog {[](std::string s) {godot::UtilityFunctions::print(s.c_str());}},
     glog_verbose {[](std::string s) {godot::UtilityFunctions::print_verbose(s.c_str());}}
@@ -99,19 +99,19 @@ void GDEmbedding::_exit_tree() {
 }
 
 String GDEmbedding::get_model_path() const {
-    return string_std_to_gd(params.model);
+    return string_std_to_gd(params.model.path);
 }
 
 void GDEmbedding::set_model_path(const String p_model_path) {
-    params.model = string_gd_to_std(p_model_path.trim_prefix(String("res://")));
+    params.model.path = string_gd_to_std(p_model_path.trim_prefix(String("res://")));
 }
 
 int32_t GDEmbedding::get_n_threads() const {
-    return params.n_threads;
+    return params.cpuparams.n_threads;
 }
 
 void GDEmbedding::set_n_threads(const int32_t p_n_threads) {
-    params.n_threads = p_n_threads;
+    params.cpuparams.n_threads = p_n_threads;
 }
 
 int32_t GDEmbedding::get_n_gpu_layer() const {

@@ -1,5 +1,6 @@
-cmake_minimum_required(VERSION 3.22)
-
+cmake_minimum_required(VERSION 3.14) # for add_link_options and implicit target directories.
+project("llama.cpp" C CXX)
+include(CheckIncludeFileCXX)
 project(gdllm)
 
 include(CTest)
@@ -61,7 +62,9 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 add_subdirectory(godot-cpp)
-add_subdirectory(llama.cpp EXCLUDE_FROM_ALL)
+set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
+set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
+add_subdirectory(llama.cpp)
 
 set(src_files
   "src/sqlite3.c"
@@ -75,22 +78,14 @@ set(src_files
   "src/gdembedding.cpp"
   "src/gdllama.hpp"
   "src/gdllama.cpp"
-  "src/gdllava.hpp"
-  "src/gdllava.cpp"
   "src/embedding_runner.hpp"
   "src/embedding_runner.cpp"
   "src/llama_runner.hpp"
   "src/llama_runner.cpp"
-  "src/llava_runner.hpp"
-  "src/llava_runner.cpp"
   "src/llm_db.hpp"
   "src/llm_db.cpp"
   "src/register_types.hpp"
   "src/register_types.cpp"
-  "llama.cpp/examples/llava/llava.cpp"
-  "llama.cpp/examples/llava/llava.h"
-  "llama.cpp/examples/llava/clip.cpp"
-  "llama.cpp/examples/llava/clip.h"
 )
 
 if (APPLE)
@@ -109,6 +104,15 @@ string(TOLOWER ${LIB_NAME} LIB_NAME)
 add_library(${LIB_NAME} SHARED ${src_files})
 
 target_link_libraries(${LIB_NAME} PRIVATE godot-cpp common llama)
+
+target_include_directories(${LIB_NAME} PRIVATE
+  src
+  llama.cpp
+  llama.cpp/common
+  llama.cpp/src
+  llama.cpp/vendor
+  godot-cpp
+)
 
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/install)
 
@@ -140,6 +144,15 @@ add_executable(llama_runner_test ${llama_runnner_test_files} ${src_files})
 
 target_link_libraries(llama_runner_test PRIVATE godot-cpp common llama)
 
+target_include_directories(llama_runner_test PRIVATE
+  src
+  llama.cpp
+  llama.cpp/common
+  llama.cpp/src
+  llama.cpp/vendor
+  godot-cpp
+)
+
 add_test(
   NAME llama_runner_test
   COMMAND llama_runner_test
@@ -153,22 +166,18 @@ add_executable(embedding_runner_test ${embedding_runnner_test_files} ${src_files
 
 target_link_libraries(embedding_runner_test PRIVATE godot-cpp common llama)
 
+target_include_directories(embedding_runner_test PRIVATE
+  src
+  llama.cpp
+  llama.cpp/common
+  llama.cpp/src
+  llama.cpp/vendor
+  godot-cpp
+)
+
 add_test(
   NAME embedding_runner_test
   COMMAND embedding_runner_test
-)
-
-set(llava_runnner_test_files
-  "test/src/llava_runner_test.cpp"
-)
-
-add_executable(llava_runner_test ${llava_runnner_test_files} ${src_files})
-
-target_link_libraries(llava_runner_test PRIVATE godot-cpp common llama)
-
-add_test(
-  NAME llava_runner_test
-  COMMAND llava_runner_test
 )
 
 set(sqlite_test_files

@@ -5,7 +5,7 @@
 
 int main(int argc, char ** argv) {
     std::cout << "Start testing: " << std::endl;
-    std::unique_ptr<EmbeddingRunner> er {new EmbeddingRunner()};
+    std::unique_ptr<EmbeddingRunner> er {new EmbeddingRunner([](std::string msg) {})};
     std::cout << "Created llama embedding runner" << std::endl;
 
     std::string prompt1 = "Godot engine";
@@ -17,9 +17,9 @@ int main(int argc, char ** argv) {
     std::string prompt3 = "Hello world";
     std::cout << "Prompt 3: " << prompt3 << std::endl;
 
-    gpt_params params {gpt_params()};
-    params.model = "../../../models/mxbai-embed-large-v1.Q5_K_M.gguf";
-    std::cout << "Model: " << params.model << std::endl;
+    common_params params {common_params()};
+    params.model.path = "../../../models/mxbai-embed-large-v1.Q5_K_M.gguf";
+    std::cout << "Model: " << params.model.path << std::endl;
 
     std::vector<float> v1 = er->compute_embedding(prompt1, params, [](auto a){});
 

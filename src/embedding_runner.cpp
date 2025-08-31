@@ -3,6 +3,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <random>
 
 EmbeddingRunner::EmbeddingRunner(
     std::function<void(std::string)> glog
@@ -23,13 +24,19 @@ std::vector<std::string> EmbeddingRunner::split_lines(const std::string & s) {
 void EmbeddingRunner::batch_add_seq(llama_batch & batch, const std::vector<int32_t> & tokens, llama_seq_id seq_id) {
     size_t n_tokens = tokens.size();
     for (size_t i = 0; i < n_tokens; i++) {
-        llama_batch_add(batch, tokens[i], i, { seq_id }, true);
+        common_batch_add(batch, tokens[i], i, { seq_id }, true);
     }
 }
 
-void EmbeddingRunner::batch_decode(llama_context * ctx, llama_batch & batch, float * output, int n_seq, int n_embd) {
-    // clear previous kv_cache values (irrelevant for embeddings)
-    llama_kv_cache_clear(ctx);
+void EmbeddingRunner::batch_decode(
+    llama_context * ctx,
+    llama_batch & batch,
+    float * output,
+    int n_seq,
+    int n_embd,
+    const common_params& params
+) {    
+    llama_memory_clear(llama_get_memory(ctx), true);
 
     // run model
     fprintf(stderr, "%s: n_tokens = %d, n_seq = %d\n", __func__, batch.n_tokens, n_seq);
@@ -53,13 +60,13 @@ void EmbeddingRunner::batch_decode(llama_context * ctx, llama_batch & batch, flo
             fprintf(stdout, "%9.6f ", embd[hh]);
         }
         fprintf(stdout, "\n");*/
-        llama_embd_normalize(embd, out, n_embd);
+        common_embd_normalize(embd, out, n_embd, params.embd_normalize);
     }
 }
 
 std::vector<float> EmbeddingRunner::compute_embedding(
     std::string prompt,
-    gpt_params params,
+    common_params params,
     std::function<void(std::vector<float>)> on_compute_finished
 ) {
     params.prompt = prompt;
@@ -70,13 +77,13 @@ std::vector<float> EmbeddingRunner::compute_embedding(
 
     print_build_info();
 
-    if (params.seed == LLAMA_DEFAULT_SEED) {
-        params.seed = time(NULL);
+    if (params.sampling.seed == LLAMA_DEFAULT_SEED) {
+        params.sampling.seed = time(NULL);
     }
 
-    fprintf(stderr, "%s: seed  = %u\n", __func__, params.seed);
+    fprintf(stderr, "%s: seed  = %u\n", __func__, params.sampling.seed);
 
-    std::mt19937 rng(params.seed);
+    std::mt19937 rng(params.sampling.seed);
 
     llama_backend_init();
     llama_numa_init(params.numa);
@@ -85,7 +92,9 @@ std::vector<float> EmbeddingRunner::compute_embedding(
     llama_context * ctx;
 
     // load the model
-    std::tie(model, ctx) = llama_init_from_gpt_params(params);
+    common_init_result result = common_init_from_params(params);
+    model = result.model.get();
+    ctx = result.context.get();
     if (model == NULL) {
         fprintf(stderr, "%s: error: unable to load model\n", __func__);
         std::string msg = std::string(__func__) + ": error: unable to load model";
@@ -94,7 +103,7 @@ std::vector<float> EmbeddingRunner::compute_embedding(
         return std::vector<float> {};
     }
 
-    const int n_ctx_train = llama_n_ctx_train(model);
+    const int n_ctx_train = llama_model_n_ctx_train(model);
     const int n_ctx = llama_n_ctx(ctx);
 
     const enum llama_pooling_type pooling_type = llama_pooling_type(ctx);
@@ -111,7 +120,7 @@ std::vector<float> EmbeddingRunner::compute_embedding(
     // print system information
     {
         fprintf(stderr, "\n");
-        fprintf(stderr, "%s\n", gpt_params_get_system_info(params).c_str());
+        fprintf(stderr, "%s\n", common_params_get_system_info(params).c_str());
     }
 
     // split the prompt into lines
@@ -125,7 +134,7 @@ std::vector<float> EmbeddingRunner::compute_embedding(
     // tokenize the prompts and trim
     std::vector<std::vector<int32_t>> inputs;
     for (const auto & prompt : prompts) {
-        auto inp = ::llama_tokenize(ctx, prompt, true, false);
+        auto inp = common_tokenize(ctx, prompt, true, false);
         if (inp.size() > n_batch) {
             fprintf(stderr, "%s: error: number of tokens in input line (%lld) exceeds batch size (%lld), increase batch size and re-run\n",
                     __func__, (long long int) inp.size(), (long long int) n_batch);
@@ -140,9 +149,9 @@ std::vector<float> EmbeddingRunner::compute_embedding(
     // check if the last token is SEP
     // it should be automatically added by the tokenizer when 'tokenizer.ggml.add_eos_token' is set to 'true'
     for (auto & inp : inputs) {
-        if (inp.empty() || inp.back() != llama_token_sep(model)) {
+        if (inp.empty() || inp.back() != llama_vocab_sep(llama_model_get_vocab(model))) {
             fprintf(stderr, "%s: warning: last token in the prompt is not SEP\n", __func__);
-            fprintf(stderr, "%s:          'tokenizer.ggml.add_eos_token' should be set to 'true' in the GGUF header\n", __func__);
+            fprintf(stderr, "%s:           'tokenizer.ggml.add_eos_token' should be set to 'true' in the GGUF header\n", __func__);
         }
     }
 
@@ -152,7 +161,7 @@ std::vector<float> EmbeddingRunner::compute_embedding(
             fprintf(stderr, "%s: prompt %d: '%s'\n", __func__, i, prompts[i].c_str());
             fprintf(stderr, "%s: number of tokens in prompt = %zu\n", __func__, inputs[i].size());
             for (int j = 0; j < (int) inputs[i].size(); j++) {
-                fprintf(stderr, "%6d -> '%s'\n", inputs[i][j], llama_token_to_piece(ctx, inputs[i][j]).c_str());
+                fprintf(stderr, "%6d -> '%s'\n", inputs[i][j], common_token_to_piece(ctx, inputs[i][j]).c_str());
             }
             fprintf(stderr, "\n\n");
         }
@@ -163,7 +172,7 @@ std::vector<float> EmbeddingRunner::compute_embedding(
     struct llama_batch batch = llama_batch_init(n_batch, 0, 1);
 
     // allocate output
-    const int n_embd = llama_n_embd(model);
+    const int n_embd = llama_model_n_embd(model);
     std::vector<float> embeddings(n_prompts * n_embd, 0);
     float * emb = embeddings.data();
 
@@ -179,8 +188,8 @@ std::vector<float> EmbeddingRunner::compute_embedding(
         // encode if at capacity
         if (batch.n_tokens + n_toks > n_batch) {
             float * out = emb + p * n_embd;
-            batch_decode(ctx, batch, out, s, n_embd);
-            llama_batch_clear(batch);
+            batch_decode(ctx, batch, out, s, n_embd, params);
+            common_batch_clear(batch);
             p += s;
             s = 0;
         }
@@ -192,7 +201,7 @@ std::vector<float> EmbeddingRunner::compute_embedding(
 
     // final batch
     float * out = emb + p * n_embd;
-    batch_decode(ctx, batch, out, s, n_embd);
+    batch_decode(ctx, batch, out, s, n_embd, params);
 
     // print the first part of the embeddings or for a single prompt, the full embedding
     fprintf(stdout, "\n");
@@ -205,10 +214,9 @@ std::vector<float> EmbeddingRunner::compute_embedding(
     }
 
     // clean up
-    llama_print_timings(ctx);
     llama_batch_free(batch);
     llama_free(ctx);
-    llama_free_model(model);
+    llama_model_free(model);
     llama_backend_free();
 
     on_compute_finished(embeddings);
@@ -222,10 +230,10 @@ float EmbeddingRunner::similarity_cos(std::vector<float> embd1, std::vector<floa
         return 0.0;
     }
 
-    return llama_embd_similarity_cos(embd1.data(), embd2.data(), embd1.size());
+    return common_embd_similarity_cos(embd1.data(), embd2.data(), embd1.size());
 }
 
-int EmbeddingRunner::get_n_embd(gpt_params params) {
+int EmbeddingRunner::get_n_embd(common_params params) {
     params.embedding = true;
     // For non-causal models, batch size must be equal to ubatch size
     params.n_ubatch = params.n_batch;
@@ -237,17 +245,18 @@ int EmbeddingRunner::get_n_embd(gpt_params params) {
     llama_context * ctx;
 
     // load the model
-    std::tie(model, ctx) = llama_init_from_gpt_params(params);
+    common_init_result result = common_init_from_params(params);
+    model = result.model.get();
+    ctx = result.context.get();
     if (model == NULL) {
         std::string msg = std::string(__func__) + ": error: unable to load model";
         return -1;
     }
 
-    const int n_embd = llama_n_embd(model);
-
+    const int n_embd = llama_model_n_embd(model);
 
     llama_free(ctx);
-    llama_free_model(model);
+    llama_model_free(model);
     llama_backend_free();
 
     return n_embd;
