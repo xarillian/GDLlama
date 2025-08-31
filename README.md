@@ -317,4 +317,3 @@ The Arch build of Godot is bugged when working with GDExtension, download Godot 
 5. You have a discrete GPU and you see `unable to load model` error, you have make sure that the model parameters are correctly set.
 
 There is currently a bug on vulkan backend if you have multiple drivers installed for the same GPU, try to turn `Split Mode` to `NONE` (0) and set your `Main GPU` manually (starting from 0) to see if it works.
-
