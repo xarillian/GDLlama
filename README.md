@@ -20,7 +20,7 @@ I'm a Windows scrub, so it is only tested there. I'll have to pull out my Linux 
     - or some equivalent
 
 # Building
-## Initial
+## 1. Initial
 Install the necessary build tools (e.g. `clang`) and Vulkan SDK for your operating system, then clone this repository.
 
 ```shell
@@ -31,7 +31,7 @@ mkdir build
 cd build
 ```
 
-## Run `cmake`
+## 2. Run `cmake`
 ### Windows
 from preset (recommended):
 ```shell
@@ -59,7 +59,7 @@ For Android, set `$NDK_PATH` to your android ndk directory, then:
 cmake .. -GNinja -DCMAKE_TOOLCHAIN_FILE=$NDK_PATH\cmake\android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-23 -DCMAKE_C_FLAGS="-mcpu=generic" -DCMAKE_CXX_FLAGS="-mcpu=generic" -DCMAKE_BUILD_TYPE=Release
 ```
 
-## Ninja
+## 3. Ninja
 Then compile and install by `ninja`:
 
 ```shell
@@ -67,14 +67,12 @@ ninja -j4
 ninja install
 ```
 
-## Final Steps
-The folder `godot-llm/install/gpu/addons/godot_llm` can be copied to the `addons` folder of your Godot project. On Windows at least, you will also need t ocopy the required DLL dependencies:
+## 4. Final Steps
+The folder `godot-llm/install/gpu/addons/godot_llm` can be copied to the `addons` folder of your Godot project. On Windows at least, you will also need to copy the required DLL dependencies from `godot-llm/install/bin` into your Godot project's `addons/godot_llm/bin/` directory:
 - `ggml.dll`
 - `ggml-base.dll`
 - `ggml-cpu.dll`
 - `llama.dll`
-
-These are located in `godot-llm/install/bin`. Copy them into your Godot project's `addons/godot_llm/bin/` directory.
 
 Replace "gpu" with "cpu" for a CPU build.
 
