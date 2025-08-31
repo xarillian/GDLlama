@@ -11,7 +11,6 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <common/common.h>
-#include <nlohmann/json.hpp>
 #include <common/json-schema-to-grammar.h>
 #include <cstdint>
 #include <memory>
@@ -71,10 +70,6 @@ void GDLlama::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_penalty_last_n"), &GDLlama::get_penalty_last_n);
     ClassDB::bind_method(D_METHOD("set_penalty_last_n", "p_penalty_last_n"), &GDLlama::set_penalty_last_n);
     ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "penalty_last_n", PROPERTY_HINT_NONE), "set_penalty_last_n", "get_penalty_last_n");
-
-    ClassDB::bind_method(D_METHOD("get_penalize_nl"), &GDLlama::get_penalize_nl);
-    ClassDB::bind_method(D_METHOD("set_penalize_nl", "p_penalize_nl"), &GDLlama::set_penalize_nl);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::BOOL, "penalize_nl", PROPERTY_HINT_NONE), "set_penalize_nl", "get_penalize_nl");
 
     ClassDB::bind_method(D_METHOD("get_top_k"), &GDLlama::get_top_k);
     ClassDB::bind_method(D_METHOD("set_top_k", "p_top_k"), &GDLlama::set_top_k);
@@ -273,67 +268,59 @@ void GDLlama::set_n_keep(const int32_t p_n_keep) {
 }
 
 float GDLlama::get_temperature() const {
-    return params.sparams.temp;
+    return params.sampling.temp;
 }
 
 void GDLlama::set_temperature(const float p_temperature) {
-    params.sparams.temp = p_temperature;
+    params.sampling.temp = p_temperature;
 }
 
 float GDLlama::get_penalty_repeat() const {
-    return params.sparams.penalty_repeat;
+    return params.sampling.penalty_repeat;
 }
 
 void GDLlama::set_penalty_repeat(const float p_penalty_repeat) {
-    params.sparams.penalty_repeat = p_penalty_repeat;
+    params.sampling.penalty_repeat = p_penalty_repeat;
 }
 
 int32_t GDLlama::get_penalty_last_n() const {
-    return params.sparams.penalty_last_n;
+    return params.sampling.penalty_last_n;
 }
 
 void GDLlama::set_penalty_last_n(const int32_t p_penalty_last_n) {
-    params.sparams.penalty_last_n = p_penalty_last_n;
-}
-
-bool GDLlama::get_penalize_nl() const {
-    return params.sparams.penalize_nl;
-}
-
-void GDLlama::set_penalize_nl(const bool p_penalize_nl) {
-    params.sparams.penalize_nl = p_penalize_nl;
+    params.sampling.penalty_last_n = p_penalty_last_n;
 }
 
 int32_t GDLlama::get_top_k() const {
-    return params.sparams.top_k;
+    return params.sampling.top_k;
 }
 
 void GDLlama::set_top_k(const int32_t p_top_k) {
-    params.sparams.top_k = p_top_k;
+    params.sampling.top_k = p_top_k;
 }
 
 float GDLlama::get_top_p() const {
-    return params.sparams.top_p;
+    return params.sampling.top_p;
 }
 
 void GDLlama::set_top_p(const float p_top_p) {
-    params.sparams.top_p = p_top_p;
+    params.sampling.top_p = p_top_p;
 }
 
 float GDLlama::get_min_p() const {
-    return params.sparams.min_p;
+    return params.sampling.min_p;
 }
 
 void GDLlama::set_min_p(const float p_min_p) {
-    params.sparams.min_p = p_min_p;
+    params.sampling.min_p = p_min_p;
 }
 
 int32_t GDLlama::get_n_threads() const {
-    return params.n_threads;
+    return params.cpuparams.n_threads;
 }
 
 void GDLlama::set_n_threads(const int32_t p_n_threads) {
-    params.n_threads = p_n_threads;
+    params.cpuparams.n_threads = p_n_threads;
 }
 
 int32_t GDLlama::get_n_gpu_layer() const {
@@ -475,11 +462,11 @@ String GDLlama::generate_text_simple(String prompt) {
 
 String GDLlama::generate_text_grammar_internal(String prompt, String grammar) {
     glog_verbose("generate_text_grammar_internal");
-    params.sparams.grammar = string_gd_to_std(grammar);
+    params.sampling.grammar = string_gd_to_std(grammar);
 
     String full_generated_text = generate_text_common(prompt);
 
-    params.sparams.grammar = std::string();
+    params.sampling.grammar = std::string();
 
     generate_text_mutex->unlock();
     glog_verbose("generate_text_mutex unlocked");
@@ -513,11 +500,11 @@ String GDLlama::generate_text_grammar(String prompt, String grammar) {
 String GDLlama::generate_text_json_internal(String prompt, String json) {
     glog_verbose("generate_text_json_internal");
     std::string grammar = json_schema_to_grammar(nlohmann::ordered_json::parse(string_gd_to_std(json)));
-    params.sparams.grammar = grammar;
+    params.sampling.grammar = grammar;
 
     String full_generated_text = generate_text_common(prompt);
 
-    params.sparams.grammar = std::string();
+    params.sampling.grammar = std::string();
 
     generate_text_mutex->unlock();
     glog_verbose("generate_text_mutex unlocked");

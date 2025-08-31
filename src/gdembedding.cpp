@@ -107,11 +107,11 @@ void GDEmbedding::set_model_path(const String p_model_path) {
 }
 
 int32_t GDEmbedding::get_n_threads() const {
-    return params.n_threads;
+    return params.cpuparams.n_threads;
 }
 
 void GDEmbedding::set_n_threads(const int32_t p_n_threads) {
-    params.n_threads = p_n_threads;
+    params.cpuparams.n_threads = p_n_threads;
 }
 
 int32_t GDEmbedding::get_n_gpu_layer() const {

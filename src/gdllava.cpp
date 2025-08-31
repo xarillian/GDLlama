@@ -62,7 +62,7 @@ void GDLlava::_bind_methods() {
     ADD_SIGNAL(MethodInfo("generate_text_finished", PropertyInfo(Variant::STRING, "text")));
 }
 
-GDLlava::GDLlava() : params {gpt_params()},
+GDLlava::GDLlava() : params {common_params()},
     llava_runner {new LlavaRunner()},
     glog {[](std::string s) {godot::UtilityFunctions::print(s.c_str());}},
     glog_verbose {[](std::string s) {godot::UtilityFunctions::print_verbose(s.c_str());}},

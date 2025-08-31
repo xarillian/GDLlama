@@ -37,7 +37,7 @@ void EmbeddingRunner::batch_decode(
     const common_params& params
 ) {    
     // clear previous kv_cache values (irrelevant for embeddings)
-    llama_memory_clear(llama_get_memory(ctx), false);
+    llama_kv_cache_clear(ctx);
 
     // run model
     fprintf(stderr, "%s: n_tokens = %d, n_seq = %d\n", __func__, batch.n_tokens, n_seq);

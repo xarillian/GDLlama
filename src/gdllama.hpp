@@ -69,8 +69,6 @@ class GDLlama : public Node {
         void set_penalty_repeat(const float p_penalty_repeat);
         int32_t get_penalty_last_n() const;
         void set_penalty_last_n(const int32_t p_penalty_last_n);
-        bool get_penalize_nl() const;
-        void set_penalize_nl(const bool p_penalize_nl);
         int32_t get_top_k() const;
         void set_top_k(const int32_t p_top_k);
         float get_top_p() const;

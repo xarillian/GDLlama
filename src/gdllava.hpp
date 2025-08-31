@@ -15,7 +15,7 @@ class GDLlava : public Node {
     GDCLASS(GDLlava, Node)
 
     private:
-        gpt_params params;
+        common_params params;
         std::unique_ptr<LlavaRunner> llava_runner;
         Ref<Mutex> generate_text_mutex;
         Ref<Mutex> func_mutex;
@@ -67,4 +67,4 @@ class GDLlava : public Node {
 
 } //namespace godot
 
-#endif //GDLLAVA_H
+#endif // GDLLAVA_H
