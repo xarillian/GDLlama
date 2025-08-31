@@ -1,241 +1,90 @@
 # Godot LLM
-Isn't it cool to utilize large language model (LLM) to generate contents for your game? LLM has great potential in NPC models, game mechanics and design assisting. Thanks for technology like [llama.cpp](https://github.com/ggerganov/llama.cpp), "small" LLM, such as [llama-3-8B](https://huggingface.co/meta-llama/Meta-Llama-3-8B), run reasonably well locally on lower-end machine without a good GPU. I want to experiment LLM in Godot but I couldn't find any good library, so I decided to create one here.
+> Isn't it cool to utilize large language model (LLM) to generate contents for your game?
+- @Adriankhl, original creator of Godot LLM
 
-&#9888; While LLM is less controversial than image generation models, there can still be legal issues when LLM contents are integrated in games, I have created another [page](./LLM_LEGAL.md) to document some relevant information
+Why, yes, I think it is cool! LLMs and multimodal models do have great potential for multiple aspects of game design. Thanks to `llama.cpp`, we have local inference fast enough to enable some genuinely interesting gameplay and I want Godot at the forefront of that. Or at least, not lagging behind the big guns.
 
-# Table of Contents
-1. [Quick start](#quick-start)
-    - [Install](#install)
-    - [Text Generation: GDLlama node](#text-generation-gdllama-node)
-    - [Text Embedding: GDEmbedding node](#text-embedding-gdembedding-node)
-    - [Multimodal Text Generation: GDLlava node](#multimodal-text-generation-gdllava-node)
-    - [Vector Database: LlmDB node](#vector-database-llmdb-node)
-    - [Template/Demo](#templatedemo)
-2. [Retrieval Augmented Generation (RAG)](#retrieval-augmented-generation-rag)
-3. [Roadmap](#roadmap)
-4. [Documentation](#documentation)
-    - [Inspector Properties: GDLlama, GDEmbedding, and GDLlava](#inspector-properties-gdllama-gdembedding-and-gdllava)
-    - [GDLlama Functions and Signals](#gdllama-functions-and-signals)
-    - [GDEmbedding Functions and Signals](#gdembedding-functions-and-signals)
-    - [GDLlava Functions and Signals](#gdllava-functions-and-signals)
-    - [Text generation with Json schema](#text-generation-with-json-schema)
-    - [LlmDB Functions and Signals](#llmdb-functions-and-signals)
-    - [LlmDBMetaData](#llmdbmetadata)
-5. [FAQ](#faq)
-6. [Compile from Source](#compile-from-source)
+This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent llama.cpp versions.
 
-# Quick Start
+# Getting Started
+Sorry! You gotta build everything yourself right now. This is not in the asset library, no sir. In fact, I'm only 70-80% sure it works at all! That means: no real quick starts. Not yet! I'll try to upload this to the Asset Library.
 
-## Install
-1. Get `Godot LLM` directly from the asset library, or download the vulkan or cpu zip file from the [release page](https://github.com/Adriankhl/godot-llm/releases), and unzip it to place it in the `addons` folder in your godot project
-2. Now you should be able to see `GdLlama`, `GdEmbedding`, `GDLlava`, and `LlmDB` nodes in your godot editor. You can add them to a scene in Godot editor, or initialize themm directly by `.new()`.
+I'm a Windows scrub, so it is only tested there. I'll have to pull out my Linux machine at some point to run through this.
 
-## Text Generation: GDLlama node
-1. Download a [supported](https://github.com/ggerganov/llama.cpp?tab=readme-ov-file#description) LLM model in GGUF format (recommendation: [Meta-Llama-3-8B-Instruct-Q5_K_M.gguf](https://huggingface.co/lmstudio-community/Meta-Llama-3-8B-Instruct-GGUF/tree/main)), move the file to somewhere in your godot project
-2. Set up your model with GDScript, point `model_path` to your GGUF file. The default `n_predict = -1` generates an infinite sequence, we want it to be shorter here
-```
-func _ready():
-    var gdllama = GDLlama.new()
-    gdllama.model_path = "./models/Meta-Llama-3-8B-Instruct.Q5_K_M.gguf" ##Your model path
-    gdllama.n_predict = 20
-```
-3. Generate text starting from "Hello"
-```
-    var generated_text = gdllama.generate_text_simple("Hello")
-    print(generated_text)
-```
-4. Text generation is slow, you may want to call `gdllama.run_generate_text("Hello", "", "")` to run the generation in background, then handle the `generate_text_updated` or `generate_text_finished` signals
+## Prerequisites
+- CMake 3.14+
+- Ninja build system
+- Vulkan SDK (for GPU builds)
+- Git
+- (for Windows): Visual Studio Build Tools with clang-cl
+    - or some equivalent
 
-```
-    gdllama.generate_text_updated.connect(_on_gdllama_updated)
-    gdllama.run_generate_text("Hello", "", "")
+# Building
+## Initial
+Install the necessary build tools (e.g. `clang`) and Vulkan SDK for your operating system, then clone this repository.
 
-func _on_gdllama_updated(new_text: String):
-    print(new_text)
+```shell
+git clone https://github.com/xarillian/GDLlama.git
+cd godot-llm
+git submodule update --init --recursive
+mkdir build
+cd build
 ```
 
-## Text Embedding: GDEmbedding node
-1. Download a [supported](https://github.com/ggerganov/llama.cpp?tab=readme-ov-file#description) embedding model in GGUF format (recommendation: [mxbai-embed-large-v1.Q5_K_M.gguf](https://huggingface.co/ChristianAzinn/mxbai-embed-large-v1-gguf/tree/main)), move the file to somewhere in your godot project
-2. Set up your model with GDScript, point `model_path` to your GGUF file
-```
-func _ready():
-    var gdembedding= GDEmbedding.new()
-    gdembedding.model_path = "./models/mxbai-embed-large-v1.Q5_K_M.gguf"
-```
-3. Compute the embedded vector of "Hello world" in PackedFloat32Array
-```
-    var array: PackedFloat32Array = gdembedding.compute_embedding("Hello world")
-    print(array)
+## Run `cmake`
+### Windows
+from preset (recommended):
+```shell
+cmake --preset windows-vulkan-release ..
 ```
 
-4. Compute the similarity between "Hello" and "World"
-```
-    var similarity: float = gdembedding.similarity_cos_string("Hello", "World")
-    print(similarity)
-```
-
-5. Embedding computation can be slow, you may want to call `gdembedding.run_compute_embedding("Hello world")` or `gdembedding.run_similarity_cos_string("Hello", "Worlld")` to run the computation in background, then handle the `compute_embedding_finished` and `similarity_cos_string_finished` signals
-
-```
-    gdembedding.compute_embedding_finished.connect(_on_embedding_finished)
-    gdembedding.run_compute_embedding("Hello world")
-
-func _on_embedding_finished(embedding: PackedFloat32Array):
-    print(embedding)
+or manually:
+```shell
+cmake .. -GNinja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_CXX_FLAGS="/EHsc" -DLLAMA_NATIVE=OFF -DLLAMA_VULKAN=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_COMMON=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DCMAKE_BUILD_TYPE=Release
 ```
 
-```
-    gdembedding.similarity_cos_string_finished.connect(_on_embedding_finished)
-    gdembedding.run_similarity_cos_string("Hello", "Worlld")
+### Linux
+I haven't tested this at all, sorry. Here's the advice from the original project:
 
-func _on_similarity_finished(similarity: float):
-    print(similarity)
-```
-
-Note that the current implementation only allows one thread running per node, avoid calling 2 `run_*` methods consecutively:
-```
-    ## Don't do this, this will hang your UI
-    gdembedding.run_compute_embedding("Hello world")
-    gdembedding.run_similarity_cos_string("Hello", "Worlld")
+```shell
+cmake .. -GNinja -DLLAMA_NATIVE=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DLLAMA_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
 ```
 
-Instead, always wait for the finished signal or check `gdembedding.is_running()` before calling a `run_*` function.
+### Android
+I haven't tested this at all, sorry. Here's the advice from the original project:
 
+For Android, set `$NDK_PATH` to your android ndk directory, then:
 
-## Multimodal Text Generation: GDLlava node
-1. Download a [supported](https://github.com/ggerganov/llama.cpp?tab=readme-ov-file#description) multimodal model in GGUF format (recommendation: [llava-phi-3-mini-int4.gguf](https://huggingface.co/xtuner/llava-phi-3-mini-gguf/tree/main)), be aware that there are two files needed - a `gguf` language model and a mmproj model (typical name `*mmproj*.gguf`), move the files to somewhere in your godot project
-2. Set up your model with GDScript, point `model_path` and `mmproj_path` to your corresponding GGUF files
-```
-func _ready():
-    var gdllava = GDLlava.new()
-    gdllava.model_path = "./models/llava-phi-3-mini-int4.gguf"
-    gdllava.mmproj_path = "./models/llava-phi-3-mini-mmproj-f16.gguf"
-```
-3. Load an image (`svg`, `png`, or `jpg`, other format may also works as long as it is supported by Godot), or use your game screen (viewport) as a image
-```
-    var image = Image.new()
-    image.load("icon.svg")
-
-    ## Or load the game screen instead
-    #var image = get_viewport().get_texture().get_image()
-```
-4. Generate text to provide "Provide a full description" for the image
-```
-    var generated_text = gdllava.generate_text_image("Provide a full description", image)
-    print(generated_text)
-```
-5. Text generation is slow, you may want to call `gdllama.run_generate_text("Hello", "", "")` to run the generation in background, then handle the `generate_text_updated` or `generate_text_finished` signals
-```
-    gdllava.generate_text_updated.connect(_on_gdllava_updated)
-    gdllava.run_generate_text_image("Provide a full description", image)
-
-func _on_gdllava_updated(new_text: String):
-    print(new_text)
+```shell
+cmake .. -GNinja -DCMAKE_TOOLCHAIN_FILE=$NDK_PATH\cmake\android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-23 -DCMAKE_C_FLAGS="-mcpu=generic" -DCMAKE_CXX_FLAGS="-mcpu=generic" -DCMAKE_BUILD_TYPE=Release
 ```
 
-## Vector database: LlmDB node
+## Ninja
+Then compile and install by `ninja`:
 
-1. LlmDB node extends GDEmbedding node, follow the [previous section](#text-embedding-gdembedding-node) to download a model and set up the `model_path`
-
-```
-func _ready():
-	var db = LlmDB.new()
-	db.model_path = "./models/mxbai-embed-large-v1.Q5_K_M.gguf"
+```shell
+ninja -j4
+ninja install
 ```
 
-2. Open a database, which creates a `llm.db` file and connect to it by default
-```
-	db.open_db()
-```
+## Final Steps
+The folder `godot-llm/install/gpu/addons/godot_llm` can be copied to the `addons` folder of your Godot project. On Windows at least, you will also need t ocopy the required DLL dependencies:
+- `ggml.dll`
+- `ggml-base.dll`
+- `ggml-cpu.dll`
+- `llama.dll`
 
-3. Set up the structure of the metadata of your textual data, the first metadata should always be an `id` field with `String` as the data type, here we use the `LlmDBMetaData.create_text`, `LlmDBMetaData.create_int`, and `LlmDBMetaData.create_real` functions to define the structure of metadata with the corresponding data type.
-```
-	db.meta = [
-		LlmDBMetaData.create_text("id"),
-		LlmDBMetaData.create_int("year"),
-        LlmDBMetaData.create_real("attack")
-	]
-```
+These are located in `godot-llm/install/bin`. Copy them into your Godot project's `addons/godot_llm/bin/` directory.
 
-4. Different models create embedding vectors of different sizes, calibrate the `embedding_size` property before creating tables
+Replace "gpu" with "cpu" for a CPU build.
 
-```
-    db.calibrate_embedding_size()
-```
-
-5. Create tables based on the metadata, By default, these table are created:
-
-* `llm_table_meta`: which store the metadata for a particular id
-* `llm_table`: store texts with metadata and embedding
-* Some tables with names containing `llm_table_virtual`: tables for embedding similarity computation
-
-Note that your `.meta` property should always match the metadata columns in the database before any storing or retrieving operation, consider setting your `.meta` property within the `_ready()` function or within the inspector.
-
-```
-    db.create_llm_tables()
-```
-
-6. Store a piece of text with metadata dictionary specifying the `year`, note that you can leave out some of the metadata if it is not relevant to the text. If the input text is longer than `chunk_size`, the function will automatically break it down into smaller pieces to fit in the `chunk_size`.
-
-```
-    var text = "Godot is financially supported by the Godot Foundation, a non-profit organization formed on August 23rd, 2022 via the KVK (number 87351919) in the Netherlands. The Godot Foundation is responsible for managing donations made to Godot and ensuring that such donations are used to enhance Godot. The Godot Foundation is a legally independent organization and does not own Godot. In the past, the Godot existed as a member project of the Software Freedom Conservancy."
-
-    db.store_text_by_meta({"year": 2024}, text)
-```
-
-7. Retrieve 3 of the most similar text chunks to `godot` where the year is 2024:
-
-```
-    print(db.retrieve_similar_texts("godot", "year=2024", 3))
-```
-
-8. Depending on the embedding model, storing and retrieving can be slow, consider using the `run_store_text_by_meta` function, `run_retrieve_similar_texts` function, and the `retrieve_similar_text_finished` signal to store and retrieve texts in background. Also, call `close_db()` when the database is no longer in use.
-
-## Template/Demo
-The [godot-llm-template](https://github.com/Adriankhl/godot-llm-template) provides a rather complete demonstration on different functionalities of this plugin
-
-# Retrieval-Augmented Generation (RAG)
-
-This plugin now has all the essentaial components for simple Retrieval-Augmented Generation (RAG). You can store information about your game world or your character into the vector database, retrieve relevant texts to enrich your prompt, then generate text for your game, the generated text can be stored back to the vector database to enrich future prompt. RAG complement the shortcoming of LLM - the limited context size force the model to forget earlier information, and with RAG, information can be stored in a database to become long-term memory, and only relevant information are retrieve to enrich the prompt to keep the prompt within the context size.
-
-To get started, you may try the following format for your prompt input:
-```
-Document:
-{retrieved text}
-
-Question:
-{your prompt}
-```
-
-![](https://upload.wikimedia.org/wikipedia/commons/3/37/RAG_schema.svg)
-
-# Roadmap
-
-## Features
-* Platform (backend): windows (cpu, vulkan), macOS(cpu, metal), Linux (cpu, vulkan), Android (cpu)
-    - macOS support is on best effort basis since I don't have a mac myself
-* [llama.cpp](https://github.com/ggerganov/llama.cpp)-based features
-    - Text generation
-    - Embedding
-    - Multimodal
-* Vector database integration based on [sqlite](https://www.sqlite.org/) and [sqlite-vec](https://github.com/asg017/sqlite-vec)
-    - Split text to chunks
-    - Store text embedding
-    - Associate metadata with text
-    - Retrieve text by embedding similarity and sql constraints on metadata
-
-## TODO
-* iOS: build should be trivial, but an apple developer ID is needed to run thhe build
-* Add in-editor documentation, waiting for proper support in Godot 4.3
-* Add utility functions to generate useful prompts, such as llama guard 2
-* Download models directly from huggingface
-* Automatically generate json schema from data classes in GDSCript
-* More [llama.cpp](https://github.com/ggerganov/llama.cpp) features
-* [mlc-llm](https://github.com/mlc-ai/mlc-llm) integration
-* Any suggestion?
-
+# Contributions
+- PRs are welcome! This is my first big open source contribution and I am more than happy to share with the community.
+- Huge thanks to @Adriankhl for originally creating this project. See: https://github.com/Adriankhl/godot-llm
 
 # Documentation
+
+**Note:** All of this is suspect right now. I haven't reviewed _any_ of it!
 
 ## Inspector Properties: GDLlama, GDEmbedding, and GDLlava
 There are 3 base nodes added by this plugin: `GdLlama`, `GdEmbedding`, and `GdLlava`.
@@ -469,45 +318,3 @@ The Arch build of Godot is bugged when working with GDExtension, download Godot 
 
 There is currently a bug on vulkan backend if you have multiple drivers installed for the same GPU, try to turn `Split Mode` to `NONE` (0) and set your `Main GPU` manually (starting from 0) to see if it works.
 
-# Compile from source
-Install build tools and Vulkan SDK for your operating system, then clone this repository
-```
-git clone https://github.com/Adriankhl/godot-llm.git
-cd godot-llm
-git submodule update --init --recursive
-mkdir build
-cd build
-```
-
-Run `cmake`.
-
-On Windows:
-```
-cmake --preset windows-vulkan-release ..
-```
-
-On Linux:
-```
-cmake .. -GNinja -DLLAMA_NATIVE=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DLLAMA_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-```
-
-Vulkan build works for Windows and Linux, if you want a cpu build, set `-DLLAMA_VULKAN=OFF` instead.
-
-For Android, set `$NDK_PATH` to your android ndk directory, then:
-```
-cmake .. -GNinja -DCMAKE_TOOLCHAIN_FILE=$NDK_PATH\cmake\android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-23 -DCMAKE_C_FLAGS="-mcpu=generic" -DCMAKE_CXX_FLAGS="-mcpu=generic" -DCMAKE_BUILD_TYPE=Release
-```
-
-You may want to adjust the compile flags for Android to suit different types of CPU.
-
-Then compile and install by `ninja`:
-```
-ninja -j4
-ninja install
-```
-
-The folder `../install/gpu/addons/godot_llm` (`cpu` instead of `gpu` for cpu build) can be copy directly to the `addons` folder of your godot project.
-
-# Contributing
-
-* PRs are welcome
