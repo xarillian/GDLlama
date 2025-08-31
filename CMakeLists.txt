@@ -62,7 +62,9 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 add_subdirectory(godot-cpp)
-add_subdirectory(llama.cpp EXCLUDE_FROM_ALL)
+set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
+set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
+add_subdirectory(llama.cpp)
 
 set(src_files
   "src/sqlite3.c"
@@ -103,6 +105,15 @@ add_library(${LIB_NAME} SHARED ${src_files})
 
 target_link_libraries(${LIB_NAME} PRIVATE godot-cpp common llama)
 
+target_include_directories(${LIB_NAME} PRIVATE
+  src
+  llama.cpp
+  llama.cpp/common
+  llama.cpp/src
+  llama.cpp/vendor
+  godot-cpp
+)
+
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/install)
 
 if (LLAMA_VULKAN OR LLAMA_METAL)
@@ -133,6 +144,15 @@ add_executable(llama_runner_test ${llama_runnner_test_files} ${src_files})
 
 target_link_libraries(llama_runner_test PRIVATE godot-cpp common llama)
 
+target_include_directories(llama_runner_test PRIVATE
+  src
+  llama.cpp
+  llama.cpp/common
+  llama.cpp/src
+  llama.cpp/vendor
+  godot-cpp
+)
+
 add_test(
   NAME llama_runner_test
   COMMAND llama_runner_test
@@ -145,6 +165,15 @@ set(embedding_runnner_test_files
 add_executable(embedding_runner_test ${embedding_runnner_test_files} ${src_files})
 
 target_link_libraries(embedding_runner_test PRIVATE godot-cpp common llama)
+
+target_include_directories(embedding_runner_test PRIVATE
+  src
+  llama.cpp
+  llama.cpp/common
+  llama.cpp/src
+  llama.cpp/vendor
+  godot-cpp
+)
 
 add_test(
   NAME embedding_runner_test
