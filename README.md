@@ -4,7 +4,7 @@
 
 Why, yes, I think it is cool! LLMs and multimodal models do have great potential for multiple aspects of game design. Thanks to `llama.cpp`, we have local inference fast enough to enable some genuinely interesting gameplay and I want Godot at the forefront of that. Or at least, not lagging behind the big guns.
 
-This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent llama.cpp versions.
+This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent llama.cpp versions. I intend to maintain this for an indefinite amount of time while it continues to be useful to me.
 
 # Getting Started
 Sorry! You gotta build everything yourself right now. This is not in the asset library, no sir. In fact, I'm only 70-80% sure it works at all! That means: no real quick starts. Not yet! I'll try to upload this to the Asset Library.
