@@ -1,0 +1,26 @@
+name: Build with Latest Llama
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+
+    - name: Update llama.cpp to latest
+      run: |
+        cd llama.cpp
+        git pull origin master
+
+    - name: Configure and Build
+      run: |
+        cmake -S . -B build -GNinja -DLLAMA_NATIVE=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DLLAMA_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+        cmake --build build -- -j4
