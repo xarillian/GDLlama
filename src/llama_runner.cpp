@@ -66,20 +66,10 @@ std::string LlamaRunner::llama_generate_text(
     bool is_interacting = false;
 
     #ifndef LOG_DISABLE_LOGS
-    //    log_set_target(log_filename_generator("main", "log"));
         LOG("Log start\n");
-    //    llama_log_set(llama_log_callback_logTee, nullptr);
-    #endif // LOG_DISABLE_LOGS
+    #endif
 
-    // TODO: Dump params ?
-    //LOG("Params perplexity: %s\n", LOG_TOSTR(params.perplexity));
-
-    // save choice to use color for later
-    // (note for later: this is a slightly awkward choice)
-    //console::init(params.simple_io, params.use_color);
-    //atexit([]() { console::cleanup(); });
-
-    if (params.logits_all) {
+    if (params.ppl_output_type != 0) {
         printf("\n************\n");
         printf("%s: please use the 'perplexity' tool for perplexity calculations\n", __func__);
         printf("************\n\n");
@@ -102,16 +92,16 @@ std::string LlamaRunner::llama_generate_text(
     }
 
     if (params.n_ctx != 0 && params.n_ctx < 8) {
-        LOG("%s: warning: minimum context size is 8, using minimum size.\n", __func__);
+        LOG_WRN("%s: warning: minimum context size is 8, using minimum size.\n", __func__);
         params.n_ctx = 8;
     }
 
     if (params.rope_freq_base != 0.0) {
-        LOG("%s: warning: changing RoPE frequency base to %g.\n", __func__, params.rope_freq_base);
+        LOG_WRN("%s: warning: changing RoPE frequency base to %g.\n", __func__, params.rope_freq_base);
     }
 
     if (params.rope_freq_scale != 0.0) {
-        LOG("%s: warning: scaling RoPE frequency by %g.\n", __func__, params.rope_freq_scale);
+        LOG_WRN("%s: warning: scaling RoPE frequency by %g.\n", __func__, params.rope_freq_scale);
     }
 
     LOG("%s: build = %d (%s)\n",      __func__, LLAMA_BUILD_NUMBER, LLAMA_COMMIT);
@@ -232,7 +222,14 @@ std::string LlamaRunner::llama_generate_text(
         }
 
         // remove any "future" tokens that we might have inherited from the previous session
-        llama_kv_cache_seq_rm(ctx, -1, n_matching_session_tokens, -1);
+        if (llama_get_memory(ctx)) {
+            // p0 = start position
+            // p1 = end position
+            llama_pos p0 = n_matching_session_tokens;
+            llama_pos p1 = -1;  // until end of sequence
+
+            llama_memory_seq_rm(llama_get_memory(ctx), -1, p0, p1);
+        }
     }
 
     LOG_DBG(
@@ -412,31 +409,32 @@ std::string LlamaRunner::llama_generate_text(
             }
 
             if (ga_n == 1) {
-                // infinite text generation via context shifting
-                // if we run out of context:
+                // Infinite Text Generation via Context Shifting
+                // If we run out of context:
                 // - take the n_keep first tokens from the original prompt (via n_past)
                 // - take half of the last (n_ctx - n_keep) tokens and recompute the logits in batches
-                if (n_past + (int) embd.size() >= n_ctx) {
+                if (n_past + (int)embd.size() >= n_ctx) {
                     if (params.n_predict == -2) {
                         LOG("\n\n%s: context full and n_predict == -%d => stopping\n", __func__, params.n_predict);
                         break;
                     }
 
-                    const int n_left    = n_past - params.n_keep;
-                    const int n_discard = n_left/2;
+                    const int n_left = n_past - params.n_keep;
+                    const int n_discard = n_left / 2;
 
-                    LOG("context full, swapping: n_past = %d, n_left = %d, n_ctx = %d, n_keep = %d, n_discard = %d\n",
-                            n_past, n_left, n_ctx, params.n_keep, n_discard);
+                    LOG(
+                        "context full, swapping: n_past = %d, n_left = %d, n_ctx = %d, n_keep = %d, n_discard = %d\n",
+                        n_past, n_left, n_ctx, params.n_keep, n_discard
+                    );
 
-                    llama_kv_cache_seq_rm (ctx, 0, params.n_keep            , params.n_keep + n_discard);
-                    llama_kv_cache_seq_add(ctx, 0, params.n_keep + n_discard, n_past, -n_discard);
+                    llama_memory_t mem = llama_get_memory(ctx);
+                    llama_memory_seq_rm(mem, 0, params.n_keep, params.n_keep + n_discard);
+                    llama_memory_seq_add(mem, 0, params.n_keep + n_discard, n_past, -n_discard);
 
                     n_past -= n_discard;
 
                     LOG("after swap: n_past = %d, n_past_guidance = %d\n", n_past, n_past_guidance);
-
                     LOG("embd: %s\n", string_from(ctx, embd).c_str());
-
                     LOG("clear session path\n");
                     path_session.clear();
                 }
@@ -452,12 +450,14 @@ std::string LlamaRunner::llama_generate_text(
                     LOG("div:   [%6d, %6d] / %6d -> [%6d, %6d]\n", ga_i + ib*bd, ga_i + ib*bd + ga_w, ga_n, (ga_i + ib*bd)/ga_n, (ga_i + ib*bd + ga_w)/ga_n);
                     LOG("shift: [%6d, %6d] + %6d -> [%6d, %6d]\n", ga_i + ib*bd + ga_w, n_past + ib*bd, dd, ga_i + ib*bd + ga_w + dd, n_past + ib*bd + dd);
 
-                    llama_kv_cache_seq_add(ctx, 0, ga_i,                n_past,              ib*bd);
-                    llama_kv_cache_seq_div(ctx, 0, ga_i + ib*bd,        ga_i + ib*bd + ga_w, ga_n);
-                    llama_kv_cache_seq_add(ctx, 0, ga_i + ib*bd + ga_w, n_past + ib*bd,      dd);
+                    llama_memory_t mem = llama_get_memory(ctx);
+                    if (mem) {
+                        llama_memory_seq_add(mem, 0, ga_i, n_past, ib*bd);
+                        llama_memory_seq_div(mem, 0, ga_i + ib*bd, ga_i + ib*bd + ga_w, ga_n);
+                        llama_memory_seq_add(mem, 0, ga_i + ib*bd + ga_w, n_past + ib*bd, dd);
+                    }
 
                     n_past -= bd;
-
                     ga_i += ga_w/ga_n;
 
                     LOG("\nn_past_old = %d, n_past = %d, ga_i = %d\n\n", n_past + bd, n_past, ga_i);

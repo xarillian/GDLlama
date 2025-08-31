@@ -1,5 +1,6 @@
-cmake_minimum_required(VERSION 3.22)
-
+cmake_minimum_required(VERSION 3.14) # for add_link_options and implicit target directories.
+project("llama.cpp" C CXX)
+include(CheckIncludeFileCXX)
 project(gdllm)
 
 include(CTest)

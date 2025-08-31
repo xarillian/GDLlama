@@ -99,11 +99,11 @@ void GDEmbedding::_exit_tree() {
 }
 
 String GDEmbedding::get_model_path() const {
-    return string_std_to_gd(params.model);
+    return string_std_to_gd(params.model.path);
 }
 
 void GDEmbedding::set_model_path(const String p_model_path) {
-    params.model = string_gd_to_std(p_model_path.trim_prefix(String("res://")));
+    params.model.path = string_gd_to_std(p_model_path.trim_prefix(String("res://")));
 }
 
 int32_t GDEmbedding::get_n_threads() const {

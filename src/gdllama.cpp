@@ -12,6 +12,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <common/common.h>
 #include <common/json-schema-to-grammar.h>
+#include <nlohmann/json.hpp>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -186,11 +187,11 @@ void GDLlama::_exit_tree() {
 }
 
 String GDLlama::get_model_path() const {
-    return string_std_to_gd(params.model);
+    return string_std_to_gd(params.model.path);
 }
 
 void GDLlama::set_model_path(const String p_model_path) {
-    params.model = string_gd_to_std(p_model_path.trim_prefix(String("res://")));
+    params.model.path = string_gd_to_std(p_model_path.trim_prefix(String("res://")));
 }
 
 
