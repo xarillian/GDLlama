@@ -11,17 +11,24 @@ class LlamaRunner {
         bool is_waiting_input;
         bool should_output_prompt;
         std::string input;
-        std::function<void(std::string)> glog;
+        std::function<void(ggml_log_level, const std::string&)> log_callback;
+
+    private:
+        /**
+         * @brief Pre-flight check to validate parameters prior to model initialization.
+         * @param params The model parameters to validate.
+         * @return An error message. If there is no message, then there is no error.
+         */
+        std::string validate_params_for_initialization(const common_params &params);
 
     public:
         LlamaRunner(
             bool should_output_prompt = true,
-            std::function<void(std::string)> glog = [](auto s){}
+            std::function<void(ggml_log_level, const std::string&)> log_callback
         );
         ~LlamaRunner();
         static bool file_exists(const std::string &path);
         static bool file_is_empty(const std::string &path);
-        static void llama_log_callback_logTee(ggml_log_level level, const char * text, void * user_data);
         std::string llama_generate_text(
             std::string prompt,
             common_params params,

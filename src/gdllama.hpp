@@ -38,6 +38,9 @@ class GDLlama : public Node {
 	    static void _bind_methods();
     
     public:
+        void log_message(ggml_log_level level, const std::string& msg);
+
+    public:
         GDLlama();
         ~GDLlama();
 

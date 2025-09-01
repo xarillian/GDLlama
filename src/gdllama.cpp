@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <log.h>
 
 namespace godot {
 
@@ -125,32 +126,64 @@ void GDLlama::_bind_methods() {
     ADD_SIGNAL(MethodInfo("generate_text_updated", PropertyInfo(Variant::STRING, "new_text")));
     ADD_SIGNAL(MethodInfo("input_wait_started"));
     ADD_SIGNAL(MethodInfo("generate_text_finished", PropertyInfo(Variant::STRING, "text")));
-
 }
 
 GDLlama::GDLlama() : params {common_params()},
     reverse_prompt {""},
-    llama_runner {new LlamaRunner(should_output_prompt)},
+    llama_runner{new LlamaRunner(
+        should_output_prompt,
+        [this](ggml_log_level level, const std::string& msg) {
+            this->log_message(level, msg);
+        }
+    )},
     should_output_prompt {true},
-    glog {[](std::string s) {godot::UtilityFunctions::print(s.c_str());}},
-    glog_verbose {[](std::string s) {godot::UtilityFunctions::print_verbose(s.c_str());}},
     generate_text_buffer {""}
 {
-    glog_verbose("GDLlama constructor");
+    common_log_set_prefix(common_log_main(), true);
+    common_log_set_timestamps(common_log_main(), true);
+    common_log_set_file(common_log_main(), "llama.log");
+    LOG_INF("---GDLlama logging initialized---");
+    LOG_INF("Welcome to Loguetown!\n\n");
 
-    glog_verbose("Instantiate GDLlama mutex");
+    LOG_DBG("GDLlama constructor: start");
+    LOG_DBG("Instantiate GDLlama mutex: start");
     func_mutex.instantiate();
     generate_text_mutex.instantiate();
 
-    glog_verbose("Instantiate GDLlama thread");
+    LOG_DBG("Instantiate GDLlama thread: start");
     generate_text_thread.instantiate();
-    auto f = (void(*)())[](){};
+    auto f = (void (*)())[](){};
     generate_text_thread->start(create_custom_callable_static_function_pointer(f));
     generate_text_thread->wait_to_finish();
 
-    glog_verbose("Instantiate GDLlama thread -- done");
+    LOG_DBG("Instantiate GDLlama mutex: done");
+    LOG_DBG("Instantiate GDLlama thread: done");
+    LOG_DBG("GDLlama constructor: done");
 
-    glog_verbose("GDLlama constructor -- done");
+}
+
+void GDLlama::log_message(ggml_log_level level, const std::string& msg) {
+    /* Log messages both to the file logger and to Godot. */
+
+    switch (level) {
+        case GGML_LOG_LEVEL_ERROR:
+            LOG_ERR("%s", msg.c_str());
+            UtilityFunctions::push_error(string_std_to_gd(msg));
+            break;
+        case GGML_LOG_LEVEL_WARN:
+            LOG_WRN("%s", msg.c_str());
+            UtilityFunctions::push_warning(string_std_to_gd(msg));
+            break;
+        case GGML_LOG_LEVEL_INFO:
+        default:
+            LOG_INF("%s", msg.c_str());
+            UtilityFunctions::print(string_std_to_gd(msg));
+            break;
+        case GGML_LOG_LEVEL_DEBUG:
+            LOG_DBG("%s", msg.c_str());
+            // We don't print debug messages to the Godot console to avoid spam.
+            break;
+    }
 }
 
 GDLlama::~GDLlama() {
