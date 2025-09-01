@@ -32,9 +32,7 @@ LlamaRunner::LlamaRunner(
     should_output_prompt {should_output_prompt},
     glog {glog}
 {
-    std::filesystem::path log_path = "logs/llama.log";
-    std::filesystem::create_directory(log_path.parent_path());
-    common_log_set_file(common_log_main(), log_path.string().c_str());
+    common_log_set_file(common_log_main(), "llama.log");
 }
 
 LlamaRunner::~LlamaRunner() { }
