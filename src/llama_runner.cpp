@@ -1,4 +1,5 @@
 #include "llama_runner.hpp"
+#include "logging_utils.hpp"
 #include "llama.h"
 #include "llama-sampling.h"
 #include <chrono>
@@ -23,30 +24,6 @@
 #include <log.h>
 #include <random>
 
-LlamaRunner::LlamaRunner(
-    bool should_output_prompt,
-    std::function<void(ggml_log_level, const std::string&)> log_callback
-) :
-    should_stop_generation{false},
-    is_waiting_input{false},
-    input{""},
-    should_output_prompt{should_output_prompt}
-{ }
-
-LlamaRunner::~LlamaRunner() {}
-
-bool LlamaRunner::file_exists(const std::string &path) {
-    std::ifstream f(path.c_str());
-    return f.good();
-}
-
-bool LlamaRunner::file_is_empty(const std::string &path) {
-    std::ifstream f;
-    f.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-    f.open(path.c_str(), std::ios::in | std::ios::binary | std::ios::ate);
-    return f.tellg() == 0;
-}
-
 namespace {
     void log_tokenization_details(
         llama_context* ctx,
@@ -65,6 +42,31 @@ namespace {
         }
         log_callback(GGML_LOG_LEVEL_INFO, oss.str());
     }
+}
+
+LlamaRunner::LlamaRunner(
+    bool should_output_prompt,
+    std::function<void(ggml_log_level, const std::string&)> log_callback
+) :
+    should_stop_generation{false},
+    is_waiting_input{false},
+    input{""},
+    should_output_prompt{should_output_prompt}
+{ }
+
+LlamaRunner::~LlamaRunner() {}
+
+void LlamaRunner::llama_stop_generate_text() {
+    should_stop_generation = true;
+}
+
+void LlamaRunner::set_input(std::string input) {
+    this->input = input;
+    is_waiting_input = false;
+}
+
+bool LlamaRunner::get_is_waiting_input() {
+    return is_waiting_input;
 }
 
 std::string LlamaRunner::validate_params_for_initialization(const common_params &params) {
@@ -94,7 +96,8 @@ std::string LlamaRunner::validate_params_for_initialization(const common_params 
 }
 
 std::string LlamaRunner::llama_generate_text(
-    std::string prompt, common_params params,
+    std::string prompt,
+    common_params params,
     std::function<void(std::string)> on_generate_text_updated,
     std::function<void()> on_input_wait_started,
     std::function<void(std::string)> on_generate_text_finished
@@ -158,9 +161,9 @@ std::string LlamaRunner::llama_generate_text(
 
     if (!session_path.empty()) {
         log_callback(GGML_LOG_LEVEL_INFO, "Attempting to load session from '" + session_path + "'");
-        if (!file_exists(session_path)) {
+        if (!std::filesystem::exists((session_path))) {
             log_callback(GGML_LOG_LEVEL_INFO, "Session file does not exist, a new one will be created.");
-        } else if (file_is_empty(session_path)) {
+        } else if (std::filesystem::is_empty((session_path))) {
             log_callback(GGML_LOG_LEVEL_INFO, "Session file is empty, a new session will be initialized.");
         } else {
             // The session file exists and is not empty.
@@ -449,7 +452,7 @@ std::string LlamaRunner::llama_generate_text(
                     const int n_left = n_past - params.n_keep;
                     const int n_discard = n_left / 2;
 
-                    log_callback(
+                    log_callback( 
                         GGML_LOG_LEVEL_INFO,
                         "Context is full, swapping tokens to make space. "
                         "n_past=" + std::to_string(n_past) + 
@@ -465,9 +468,12 @@ std::string LlamaRunner::llama_generate_text(
 
                     n_past -= n_discard;
 
-                    LOG("after swap: n_past = %d, n_past_guidance = %d\n", n_past, n_past_guidance);
-                    LOG("embd: %s\n", string_from(ctx, embd).c_str());
-                    LOG("clear session path\n");
+                    log_callback(
+                        GGML_LOG_LEVEL_INFO, 
+                        "After swap: "
+                        "n_past = " + std::to_string(n_past) +
+                        ", n_past_guidance = " + std::to_string(n_past_guidance)
+                    );
                     session_path.clear();
                 }
             } else {
@@ -477,10 +483,7 @@ std::string LlamaRunner::llama_generate_text(
                     const int bd = (ga_w/ga_n)*(ga_n - 1);
                     const int dd = (ga_w/ga_n) - ib*bd - ga_w;
 
-                    LOG("\n");
-                    LOG("shift: [%6d, %6d] + %6d -> [%6d, %6d]\n", ga_i, n_past, ib*bd, ga_i + ib*bd, n_past + ib*bd);
-                    LOG("div:   [%6d, %6d] / %6d -> [%6d, %6d]\n", ga_i + ib*bd, ga_i + ib*bd + ga_w, ga_n, (ga_i + ib*bd)/ga_n, (ga_i + ib*bd + ga_w)/ga_n);
-                    LOG("shift: [%6d, %6d] + %6d -> [%6d, %6d]\n", ga_i + ib*bd + ga_w, n_past + ib*bd, dd, ga_i + ib*bd + ga_w + dd, n_past + ib*bd + dd);
+                    log_callback(GGML_LOG_LEVEL_INFO, "Performing self-extend context shift.");
 
                     llama_memory_t mem = llama_get_memory(ctx);
                     if (mem) {
@@ -490,9 +493,7 @@ std::string LlamaRunner::llama_generate_text(
                     }
 
                     n_past -= bd;
-                    ga_i += ga_w/ga_n;
-
-                    LOG("\nn_past_old = %d, n_past = %d, ga_i = %d\n\n", n_past + bd, n_past, ga_i);
+                    ga_i += ga_w / ga_n;
                 }
             }
 
@@ -514,6 +515,7 @@ std::string LlamaRunner::llama_generate_text(
                     }
                 }
                 if (i > 0) {
+                    log_callback(GGML_LOG_LEVEL_INFO, "Reusing " + std::to_string(i) + " tokens from session cache.");
                     embd.erase(embd.begin(), embd.begin() + i);
                 }
             }
@@ -523,8 +525,6 @@ std::string LlamaRunner::llama_generate_text(
                 if (n_eval > params.n_batch) {
                     n_eval = params.n_batch;
                 }
-
-                LOG("eval: %s\n", string_from(ctx, embd).c_str());
 
                 std::vector<llama_pos> pos_array(n_eval);
                 for (int j = 0; j < n_eval; j++) {
@@ -567,10 +567,11 @@ std::string LlamaRunner::llama_generate_text(
 
                 n_past += n_eval;
 
-                LOG("n_past = %d\n", n_past);
-                // Display total tokens alongside total time
                 if (params.n_print > 0 && n_past % params.n_print == 0) {
-                    LOG("\n\033[31mTokens consumed so far = %d / %d \033[0m\n", n_past, n_ctx);
+                    log_callback(
+                        GGML_LOG_LEVEL_INFO, 
+                        "Tokens consumed so far = " + std::to_string(n_past) + " / " + std::to_string(n_ctx)
+                    );
                 }
             }
 
@@ -589,7 +590,7 @@ std::string LlamaRunner::llama_generate_text(
                 need_to_save_session = false;
                 llama_state_save_file(ctx, session_path.c_str(), session_tokens.data(), session_tokens.size());
 
-                LOG("saved session to %s\n", session_path.c_str());
+                log_callback(GGML_LOG_LEVEL_INFO, "Saved session to " + session_path);
             }
 
 
@@ -603,13 +604,8 @@ std::string LlamaRunner::llama_generate_text(
 
             embd.push_back(token_id);
 
-            // echo this to console
             input_echo = true;
-
-            // decrement remaining sampling budget
             --n_remain;
-
-            LOG("n_remain: %d\n", n_remain);
         } else {
             // some user input remains from prompt or interaction, forward it to processing
             LOG("prompt_tokens.size(): %d, n_consumed: %d\n", (int) prompt_tokens.size(), n_consumed);
@@ -653,9 +649,9 @@ std::string LlamaRunner::llama_generate_text(
                 fflush(stdout);
             }
         }
+
         // reset color to default if there is no pending user input
         if (input_echo && (int) prompt_tokens.size() == n_consumed) {
-            //console::set_display(console::reset);
             display = true;
         }
 
@@ -667,7 +663,6 @@ std::string LlamaRunner::llama_generate_text(
                 for (llama_token token : generated_tokens_history) {
                     last_output += common_token_to_piece(ctx, token);
                 }
-
 
                 is_antiprompt = false;
                 // Check if each of the reverse prompts appears at the end of the output.
@@ -701,56 +696,53 @@ std::string LlamaRunner::llama_generate_text(
                         }
                     }
                 }
-
                 if (is_antiprompt) {
-                    LOG("found antiprompt: %s\n", last_output.c_str());
+                    log_callback(GGML_LOG_LEVEL_INFO, "Found antiprompt: " + last_output);
                 }
             }
 
             // deal with end of generation tokens in interactive mode
-            if (
-                !generated_tokens_history.empty() &&
-                llama_vocab_is_eog(llama_model_get_vocab(model), generated_tokens_history.back())
-            ) {
-                LOG("found an EOG token\n");
-
+            if (!generated_tokens_history.empty() && llama_vocab_is_eog(llama_model_get_vocab(model), generated_tokens_history.back())) {
+                log_callback(GGML_LOG_LEVEL_INFO, "Found EOG token.");
                 if (params.interactive) {
                     if (!params.antiprompt.empty()) {
-                        // tokenize and inject first reverse prompt
-                        const auto first_antiprompt = ::common_tokenize(ctx, params.antiprompt.front(), false, true);
-                        prompt_tokens.insert(prompt_tokens.end(), first_antiprompt.begin(), first_antiprompt.end());
+                        const auto first_antiprompt = ::common_tokenize(
+                            ctx, 
+                            params.antiprompt.front(),
+                            false,
+                            true
+                        );
+
+                        prompt_tokens.insert(
+                            prompt_tokens.end(),
+                            first_antiprompt.begin(),
+                            first_antiprompt.end()
+                        );
+
                         is_antiprompt = true;
                     }
-
                     is_interacting = true;
                     printf("\n");
                 }
             }
 
             if (n_past > 0 && is_interacting) {
-                if (params.conversation_mode == COMMON_CONVERSATION_MODE_ENABLED) {
-                    printf("\n> ");
-                }
-
-                if (params.input_prefix_bos) {
-                    LOG("adding input prefix BOS token\n");
-                    prompt_tokens.push_back(llama_token_bos(llama_model_get_vocab(model)));
-                }
+                if (params.conversation_mode == COMMON_CONVERSATION_MODE_ENABLED) { printf("\n> "); }
+                if (params.input_prefix_bos) { prompt_tokens.push_back(llama_token_bos(llama_model_get_vocab(model))); }
 
                 std::string buffer;
                 if (!params.input_prefix.empty() && params.conversation_mode == COMMON_CONVERSATION_MODE_DISABLED) {
-                    LOG("appending input prefix: '%s'\n", params.input_prefix.c_str());
                     printf("%s", params.input_prefix.c_str());
                 }
 
                 is_waiting_input = true;
                 on_input_wait_started();
 
-                LOG("Waiting for user input\n");
+                log_callback(GGML_LOG_LEVEL_INFO, "Waiting for user input...");
                 while(is_waiting_input && !should_stop_generation) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
-                LOG("Ending user input\n");
+                log_callback(GGML_LOG_LEVEL_INFO, "User input received.");
 
                 buffer = input;
 
@@ -759,12 +751,9 @@ std::string LlamaRunner::llama_generate_text(
                 if (buffer.length() > 1) {
                     // append input suffix if any
                     if (!params.input_suffix.empty() && params.conversation_mode == COMMON_CONVERSATION_MODE_DISABLED) {
-                        LOG("appending input suffix: '%s'\n", params.input_suffix.c_str());
                         printf("%s", params.input_suffix.c_str());
                     }
-
-                    LOG("buffer: '%s'\n", buffer.c_str());
-
+    
                     const size_t original_size = prompt_tokens.size();
 
                     if (params.escape) {
@@ -775,7 +764,7 @@ std::string LlamaRunner::llama_generate_text(
                     const auto line_inp = ::common_tokenize(ctx, buffer,              false, false);
                     const auto line_sfx = ::common_tokenize(ctx, params.input_suffix, false, true);
 
-                    LOG("input tokens: %s\n", string_from(ctx, line_inp).c_str());
+                    log_callback(GGML_LOG_LEVEL_INFO, "Tokenized user input: " + string_from(ctx, line_inp));
 
                     prompt_tokens.insert(prompt_tokens.end(), line_pfx.begin(), line_pfx.end());
                     prompt_tokens.insert(prompt_tokens.end(), line_inp.begin(), line_inp.end());
@@ -788,9 +777,8 @@ std::string LlamaRunner::llama_generate_text(
                     }
 
                     n_remain -= line_inp.size();
-                    LOG("n_remain: %d\n", n_remain);
                 } else {
-                    LOG("empty line, passing control back\n");
+                    log_callback(GGML_LOG_LEVEL_WARN, "Empty line received, passing control back.");
                 }
 
                 input_echo = false; // do not echo this again
@@ -804,13 +792,10 @@ std::string LlamaRunner::llama_generate_text(
             }
         }
 
-        // end of generation
-        if (
-            !embd.empty() &&
-            llama_vocab_is_eog(llama_model_get_vocab(model), embd.back()) &&
-            !(params.interactive)) 
-        {
-            LOG(" [end of text]\n");
+        // End of Generation
+
+        if (!embd.empty() && llama_vocab_is_eog(llama_model_get_vocab(model), embd.back()) && !(params.interactive)) {
+            log_callback(GGML_LOG_LEVEL_INFO, "End of text reached.");
             break;
         }
 
@@ -823,7 +808,7 @@ std::string LlamaRunner::llama_generate_text(
     }
 
     if (!session_path.empty() && params.prompt_cache_all && !params.prompt_cache_ro) {
-        LOG("\n%s: saving final output to session file '%s'\n", __func__, session_path.c_str());
+        log_callback(GGML_LOG_LEVEL_INFO, "Saving final output to session file '" + session_path + "'");
         llama_state_save_file(ctx, session_path.c_str(), session_tokens.data(), session_tokens.size());
     }
 
@@ -833,24 +818,9 @@ std::string LlamaRunner::llama_generate_text(
     llama_sampler_free(ctx_sampling);
     llama_backend_free();
 
-#ifndef LOG_DISABLE_LOGS
-    LOG("Log end\n");
-#endif // LOG_DISABLE_LOGS
+    log_callback(GGML_LOG_LEVEL_INFO, "Llama run finished.");
 
     on_generate_text_finished(generated_text);
 
     return generated_text;
-}
-
-void LlamaRunner::llama_stop_generate_text() {
-    should_stop_generation = true;
-}
-
-void LlamaRunner::set_input(std::string input) {
-    this->input = input;
-    is_waiting_input = false;
-}
-
-bool LlamaRunner::get_is_waiting_input() {
-    return is_waiting_input;
 }
