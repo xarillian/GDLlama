@@ -1,6 +1,7 @@
 #include "gdllama.hpp"
 #include "conversion.hpp"
 #include "llama_runner.hpp"
+#include "logging_utils.hpp"
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/mutex.hpp>
 #include <godot_cpp/classes/thread.hpp>
@@ -129,94 +130,66 @@ void GDLlama::_bind_methods() {
 }
 
 GDLlama::GDLlama() : params {common_params()},
-    reverse_prompt {""},
-    llama_runner{new LlamaRunner(
-        should_output_prompt,
-        [this](ggml_log_level level, const std::string& msg) {
-            this->log_message(level, msg);
-        }
-    )},
+    llama_runner{new LlamaRunner(should_output_prompt)},
     should_output_prompt {true},
+    reverse_prompt {""},
     generate_text_buffer {""}
 {
     common_log_set_prefix(common_log_main(), true);
     common_log_set_timestamps(common_log_main(), true);
     common_log_set_file(common_log_main(), "llama.log");
-    LOG_INF("---GDLlama logging initialized---");
-    LOG_INF("Welcome to Loguetown!\n\n");
+    GDLOG_INFO("---GDLlama logging initialized---");
+    GDLOG_INFO("Welcome to Loguetown!\n");
 
-    LOG_DBG("GDLlama constructor: start");
-    LOG_DBG("Instantiate GDLlama mutex: start");
+    // LOG_DBG("GDLlama constructor: start\n");
+    // LOG_DBG("Instantiate GDLlama mutex: start\n");
     func_mutex.instantiate();
     generate_text_mutex.instantiate();
 
-    LOG_DBG("Instantiate GDLlama thread: start");
+    // LOG_DBG("Instantiate GDLlama thread: start\n");
     generate_text_thread.instantiate();
-    auto f = (void (*)())[](){};
+    auto f = (void(*)())[](){};
     generate_text_thread->start(create_custom_callable_static_function_pointer(f));
     generate_text_thread->wait_to_finish();
 
-    LOG_DBG("Instantiate GDLlama mutex: done");
-    LOG_DBG("Instantiate GDLlama thread: done");
-    LOG_DBG("GDLlama constructor: done");
+    // LOG_DBG("Instantiate GDLlama mutex: done\n");
+    // LOG_DBG("Instantiate GDLlama thread: done\n");
+    // LOG_DBG("GDLlama constructor: done\n");
 
 }
-
-void GDLlama::log_message(ggml_log_level level, const std::string& msg) {
-    /* Log messages both to the file logger and to Godot. */
-
-    switch (level) {
-        case GGML_LOG_LEVEL_ERROR:
-            LOG_ERR("%s", msg.c_str());
-            UtilityFunctions::push_error(string_std_to_gd(msg));
-            break;
-        case GGML_LOG_LEVEL_WARN:
-            LOG_WRN("%s", msg.c_str());
-            UtilityFunctions::push_warning(string_std_to_gd(msg));
-            break;
-        case GGML_LOG_LEVEL_INFO:
-        default:
-            LOG_INF("%s", msg.c_str());
-            UtilityFunctions::print(string_std_to_gd(msg));
-            break;
-        case GGML_LOG_LEVEL_DEBUG:
-            LOG_DBG("%s", msg.c_str());
-            // We don't print debug messages to the Godot console to avoid spam.
-            break;
-    }
-}
+ 
 
 GDLlama::~GDLlama() {
-    glog_verbose("GDLlama destructor");
+    GDLOG_INFO("GDLlama destructor");
 
     //is_started instead of is_alive to properly clean up all threads
     while (generate_text_thread->is_started()) {
         stop_generate_text();
-        glog_verbose("Waiting thread to finish");
+        GDLOG_INFO("Waiting for thread to finish.");
         generate_text_thread->wait_to_finish();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    glog_verbose("GDLlama destructor -- done");
+    GDLOG_INFO("GDLlama destructor -- done");
 }
 
 void GDLlama::_ready() {
-    glog_verbose("GDLlama _ready");
-    glog_verbose("GDLlama _ready -- done");
+    GDLOG_INFO("GDLlama _ready");
+    GDLOG_INFO("GDLlama _ready -- done");
 }
 
 void GDLlama::_exit_tree() {
-    glog_verbose("GDLlama exit tree");
+    GDLOG_INFO("GDLlama exit tree");
 
     //is_started instead of is_alive to properly clean up all threads
     while (generate_text_thread->is_started()) {
         stop_generate_text();
-        glog_verbose("Waiting thread to finish");
+        GDLOG_INFO("Waiting thread to finish");
         generate_text_thread->wait_to_finish();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    glog_verbose("GDLlama exit tree -- done");
+    GDLOG_INFO("GDLlama exit tree -- done");
 }
 
 String GDLlama::get_model_path() const {
@@ -406,7 +379,7 @@ void GDLlama::set_n_ubatch(const int32_t p_n_ubatch) {
 }
 
 String GDLlama::generate_text_common(String prompt) {
-    glog_verbose("generate_text_common start");
+    GDLOG_INFO("Start!");
 
     llama_runner.reset(
         new LlamaRunner(should_output_prompt)
@@ -416,7 +389,7 @@ String GDLlama::generate_text_common(String prompt) {
     params.antiprompt.clear();
 
     if (reverse_prompt != "") {
-        glog_verbose("Adding reverse prompt: " + reverse_prompt);
+        GDLOG_INFO("Adding reverse prompt: " + reverse_prompt);
         params.antiprompt.emplace_back(reverse_prompt);
     }
 
@@ -454,48 +427,47 @@ String GDLlama::generate_text_common(String prompt) {
         }
     );
 
-    glog_verbose("generate_text_common start -- done");
-
+    GDLOG_INFO("Done");
     return string_std_to_gd(generated_text);
 }
 
 String GDLlama::generate_text_simple_internal(String prompt) {
-    glog_verbose("generate_text_simple_internal");
+    GDLOG_INFO("generate_text_simple_internal");
 
     String full_generated_text = generate_text_common(prompt);
 
     generate_text_mutex->unlock();
-    glog_verbose("generate_text_mutex unlocked");
+    GDLOG_INFO("generate_text_mutex unlocked");
 
-    glog_verbose("generate_text_simple_internal -- done");
+    GDLOG_INFO("generate_text_simple_internal -- done");
 
     return full_generated_text;
 }
 
 
 String GDLlama::generate_text_simple(String prompt) {
-    glog_verbose("generate_text_simple");
+    GDLOG_INFO("generate_text_simple");
     func_mutex->lock();
 
     if (!generate_text_mutex->try_lock()) {
-        glog("GDLlama is busy");
+        GDLOG_INFO("GDLlama is busy");
 
         generate_text_mutex->lock();
     }
 
-    glog_verbose("generate_text_mutex locked");
+    GDLOG_INFO("generate_text_mutex locked");
 
     func_mutex->unlock();
 
     String full_generated_text = generate_text_simple_internal(prompt);
 
-    glog_verbose("generate_text_simple -- done");
+    GDLOG_INFO("generate_text_simple -- done");
 
     return full_generated_text;
 }
 
 String GDLlama::generate_text_grammar_internal(String prompt, String grammar) {
-    glog_verbose("generate_text_grammar_internal");
+    GDLOG_INFO("generate_text_grammar_internal");
     params.sampling.grammar = string_gd_to_std(grammar);
 
     String full_generated_text = generate_text_common(prompt);
@@ -503,36 +475,36 @@ String GDLlama::generate_text_grammar_internal(String prompt, String grammar) {
     params.sampling.grammar = std::string();
 
     generate_text_mutex->unlock();
-    glog_verbose("generate_text_mutex unlocked");
+    GDLOG_INFO("generate_text_mutex unlocked");
 
-    glog_verbose("generate_text_grammar_internal -- done");
+    GDLOG_INFO("generate_text_grammar_internal -- done");
 
     return full_generated_text;
 }
 
 String GDLlama::generate_text_grammar(String prompt, String grammar) {
-    glog_verbose("generate_text_grammar");
+    GDLOG_INFO("generate_text_grammar");
     func_mutex->lock();
 
     if (!generate_text_mutex->try_lock()) {
-        glog("GDLlama is busy");
+        GDLOG_INFO("GDLlama is busy");
 
         generate_text_mutex->lock();
     }
 
-    glog_verbose("generate_text_mutex locked");
+    GDLOG_INFO("generate_text_mutex locked");
 
     func_mutex->unlock();
 
     String full_generated_text = generate_text_grammar_internal(prompt, grammar);
 
-    glog_verbose("generate_text_grammar -- done");
+    GDLOG_INFO("generate_text_grammar -- done");
 
     return full_generated_text;
 }
 
 String GDLlama::generate_text_json_internal(String prompt, String json) {
-    glog_verbose("generate_text_json_internal");
+    GDLOG_INFO("generate_text_json_internal");
     std::string grammar = json_schema_to_grammar(nlohmann::ordered_json::parse(string_gd_to_std(json)));
     params.sampling.grammar = grammar;
 
@@ -541,44 +513,44 @@ String GDLlama::generate_text_json_internal(String prompt, String json) {
     params.sampling.grammar = std::string();
 
     generate_text_mutex->unlock();
-    glog_verbose("generate_text_mutex unlocked");
+    GDLOG_INFO("generate_text_mutex unlocked");
 
-    glog_verbose("generate_text_json_internal -- done");
+    GDLOG_INFO("generate_text_json_internal -- done");
     return full_generated_text;
 }
 
 
 String GDLlama::generate_text_json(String prompt, String json) {
-    glog_verbose("generate_text_json");
+    GDLOG_INFO("generate_text_json");
     func_mutex->lock();
 
     if (!generate_text_mutex->try_lock()) {
-        glog("GDLlama is busy");
+        GDLOG_INFO("GDLlama is busy");
 
         generate_text_mutex->lock();
     }
 
-    glog_verbose("generate_text_mutex locked");
+    GDLOG_INFO("generate_text_mutex locked");
 
     func_mutex->unlock();
 
     String full_generated_text = generate_text_json_internal(prompt, json);
 
-    glog_verbose("generate_text_json -- done");
+    GDLOG_INFO("generate_text_json -- done");
     return full_generated_text;
 }
 
 String GDLlama::generate_text(String prompt, String grammar, String json) {
-    glog_verbose("generate_text");
+    GDLOG_INFO("generate_text");
     func_mutex->lock();
 
     if (!generate_text_mutex->try_lock()) {
-        glog("GDLlama is busy");
+        GDLOG_INFO("GDLlama is busy");
 
         generate_text_mutex->lock();
     }
 
-    glog_verbose("generate_text_mutex locked");
+    GDLOG_INFO("generate_text_mutex locked");
 
     func_mutex->unlock();
 
@@ -591,21 +563,21 @@ String GDLlama::generate_text(String prompt, String grammar, String json) {
         full_generated_text = generate_text_simple_internal(prompt);
     }
 
-    glog_verbose("generate_text_json -- done");
+    GDLOG_INFO("generate_text_json -- done");
     return full_generated_text;
 }
 
 Error GDLlama::run_generate_text(String prompt, String grammar, String json) {
-    glog_verbose("run_generate_text");
+    GDLOG_INFO("run_generate_text");
     func_mutex->lock();
 
     if (!generate_text_mutex->try_lock()) {
-        glog("GDLlama is busy");
+        GDLOG_INFO("GDLlama is busy");
 
         generate_text_mutex->lock();
     }
 
-    glog_verbose("generate_text_mutex locked");
+    GDLOG_INFO("generate_text_mutex locked");
 
     func_mutex->unlock();
 
@@ -615,7 +587,7 @@ Error GDLlama::run_generate_text(String prompt, String grammar, String json) {
     }
 
     generate_text_thread.instantiate();
-    glog_verbose("generate_text_thread instantiated");
+    GDLOG_INFO("generate_text_thread instantiated");
 
     Error error;
 
@@ -630,17 +602,17 @@ Error GDLlama::run_generate_text(String prompt, String grammar, String json) {
         error = generate_text_thread->start(c.bind(prompt));
     }
 
-    glog_verbose("run_generate_text -- done");
+    GDLOG_INFO("run_generate_text -- done");
     return error;
 }
 
 void GDLlama::stop_generate_text() {
-    glog_verbose("Stopping llama_runner");
+    GDLOG_INFO("Stopping llama_runner");
     llama_runner->llama_stop_generate_text();
 }
 
 void GDLlama::input_text(String input) {
-    glog_verbose("input_text: " +  string_gd_to_std(input));
+    GDLOG_INFO("input_text: " +  string_gd_to_std(input));
     llama_runner->set_input(string_gd_to_std(input));
 }
 

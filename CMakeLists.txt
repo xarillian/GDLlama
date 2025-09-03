@@ -69,23 +69,15 @@ add_subdirectory(llama.cpp)
 set(src_files
   "src/sqlite3.c"
   "src/sqlite3.h"
-  "src/sqlite3ext.h"
   "src/sqlite-vec.c"
-  "src/sqlite-vec.h"
-  "src/conversion.hpp"
   "src/conversion.cpp"
-  "src/gdembedding.hpp"
   "src/gdembedding.cpp"
-  "src/gdllama.hpp"
   "src/gdllama.cpp"
-  "src/embedding_runner.hpp"
   "src/embedding_runner.cpp"
-  "src/llama_runner.hpp"
   "src/llama_runner.cpp"
-  "src/llm_db.hpp"
   "src/llm_db.cpp"
-  "src/register_types.hpp"
   "src/register_types.cpp"
+  "src/logging_utils.cpp"
 )
 
 if (APPLE)

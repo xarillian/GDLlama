@@ -11,7 +11,6 @@ class LlamaRunner {
         bool is_waiting_input;
         bool should_output_prompt;
         std::string input;
-        std::function<void(ggml_log_level, const std::string&)> log_callback;
 
     private:
         /**
@@ -23,12 +22,9 @@ class LlamaRunner {
 
     public:
         LlamaRunner(
-            bool should_output_prompt = true,
-            std::function<void(ggml_log_level, const std::string&)> log_callback
+            bool should_output_prompt = true
         );
         ~LlamaRunner();
-        static bool file_exists(const std::string &path);
-        static bool file_is_empty(const std::string &path);
         std::string llama_generate_text(
             std::string prompt,
             common_params params,

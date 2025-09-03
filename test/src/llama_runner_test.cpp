@@ -12,7 +12,7 @@ int main(int argc, char ** argv) {
 
     std::cout << "Start testing: " << std::endl;
 
-    std::unique_ptr<LlamaRunner> lr {new LlamaRunner(false, [](std::string msg) {})}; 
+    std::unique_ptr<LlamaRunner> lr {new LlamaRunner(false)};
     std::cout << "Created llama runner" << std::endl;
 
     std::string prompt = "Tell me about Vulkan: ";
