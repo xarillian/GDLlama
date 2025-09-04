@@ -134,8 +134,6 @@ std::string LlamaRunner::llama_generate_text(
     llama_numa_init(params.numa);
     GDLOG_DEBUG("llama_numa_init() completed successfully");
 
-    GDLOG_DEBUG("Model Params: \n" + std::to_string(params));
-
     GDLOG_DEBUG("Calling common_init_from_params()");
     common_init_result result = common_init_from_params(params);
     GDLOG_DEBUG("common_init_from_params() completed");
