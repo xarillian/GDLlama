@@ -115,11 +115,8 @@ void GDLlama::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_n_ubatch", "p_n_ubatch"), &GDLlama::set_n_ubatch);
     ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "n_ubatch", PROPERTY_HINT_NONE), "set_n_ubatch", "get_n_ubatch");
 
-    ClassDB::bind_method(D_METHOD("generate_text_simple", "prompt"), &GDLlama::generate_text_simple);
-    ClassDB::bind_method(D_METHOD("generate_text_grammar", "prompt", "grammar"), &GDLlama::generate_text_grammar);
-    ClassDB::bind_method(D_METHOD("generate_text_json", "prompt", "json"), &GDLlama::generate_text_json);
     ClassDB::bind_method(D_METHOD("generate_text", "prompt", "grammar", "json"), &GDLlama::generate_text);
-    ClassDB::bind_method(D_METHOD("run_generate_text", "prompt", "grammar", "json"), &GDLlama::run_generate_text);
+    ClassDB::bind_method(D_METHOD("generate_text_async", "prompt", "grammar", "json"), &GDLlama::generate_text_async);
     ClassDB::bind_method(D_METHOD("stop_generate_text"), &GDLlama::stop_generate_text);
     ClassDB::bind_method(D_METHOD("input_text", "input"), &GDLlama::input_text);
     ClassDB::bind_method(D_METHOD("is_running"), &GDLlama::is_running);
@@ -364,16 +361,53 @@ void GDLlama::set_n_ubatch(const int32_t p_n_ubatch) {
     params.n_ubatch = p_n_ubatch;
 }
 
-String GDLlama::generate_text_common(String prompt) {
-    GDLOG_DEBUG("Start");
+/**
+ * @brief Generates text synchronously using the loaded language model.
+ * 
+ * This function is considered thread-safe but only one generation can run at a time. Calling this
+ * while another text generation is in progress will block until the previous generation completes.
+ * 
+ * The generation process will emit signals during execution:
+ *  
+ * - generate_text_updated: Emitted for each token/text chunk generated
+ *      
+ * - input_wait_started: Emitted when interactive mode requires user input
+ *      
+ * - generate_text_finished: Emitted when generation completes
+ * 
+ * @param prompt The input text to generate from. Required.
+ * @param grammar Optional BNF grammar string to constrain generation. Empty string for no grammar.
+ * @param json Optional JSON schema to constrain generation. Will be converted to grammar 
+ *             internally. If both grammar and JSON are provided, grammar takes precedence.
+ * 
+ * @return The complete generated text. Returns an error message string if generation fails.
+ * 
+ */
+String GDLlama::generate_text(String prompt, String grammar, String json) {
+    func_mutex->lock();
+    if (!generate_text_mutex->try_lock()) {
+        generate_text_mutex->lock();
+    }
+    func_mutex->unlock();
 
-    llama_runner.reset(
-        new LlamaRunner(should_output_prompt)
-    );
+    return generate_text_locked(prompt, grammar, json);
+}
 
-    // Remove modified antiprompt from the previouss generate_text call (e.g., instruct mode)
-    params.antiprompt.clear();
+String GDLlama::generate_text_locked(String prompt, String grammar, String json) {
+    if (!grammar.is_empty()) {
+        params.sampling.grammar = string_gd_to_std(grammar);
+    } else if (!json.is_empty()) {
+        std::string grammar_from_json = json_schema_to_grammar(
+            nlohmann::ordered_json::parse(string_gd_to_std(json))
+        );
 
+        params.sampling.grammar = grammar_from_json; 
+    }
+
+    GDLOG_DEBUG("Start Generating Text");
+    llama_runner.reset(new LlamaRunner(should_output_prompt));
+
+    params.antiprompt.clear(); // Remove modified antiprompt from the previous generate_text call
     if (reverse_prompt != "") {
         GDLOG_INFO("Adding reverse prompt: " + reverse_prompt);
         params.antiprompt.emplace_back(reverse_prompt);
@@ -383,6 +417,7 @@ String GDLlama::generate_text_common(String prompt) {
     if (!params.interactive) {
         // Llama only append prefix and suffix when it is interactive
         // Append the prefix and suffix here for simple text generation
+        // @todo what do these comments mean?
         s_prompt = params.input_prefix + string_gd_to_std(prompt) + params.input_suffix;
     } else {
         s_prompt = string_gd_to_std(prompt);
@@ -413,96 +448,36 @@ String GDLlama::generate_text_common(String prompt) {
         }
     );
 
-    GDLOG_DEBUG("Done");
-    return string_std_to_gd(generated_text);
-}
-
-String GDLlama::generate_text_simple_internal(String prompt) {
-    GDLOG_DEBUG("Start");
-
-    String full_generated_text = generate_text_common(prompt);
-
-    GDLOG_DEBUG("Unlocking generate_text_mutex...");
-    generate_text_mutex->unlock();
-    GDLOG_DEBUG("generate_text_mutex unlocked");
-
-    GDLOG_DEBUG("Done");
-    return full_generated_text;
-}
-
-
-String GDLlama::generate_text_simple(String prompt) {
-    GDLOG_DEBUG("Start");
-
-    func_mutex->lock();
-    if (!generate_text_mutex->try_lock()) {
-        generate_text_mutex->lock();
-    }
-
-    GDLOG_DEBUG("generate_text_mutex locked");
-
-    func_mutex->unlock();
-    GDLOG_DEBUG("func_mutex unlocked");
-
-    String full_generated_text = generate_text_simple_internal(prompt);
-
-    GDLOG_DEBUG("Done");
-    return full_generated_text;
-}
-
-String GDLlama::generate_text_grammar_internal(String prompt, String grammar) {
-    GDLOG_DEBUG("Start");
-    params.sampling.grammar = string_gd_to_std(grammar);
-
-    String full_generated_text = generate_text_common(prompt);
+    godot::String generated_text_to_return = string_std_to_gd(generated_text);
+    GDLOG_DEBUG("End Generating Text");
 
     params.sampling.grammar = std::string();
-
-    generate_text_mutex->unlock();
-    GDLOG_DEBUG("generate_text_mutex unlocked");
-
-    GDLOG_DEBUG("Done");
-    return full_generated_text;
-}
-
-String GDLlama::generate_text_grammar(String prompt, String grammar) {
-    GDLOG_DEBUG("Start");
-
-    func_mutex->lock();
-    if (!generate_text_mutex->try_lock()) {
-        generate_text_mutex->lock();
-    }
-
-    GDLOG_DEBUG("generate_text_mutex locked");
-
-    func_mutex->unlock();
-    GDLOG_DEBUG("func_mutex unlocked");
-
-    String full_generated_text = generate_text_grammar_internal(prompt, grammar);
-
-    GDLOG_DEBUG("Done");
-    return full_generated_text;
-}
-
-String GDLlama::generate_text_json_internal(String prompt, String json) {
-    GDLOG_DEBUG("Start");
     
-    std::string grammar = json_schema_to_grammar(nlohmann::ordered_json::parse(string_gd_to_std(json)));
-    params.sampling.grammar = grammar;
-
-    String full_generated_text = generate_text_common(prompt);
-
-    params.sampling.grammar = std::string();
-
-    generate_text_mutex->unlock();
-    GDLOG_DEBUG("generate_text_mutex unlocked");
-
-    GDLOG_DEBUG("Done");
-    return full_generated_text;
+    return generated_text_to_return;
 }
 
 
-String GDLlama::generate_text_json(String prompt, String json) {
+/**
+ * @brief Starts asynchronous text generation using the loaded language model.
+ * 
+ * This function starts generation on a separate thread and returns immediately.
+ * The actual generated text is delivered through signals:
+ *  
+ * - generate_text_updated: Emitted for each token/text chunk generated
+ *      
+ * - input_wait_started: Emitted when interactive mode requires user input
+ *      
+ * - generate_text_finished: Emitted when generation completes
+ * 
+ * @param prompt The input text to generate from. Required.
+ * @param grammar Optional BNF grammar string to constrain generation. Empty string for no grammar.
+ * @param json Optional JSON schema to constrain generation. Will be converted to grammar 
+ *             internally. If both grammar and JSON are provided, grammar takes precedence.
+ * 
+ * @return OK if generation started successfully, or an error code if failed.
+ * 
+ */
+Error GDLlama::generate_text_async(String prompt, String grammar, String json) {
     GDLOG_DEBUG("Start");
 
     func_mutex->lock();
@@ -514,50 +489,7 @@ String GDLlama::generate_text_json(String prompt, String json) {
     func_mutex->unlock();
     GDLOG_DEBUG("func_mutex unlocked");
 
-    String full_generated_text = generate_text_json_internal(prompt, json);
-
-    GDLOG_DEBUG("Done");
-    return full_generated_text;
-}
-
-String GDLlama::generate_text(String prompt, String grammar, String json) {
-    GDLOG_DEBUG("Start");
-
-    func_mutex->lock();
-    if (!generate_text_mutex->try_lock()) {
-        generate_text_mutex->lock();
-    }
-    GDLOG_DEBUG("generate_text_mutex locked");
-
-    func_mutex->unlock();
-    GDLOG_DEBUG("func_mutex unlocked");
-
-    String full_generated_text;
-    if (!grammar.is_empty()) {
-        full_generated_text = generate_text_grammar_internal(prompt, grammar);
-    } else if (!json.is_empty()) {
-        full_generated_text = generate_text_json_internal(prompt, json);
-    } else {
-        full_generated_text = generate_text_simple_internal(prompt);
-    }
-
-    GDLOG_DEBUG("Done");
-    return full_generated_text;
-}
-
-Error GDLlama::run_generate_text(String prompt, String grammar, String json) {
-    GDLOG_DEBUG("Start");
-
-    func_mutex->lock();
-    if (!generate_text_mutex->try_lock()) {
-        generate_text_mutex->lock();
-    }
-    GDLOG_DEBUG("generate_text_mutex locked");
-
-    func_mutex->unlock();
-    GDLOG_DEBUG("func_mutex unlocked");
-
-    //is_started instead of is_alive to properly clean up all threads
+    // is_started instead of is_alive to properly clean up all threads
     if (generate_text_thread->is_started()) {
         generate_text_thread->wait_to_finish();
     }
@@ -565,17 +497,8 @@ Error GDLlama::run_generate_text(String prompt, String grammar, String json) {
     generate_text_thread.instantiate();
     GDLOG_DEBUG("generate_text_thread instantiated");
 
-    Error error;
-    if (!grammar.is_empty()) {
-        Callable c = callable_mp(this, &GDLlama::generate_text_grammar_internal);
-        error = generate_text_thread->start(c.bind(prompt, grammar));
-    } else if (!json.is_empty()) {
-        Callable c = callable_mp(this, &GDLlama::generate_text_json_internal);
-        error = generate_text_thread->start(c.bind(prompt, json));
-    } else {
-        Callable c = callable_mp(this, &GDLlama::generate_text_simple_internal);
-        error = generate_text_thread->start(c.bind(prompt));
-    }
+    Callable c = callable_mp(this, &GDLlama::generate_text);
+    Error error = generate_text_thread->start(c.bind(prompt, grammar, json));
 
     GDLOG_DEBUG("Done");
     return error;
