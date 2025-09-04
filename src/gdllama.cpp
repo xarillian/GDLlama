@@ -135,27 +135,19 @@ GDLlama::GDLlama() : params {common_params()},
     reverse_prompt {""},
     generate_text_buffer {""}
 {
-    common_log_set_prefix(common_log_main(), true);
-    common_log_set_timestamps(common_log_main(), true);
-    common_log_set_file(common_log_main(), "llama.log");
-    GDLOG_INFO("---GDLlama logging initialized---");
-    GDLOG_INFO("Welcome to Loguetown!\n");
-
-    // LOG_DBG("GDLlama constructor: start\n");
-    // LOG_DBG("Instantiate GDLlama mutex: start\n");
+    GDLOG_DEBUG("Instantiating GDLlama Mutex...");
     func_mutex.instantiate();
     generate_text_mutex.instantiate();
+    GDLOG_DEBUG("Instantiated!");
 
-    // LOG_DBG("Instantiate GDLlama thread: start\n");
+    GDLOG_DEBUG("Instantiating generate_text_thread...");
     generate_text_thread.instantiate();
     auto f = (void(*)())[](){};
     generate_text_thread->start(create_custom_callable_static_function_pointer(f));
     generate_text_thread->wait_to_finish();
+    GDLOG_DEBUG("Instantiated!");
 
-    // LOG_DBG("Instantiate GDLlama mutex: done\n");
-    // LOG_DBG("Instantiate GDLlama thread: done\n");
-    // LOG_DBG("GDLlama constructor: done\n");
-
+    GDLOG_DEBUG("GDLlama Ready.");
 }
  
 

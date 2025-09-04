@@ -7,6 +7,8 @@
 
 #include <log.h>
 
+void initialize_logging();
+
 void log_to_godot_and_file(ggml_log_level level, const std::string& msg);
 
 #ifndef LOG_DISABLE_LOGS
