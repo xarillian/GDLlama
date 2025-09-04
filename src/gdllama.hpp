@@ -20,9 +20,9 @@ class GDLlama : public Node {
 
     private:
         common_params params;
+        std::unique_ptr<LlamaRunner> llama_runner;
         bool should_output_prompt;
         std::string reverse_prompt;
-        std::unique_ptr<LlamaRunner> llama_runner;
         Ref<Mutex> generate_text_mutex;
         Ref<Mutex> func_mutex;
         Ref<Thread> generate_text_thread;
@@ -30,13 +30,14 @@ class GDLlama : public Node {
         String generate_text_simple_internal(String prompt);
         String generate_text_grammar_internal(String prompt, String grammar);
         String generate_text_json_internal(String prompt, String json);
-        std::function<void(std::string)> glog;
-        std::function<void(std::string)> glog_verbose;
         std::string generate_text_buffer;
 
     protected:
 	    static void _bind_methods();
     
+    public:
+        void log_message(ggml_log_level level, const std::string& msg);
+
     public:
         GDLlama();
         ~GDLlama();

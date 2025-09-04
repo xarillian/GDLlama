@@ -22,6 +22,7 @@
 #include <godot_cpp/variant/variant.hpp>
 #include <queue>
 #include <vector>
+#include <thread>
 
 namespace godot {
 
