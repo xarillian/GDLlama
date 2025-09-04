@@ -3,7 +3,12 @@
         {
             "name": "Win32",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/llama.cpp",
+                "${workspaceFolder}/llama.cpp/common",
+                "${workspaceFolder}/llama.cpp/ggml",
+                "${workspaceFolder}/llama.cpp/tools",
+                "${workspaceFolder}/llama.cpp/vendor"
             ],
             "defines": [
                 "_DEBUG",
