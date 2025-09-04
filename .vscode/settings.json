@@ -1,8 +1,0 @@
-{
-    "files.associations": {
-        "memory": "cpp",
-        "cstdint": "cpp",
-        "string": "cpp",
-        "thread": "cpp"
-    }
-}
