@@ -137,11 +137,18 @@ std::string LlamaRunner::llama_generate_text(
     GDLOG_DEBUG("Calling common_init_from_params()");
     common_init_result result = common_init_from_params(params);
     GDLOG_DEBUG("common_init_from_params() completed");
+    
     llama_model * model = result.model.get();
-    llama_context * ctx = result.context.get();
-
     if (model == NULL) {
         std::string msg = "Failed to load model from path: " + params.model.path;
+        GDLOG_ERROR(msg);
+        on_generate_text_finished(msg);
+        return msg;
+    }
+
+    llama_context * ctx = result.context.get();
+    if (ctx == NULL) {
+        std::string msg = "Failed to create context.";
         GDLOG_ERROR(msg);
         on_generate_text_finished(msg);
         return msg;
