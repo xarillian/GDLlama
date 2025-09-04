@@ -10,11 +10,9 @@ void initialize_logging() {
         return;
     }
 
-    godot::DirAccess::make_dir_recursive_absolute("res://logs");
-
     common_log_set_prefix(common_log_main(), true);
     common_log_set_timestamps(common_log_main(), true);
-    common_log_set_file(common_log_main(), "logs/gdllama.log");
+    common_log_set_file(common_log_main(), "./addons/godot_llm/gdllama.log.txt");
     
     is_initialized = true;
     
@@ -43,11 +41,11 @@ void log_to_godot_and_file(ggml_log_level level, const std::string& msg) {
         case GGML_LOG_LEVEL_INFO:
         default:
             LOG_INF("%s\n", msg.c_str());
-            // We don't print info messages to the Godot console to avoid spam 
+            // We don't print info messages to the Godot console to avoid spam
             break;
         case GGML_LOG_LEVEL_DEBUG:
-            LOG_DBG("%s\n", msg.c_str());
-            godot::UtilityFunctions::print(string_std_to_gd(msg));
+            LOG_INF("%s\n", msg.c_str());  // LOG_DBG seems broken
+            // We don't print debug messages to the Godot console to avoid spam
             break;
     }
 }

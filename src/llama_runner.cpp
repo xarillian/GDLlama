@@ -100,12 +100,13 @@ std::string LlamaRunner::llama_generate_text(
     std::function<void()> on_input_wait_started,
     std::function<void(std::string)> on_generate_text_finished
 ){
-    GDLOG_INFO("Llama runner started.");
+    GDLOG_DEBUG("Start");
+    GDLOG_INFO("User Prompt: " + prompt);
 
     std::string generated_text = "";
+    bool is_interacting = false;
 
     params.prompt = prompt;
-    bool is_interacting = false;
 
     // --- 1. Pre-Flight Validation
 
@@ -116,6 +117,8 @@ std::string LlamaRunner::llama_generate_text(
         return validation_err;
     }
 
+    GDLOG_DEBUG("Pre-flight validation successful");
+
     // --- 2. Model and Context Initialization
 
     if (params.sampling.seed == LLAMA_DEFAULT_SEED) {
@@ -124,10 +127,18 @@ std::string LlamaRunner::llama_generate_text(
     }
     GDLOG_INFO("Using seed: " + std::to_string(params.sampling.seed));
 
+    GDLOG_DEBUG("Calling llama_backend_init()");
     llama_backend_init();
+    GDLOG_DEBUG("llama_backend_init() completed successfully");
+    GDLOG_DEBUG("Calling llama_numa_init() with strategy: " + std::to_string(params.numa));
     llama_numa_init(params.numa);
+    GDLOG_DEBUG("llama_numa_init() completed successfully");
 
+    GDLOG_DEBUG("Model Params: \n" + std::to_string(params));
+
+    GDLOG_DEBUG("Calling common_init_from_params()");
     common_init_result result = common_init_from_params(params);
+    GDLOG_DEBUG("common_init_from_params() completed");
     llama_model * model = result.model.get();
     llama_context * ctx = result.context.get();
 
@@ -148,6 +159,7 @@ std::string LlamaRunner::llama_generate_text(
     }
 
     GDLOG_INFO(common_params_get_system_info(params).c_str());
+    GDLOG_DEBUG("Model initialized");
 
     // --- 3. Session File Loading
 
@@ -157,9 +169,9 @@ std::string LlamaRunner::llama_generate_text(
     if (!session_path.empty()) {
         GDLOG_INFO("Attempting to load session from '" + session_path + "'");
         if (!std::filesystem::exists((session_path))) {
-            GDLOG_INFO("Session file does not exist, a new one will be created.");
+            GDLOG_WARN("Session file does not exist, a new one will be created.");
         } else if (std::filesystem::is_empty((session_path))) {
-            GDLOG_INFO("Session file is empty, a new session will be initialized.");
+            GDLOG_WARN("Session file is empty, a new session will be initialized.");
         } else {
             // The session file exists and is not empty.
             session_tokens.resize(n_ctx);
@@ -174,14 +186,15 @@ std::string LlamaRunner::llama_generate_text(
             session_tokens.resize(n_token_count_out);
             GDLOG_INFO("Loaded session with " + std::to_string(session_tokens.size()) + " tokens.");
         }
-
     }
+
+    GDLOG_DEBUG("Session Path Loaded");
 
     // --- 4. Prompt Tokenization and Validation
 
     const bool add_bos = llama_vocab_get_add_bos(llama_model_get_vocab(model));
     GGML_ASSERT(llama_vocab_get_add_eos(llama_model_get_vocab(model)) != 1);
-    GDLOG_INFO("add_bos token setting: " + std::to_string(add_bos));
+    GDLOG_DEBUG("add_bos token setting: " + std::to_string(add_bos));
 
     std::vector<llama_token> prompt_tokens;  // Embedding Input
 
@@ -193,8 +206,7 @@ std::string LlamaRunner::llama_generate_text(
         prompt_tokens = session_tokens;
     }
 
-    GDLOG_INFO("Prompt: \"" + params.prompt + "\"");
-    GDLOG_INFO("Tokenized prompt: " + string_from(ctx, prompt_tokens));
+    GDLOG_INFO("Tokenized User Prompt: " + string_from(ctx, prompt_tokens));
 
     if (prompt_tokens.empty()) {
         // We should not run without any tokens. An empty prompt is an invalid state.
@@ -288,8 +300,8 @@ std::string LlamaRunner::llama_generate_text(
     if (params.verbose_prompt) {
         GDLOG_INFO("Verbose prompt enabled.");
         
-        // This is inefficient, but it is likely a user would expect slower output when increasing
-        // verbosity anyway.
+        // This log is inefficient, but it is likely a user would expect slower output when
+        //increasing verbosity anyway.
         log_tokenization_details(ctx, "Initial prompt", params.prompt, true);
 
         if (params.n_keep > add_bos) {
@@ -801,9 +813,10 @@ std::string LlamaRunner::llama_generate_text(
     llama_sampler_free(ctx_sampling);
     llama_backend_free();
 
-    GDLOG_INFO("Llama run finished.");
+    GDLOG_INFO("Generated Text: " + std::string(generated_text));
 
     on_generate_text_finished(generated_text);
 
+    GDLOG_DEBUG("Done");
     return generated_text;
 }

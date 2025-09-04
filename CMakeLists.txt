@@ -97,19 +97,32 @@ set(src_files
   "src/logging_utils.cpp"
 )
 
-if (APPLE)
-  set(ARCH_NAME "universal")
-else()
-  set(ARCH_NAME ${CMAKE_SYSTEM_PROCESSOR})
-endif()
-
-set(LIB_NAME libgodot_llm.${CMAKE_SYSTEM_NAME}.${CMAKE_BUILD_TYPE}.${ARCH_NAME})
-string(TOLOWER ${LIB_NAME} LIB_NAME)
+string(TOLOWER ${CMAKE_SYSTEM_NAME} SYSTEM_NAME_LOWER)
 
 set(CMAKE_STATIC_LIBRARY_PREFIX "")
 set(CMAKE_SHARED_LIBRARY_PREFIX "")
 
+if (APPLE)
+  set(ARCH_SUFFIX "universal")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+  set(ARCH_SUFFIX "amd64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+  set(ARCH_SUFFIX "aarch64")
+else()
+  set(ARCH_SUFFIX ${CMAKE_SYSTEM_PROCESSOR})
+endif()
+
+set(LIB_NAME godot_llm)
+
 add_library(${LIB_NAME} SHARED ${src_files})
+
+set_target_properties(${LIB_NAME} PROPERTIES
+    OUTPUT_NAME "libgodot_llm"
+    DEBUG_POSTFIX ".${SYSTEM_NAME_LOWER}.debug.${ARCH_SUFFIX}"
+    RELEASE_POSTFIX ".${SYSTEM_NAME_LOWER}.release.${ARCH_SUFFIX}"
+    MINSIZEREL_POSTFIX ".${SYSTEM_NAME_LOWER}.minsizerel.${ARCH_SUFFIX}"
+    RELWITHDEBINFO_POSTFIX ".${SYSTEM_NAME_LOWER}.relwithdebinfo.${ARCH_SUFFIX}"
+)
 
 target_link_libraries(${LIB_NAME} PRIVATE godot-cpp common llama)
 
@@ -119,11 +132,6 @@ target_include_directories(${LIB_NAME} PRIVATE
   llama.cpp/common
   llama.cpp/src
   llama.cpp/vendor
-)
-
-# If the build type isn't DEBUG, we don't want to see debug logs
-target_compile_definitions(${LIB_NAME} PRIVATE
-  $<$<NOT:$<CONFIG:Debug>>:LOG_DISABLE_LOGS>
 )
 
 # ============================================================================
@@ -168,7 +176,6 @@ target_include_directories(llama_runner_test PRIVATE
   llama.cpp/common
   llama.cpp/src
   llama.cpp/vendor
-  godot-cpp
 )
 target_compile_definitions(llama_runner_test PRIVATE
   SQLITE_CORE
@@ -193,7 +200,6 @@ target_include_directories(embedding_runner_test PRIVATE
   llama.cpp/common
   llama.cpp/src
   llama.cpp/vendor
-  godot-cpp
 )
 target_compile_definitions(llama_runner_test PRIVATE
   SQLITE_CORE
