@@ -24,8 +24,8 @@ class LlamaRunner {
         LlamaRunner(
             bool should_output_prompt = true
         );
-        ~LlamaRunner();
-        std::string llama_generate_text(
+        virtual ~LlamaRunner(); 
+        virtual std::string llama_generate_text(
             std::string prompt,
             common_params params,
             std::function<void(std::string)> on_generate_text_updated,

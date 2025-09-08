@@ -12,13 +12,14 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include "llama_controller.hpp"
 
 namespace godot {
 
 class GDLlama : public Node {
     GDCLASS(GDLlama, Node)
 
-    private:
+    protected:
         common_params params;
         std::unique_ptr<LlamaRunner> llama_runner;
         bool should_output_prompt;
@@ -29,10 +30,11 @@ class GDLlama : public Node {
         std::string generate_text_buffer;
 
     protected:
-	    static void _bind_methods();
-    
-    public:
-        void log_message(ggml_log_level level, const std::string& msg);
+        static void _bind_methods();
+
+    private:
+        LlamaController controller;
+        String generate_text_locked(String prompt, String grammar, String json);
 
     public:
         GDLlama();
@@ -88,7 +90,6 @@ class GDLlama : public Node {
         void set_n_ubatch(const int32_t p_n_ubatch);
         
         String generate_text(String prompt, String grammar, String json);
-        String generate_text_locked(String prompt, String grammar, String json);
         Error generate_text_async(String prompt, String grammar = "", String json = "");
         
         bool is_running();

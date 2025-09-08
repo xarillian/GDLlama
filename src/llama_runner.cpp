@@ -4,7 +4,6 @@
 #include "llama-sampling.h"
 #include <chrono>
 #include <common.h>
-#include <log.h>
 #include <fstream>
 #include <filesystem>
 #include <cstddef>

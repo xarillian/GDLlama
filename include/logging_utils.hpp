@@ -1,11 +1,11 @@
 #ifndef LOGGING_UTILS_HPP
 #define LOGGING_UTILS_HPP
 
-#include <string>
 #include <functional>
+#include <string>
 #include <sstream>
 
-#include <log.h>
+#include "log.h"
 
 void initialize_logging();
 

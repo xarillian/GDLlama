@@ -17,7 +17,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <log.h>
 #include <thread>
 
 namespace godot {
@@ -394,66 +393,36 @@ String GDLlama::generate_text(String prompt, String grammar, String json) {
 }
 
 String GDLlama::generate_text_locked(String prompt, String grammar, String json) {
-    if (!grammar.is_empty()) {
-        params.sampling.grammar = string_gd_to_std(grammar);
-    } else if (!json.is_empty()) {
-        std::string grammar_from_json = json_schema_to_grammar(
-            nlohmann::ordered_json::parse(string_gd_to_std(json))
-        );
+    std::string s_prompt = string_gd_to_std(prompt);
+    std::string s_grammar = string_gd_to_std(grammar);
+    std::string s_json = string_gd_to_std(json);
 
-        params.sampling.grammar = grammar_from_json; 
-    }
-
-    GDLOG_DEBUG("Start Generating Text");
-    llama_runner.reset(new LlamaRunner(should_output_prompt));
-
-    params.antiprompt.clear(); // Remove modified antiprompt from the previous generate_text call
-    if (reverse_prompt != "") {
-        GDLOG_INFO("Adding reverse prompt: " + reverse_prompt);
-        params.antiprompt.emplace_back(reverse_prompt);
-    }
-
-    std::string s_prompt;
-    if (!params.interactive) {
-        // Llama only append prefix and suffix when it is interactive
-        // Append the prefix and suffix here for simple text generation
-        // @todo what do these comments mean?
-        s_prompt = params.input_prefix + string_gd_to_std(prompt) + params.input_suffix;
-    } else {
-        s_prompt = string_gd_to_std(prompt);
-    }
-
-    std::string generated_text = llama_runner->llama_generate_text(
-        s_prompt,
-        params,
-        [this](std::string s) {
-            if (generate_text_buffer.empty() && is_utf8(s.data())){
-                String new_text = string_std_to_gd(s);
+    auto on_update = [this](std::string s) {
+        if (generate_text_buffer.empty() && is_utf8(s.data())){
+            call_deferred("emit_signal", "generate_text_updated", string_std_to_gd(s));
+        } else {
+            generate_text_buffer.append(s);
+            if (is_utf8(generate_text_buffer.data())) {
+                String new_text = string_std_to_gd(generate_text_buffer);
+                generate_text_buffer.clear();
                 call_deferred("emit_signal", "generate_text_updated", new_text);
-            } else {
-                generate_text_buffer.append(s);
-                if (is_utf8(generate_text_buffer.data())) {
-                    String new_text = string_std_to_gd(generate_text_buffer);
-                    generate_text_buffer.clear();
-                    call_deferred("emit_signal", "generate_text_updated", new_text);
-                }
             }
-        },
-        [this]() {
-            call_deferred("emit_signal", "input_wait_started");
-        },
-        [this](std::string s) {
-            String text {string_std_to_gd(s)};
-            call_deferred("emit_signal", "generate_text_finished", text);
         }
+    };
+
+    auto on_wait_start = [this]() {
+        call_deferred("emit_signal", "input_wait_started");
+    };
+
+    auto on_finish = [this](std::string s) {
+        call_deferred("emit_signal", "generate_text_finished", string_std_to_gd(s));
+    };
+
+    std::string result = controller.generate_text_locked(
+        s_prompt, s_grammar, s_json, on_update, on_wait_start, on_finish
     );
 
-    godot::String generated_text_to_return = string_std_to_gd(generated_text);
-    GDLOG_DEBUG("End Generating Text");
-
-    params.sampling.grammar = std::string();
-    
-    return generated_text_to_return;
+    return string_std_to_gd(result);
 }
 
 
