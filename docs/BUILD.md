@@ -51,7 +51,7 @@ cmake .. -GNinja -DCMAKE_TOOLCHAIN_FILE=$NDK_PATH\cmake\android.toolchain.cmake 
 3. Compile and install with `ninja`.
 
 ```shell
-ninja -j4
+ninja
 ninja install
 ```
 

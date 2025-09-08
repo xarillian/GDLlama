@@ -1,4 +1,4 @@
-#include "../../src/embedding_runner.hpp"
+#include "embedding_runner.hpp"
 #include <iostream>
 #include <ostream>
 #include <vector>

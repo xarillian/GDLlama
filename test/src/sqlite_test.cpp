@@ -1,5 +1,5 @@
-#include "../../src/sqlite3.h"
-#include "../../src/sqlite-vec.h"
+#include "sqlite3.h"
+#include "sqlite-vec.h"
 #include <stdio.h>
 
 int main(int argc, char *argv[]) {

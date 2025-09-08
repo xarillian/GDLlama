@@ -1,5 +1,5 @@
 #include "llama_controller.hpp"
-#include "llama_runner.hpp" // Not necessary since it's in the hpp but good practice
+#include "llama_runner.hpp"
 #include <nlohmann/json.hpp>
 #include <json-schema-to-grammar.h>
 

@@ -12,8 +12,7 @@ include(CTest)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-# For Windows, link the C/C++ runtime library to avoid VC++ redistributables
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL$<$<CONFIG:Debug>:Debug>")
 
 # For macOS, build a universal binary that runs on both x86_64 and arm64 (Apple Silicon)
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -29,7 +28,8 @@ if (MSVC)
   # Disable MSVC fopen warning
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 
-  # Fix debug build iterator bound check bug https://stackoverflow.com/questions/74748276/visual-studio-no-displays-the-correct-length-of-stdvector
+  # Fix debug build iterator bound check bug:
+  # https://stackoverflow.com/questions/74748276/visual-studio-no-displays-the-correct-length-of-stdvector
   add_definitions(-D_ITERATOR_DEBUG_LEVEL=0)
 endif()
 
@@ -81,6 +81,7 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/google/googletest.git
   GIT_TAG        v1.17.0
 )
+set(gtest_force_shared_crt ON CACHE BOOL "Force shared CRT for gtest")
 FetchContent_MakeAvailable(googletest)
 
 add_subdirectory(godot-cpp)
@@ -100,6 +101,7 @@ set(src_files
   "src/llm_db.cpp"
   "src/register_types.cpp"
   "src/logging_utils.cpp"
+  "src/llama_controller.cpp"
 )
 set(vendor_files
   "vendor/sqlite3.c"
@@ -123,7 +125,7 @@ endif()
 
 set(LIB_NAME godot_llm)
 
-add_library(${LIB_NAME} SHARED ${src_files})
+add_library(${LIB_NAME} SHARED ${src_files} ${vendor_files})
 
 set_target_properties(${LIB_NAME} PROPERTIES
     OUTPUT_NAME "libgodot_llm"
@@ -181,8 +183,7 @@ set(tests_llama_controller_files
 )
 add_executable(tests_llama_controller ${tests_llama_controller_files} ${src_files} ${vendor_files})
 target_link_libraries(tests_llama_controller PRIVATE godot-cpp common llama GTest::gtest_main)
-target_include_directories(
-  tests_llama_controller
+target_include_directories(tests_llama_controller
   PRIVATE
     include
     vendor
@@ -207,11 +208,9 @@ add_test(
 set(llama_runnner_test_files
   "test/src/llama_runner_test.cpp"
 )
-add_executable(llama_runner_test ${tests_llama_controller_files} ${src_files} ${vendor_files})
+add_executable(llama_runner_test ${llama_runnner_test_files} ${src_files} ${vendor_files})
 target_link_libraries(llama_runner_test PRIVATE godot-cpp common llama)
-target_include_directories(${LIB_NAME}
-  PUBLIC
-    llama_runner_test
+target_include_directories(llama_runner_test
   PRIVATE
     include
     vendor
@@ -234,11 +233,9 @@ add_test(
 set(embedding_runnner_test_files
   "test/src/embedding_runner_test.cpp"
 )
-add_executable(embedding_runner_test ${tests_llama_controller_files} ${src_files} ${vendor_files})
+add_executable(embedding_runner_test ${embedding_runnner_test_files} ${src_files} ${vendor_files})
 target_link_libraries(embedding_runner_test PRIVATE godot-cpp common llama)
-target_include_directories(${LIB_NAME}
-  PUBLIC
-    embedding_runner_test
+target_include_directories(embedding_runner_test
   PRIVATE
     include
     vendor
@@ -260,11 +257,20 @@ add_test(
 # --- sqlite_test ---
 set(sqlite_test_files
   "test/src/sqlite_test.cpp"
-  "src/sqlite3.c"
-  "src/sqlite-vec.c"
+  "vendor/sqlite3.c"
+  "vendor/sqlite-vec.c"
 )
-add_executable(sqlite_test ${tests_llama_controller_files} ${src_files} ${vendor_files})
-target_link_libraries(sqlite_test)
+add_executable(sqlite_test ${sqlite_test_files} ${src_files} ${vendor_files})
+target_link_libraries(sqlite_test PRIVATE godot-cpp common llama)
+target_include_directories(sqlite_test
+  PRIVATE
+    include
+    vendor
+    llama.cpp
+    llama.cpp/common
+    llama.cpp/src
+    llama.cpp/vendor
+)
 target_compile_definitions(
   sqlite_test
   PRIVATE
