@@ -12,13 +12,13 @@ class LlamaController {
         std::mutex generate_text_mutex;
         common_params params;
         std::string reverse_prompt;
-        bool should_output_prompt;
 
     public:
         LlamaController();
         void set_llama_runner(std::unique_ptr<LlamaRunner> runner);
         void set_reverse_prompt(const std::string& p_reverse_prompt);
         std::string generate_text_locked(
+            const common_params& model_params,
             const std::string& prompt,
             const std::string& grammar,
             const std::string& json,

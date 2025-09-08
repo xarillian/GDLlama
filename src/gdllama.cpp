@@ -42,10 +42,6 @@ void GDLlama::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_input_suffix", "p_input_suffix"), &GDLlama::set_input_suffix);
     ClassDB::add_property("GDLlama", PropertyInfo(Variant::STRING, "input_suffix", PROPERTY_HINT_NONE), "set_input_suffix", "get_input_suffix");
 
-    ClassDB::bind_method(D_METHOD("get_should_output_prompt"), &GDLlama::get_should_output_prompt);
-	ClassDB::bind_method(D_METHOD("set_should_output_prompt", "p_should_output_prompt"), &GDLlama::set_should_output_prompt);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::BOOL, "should_output_prompt", PROPERTY_HINT_NONE), "set_should_output_prompt", "get_should_output_prompt");
-
     ClassDB::bind_method(D_METHOD("get_should_output_special"), &GDLlama::get_should_output_special);
 	ClassDB::bind_method(D_METHOD("set_should_output_special", "p_should_output_special"), &GDLlama::set_should_output_special);
     ClassDB::add_property("GDLlama", PropertyInfo(Variant::BOOL, "should_output_special", PROPERTY_HINT_NONE), "set_should_output_special", "get_should_output_special");
@@ -127,8 +123,7 @@ void GDLlama::_bind_methods() {
 }
 
 GDLlama::GDLlama() : params {common_params()},
-    llama_runner{new LlamaRunner(should_output_prompt)},
-    should_output_prompt {true},
+    llama_runner{new LlamaRunner()},
     reverse_prompt {""},
     generate_text_buffer {""}
 {
@@ -213,14 +208,6 @@ String GDLlama::get_input_suffix() const {
 
 void GDLlama::set_input_suffix(const String p_input_suffix) {
     params.input_suffix = string_gd_to_std(p_input_suffix);
-};
-
-bool GDLlama::get_should_output_prompt() const {
-    return should_output_prompt;
-};
-
-void GDLlama::set_should_output_prompt(const bool p_should_output_prompt) {
-    should_output_prompt = p_should_output_prompt;
 };
 
 bool GDLlama::get_should_output_special() const {
@@ -361,35 +348,21 @@ void GDLlama::set_n_ubatch(const int32_t p_n_ubatch) {
 }
 
 /**
- * @brief Generates text synchronously using the loaded language model.
- * 
- * This function is considered thread-safe but only one generation can run at a time. Calling this
- * while another text generation is in progress will block until the previous generation completes.
- * 
- * The generation process will emit signals during execution:
- *  
- * - generate_text_updated: Emitted for each token/text chunk generated
- *      
- * - input_wait_started: Emitted when interactive mode requires user input
- *      
- * - generate_text_finished: Emitted when generation completes
- * 
  * @param prompt The input text to generate from. Required.
  * @param grammar Optional BNF grammar string to constrain generation. Empty string for no grammar.
  * @param json Optional JSON schema to constrain generation. Will be converted to grammar 
  *             internally. If both grammar and JSON are provided, grammar takes precedence.
  * 
  * @return The complete generated text. Returns an error message string if generation fails.
- * 
  */
 String GDLlama::generate_text(String prompt, String grammar, String json) {
-    func_mutex->lock();
-    if (!generate_text_mutex->try_lock()) {
-        generate_text_mutex->lock();
-    }
-    func_mutex->unlock();
+    generate_text_mutex->lock();
 
-    return generate_text_locked(prompt, grammar, json);
+    String result = generate_text_locked(prompt, grammar, json);
+
+    generate_text_mutex->unlock();
+
+    return result;
 }
 
 String GDLlama::generate_text_locked(String prompt, String grammar, String json) {
@@ -419,7 +392,13 @@ String GDLlama::generate_text_locked(String prompt, String grammar, String json)
     };
 
     std::string result = controller.generate_text_locked(
-        s_prompt, s_grammar, s_json, on_update, on_wait_start, on_finish
+        this->params,
+        s_prompt,
+        s_grammar,
+        s_json,
+        on_update,
+        on_wait_start,
+        on_finish
     );
 
     return string_std_to_gd(result);
@@ -427,38 +406,21 @@ String GDLlama::generate_text_locked(String prompt, String grammar, String json)
 
 
 /**
- * @brief Starts asynchronous text generation using the loaded language model.
- * 
- * This function starts generation on a separate thread and returns immediately.
- * The actual generated text is delivered through signals:
- *  
- * - generate_text_updated: Emitted for each token/text chunk generated
- *      
- * - input_wait_started: Emitted when interactive mode requires user input
- *      
- * - generate_text_finished: Emitted when generation completes
- * 
  * @param prompt The input text to generate from. Required.
  * @param grammar Optional BNF grammar string to constrain generation. Empty string for no grammar.
  * @param json Optional JSON schema to constrain generation. Will be converted to grammar 
  *             internally. If both grammar and JSON are provided, grammar takes precedence.
  * 
  * @return OK if generation started successfully, or an error code if failed.
- * 
  */
 Error GDLlama::generate_text_async(String prompt, String grammar, String json) {
     GDLOG_DEBUG("Start");
 
-    func_mutex->lock();
-    if (!generate_text_mutex->try_lock()) {
-        generate_text_mutex->lock();
+    if (generate_text_thread->is_alive()) {
+        GDLOG_WARN("An async generation is already in progress.");
+        return FAILED;
     }
-    GDLOG_DEBUG("generate_text_mutex locked");
 
-    func_mutex->unlock();
-    GDLOG_DEBUG("func_mutex unlocked");
-
-    // is_started instead of is_alive to properly clean up all threads
     if (generate_text_thread->is_started()) {
         generate_text_thread->wait_to_finish();
     }

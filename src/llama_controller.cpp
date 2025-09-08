@@ -12,7 +12,7 @@
  * Its separation from GDLlama makes it independently testable.
  */
 LlamaController::LlamaController(): 
-    llama_runner(new LlamaRunner(true)), should_output_prompt(true) {}
+    llama_runner(new LlamaRunner())  {}
 
 /**
  * @brief Injects a LlamaRunner instance.
@@ -31,11 +31,7 @@ void LlamaController::set_reverse_prompt(const std::string& p_reverse_prompt) {
 }
 
 /**
- * @brief Generates text synchronously and in a thread-safe manner.
- *
- * This is the core function of the controller. It acquires a lock to ensure only one generation
- * happens at a time, prepares all parameters, and then invokes the LlamaRunner.
- *
+ * @param model_params @todo
  * @param prompt The input text to generate from. Required.
  * @param grammar Optional BNF grammar string to constrain generation. Empty string for no grammar.
  * @param json Optional JSON schema to constrain generation. Will be converted to grammar 
@@ -48,6 +44,7 @@ void LlamaController::set_reverse_prompt(const std::string& p_reverse_prompt) {
  * @return The complete generated text as a std::string.
  */
 std::string LlamaController::generate_text_locked(
+    const common_params& model_params,
     const std::string& prompt,
     const std::string& grammar,
     const std::string& json,
@@ -55,6 +52,8 @@ std::string LlamaController::generate_text_locked(
     std::function<void()> on_wait_start,
     std::function<void(std::string)> on_finish
 ) {
+    common_params params = model_params;
+
     std::lock_guard<std::mutex> lock(generate_text_mutex);
 
     if (!grammar.empty()) {
@@ -66,7 +65,7 @@ std::string LlamaController::generate_text_locked(
     }
 
     GDLOG_DEBUG("Start Generating Text");
-    llama_runner.reset(new LlamaRunner(should_output_prompt));  // @todo not this
+    llama_runner.reset(new LlamaRunner());  // @todo not this
 
     params.antiprompt.clear();
     if (reverse_prompt != "") {

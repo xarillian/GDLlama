@@ -15,8 +15,7 @@ public:
     std::atomic<int> call_count{0};
     std::atomic<bool> is_processing{false};
 
-    MockLlamaRunner(bool should_output_prompt = true)
-        : LlamaRunner(should_output_prompt) {}
+    MockLlamaRunner() : LlamaRunner() {}
 
     std::string llama_generate_text(
         std::string prompt,
@@ -55,9 +54,11 @@ TEST(LlamaControllerTest, GrammarIsPrioritizedOverJson) {
     std::string grammar_str = "root ::= \"a\"";
     std::string json_str = "{\"type\": \"string\"}";
 
+    common_params params;  // @todo not this
+
     // Execute
     controller.generate_text_locked(
-        "prompt", grammar_str, json_str,
+        params, "prompt", grammar_str, json_str,
         [](auto s){}, [](){}, [](auto s){}
     );
 
@@ -75,9 +76,11 @@ TEST(LlamaControllerTest, JsonIsUsedWhenGrammarIsEmpty) {
     std::string json_str = "{\"type\": \"string\"}";
     std::string expected_grammar = json_schema_to_grammar(nlohmann::ordered_json::parse(json_str));
 
+    common_params params;  // @todo not this
+
     // Execute
     controller.generate_text_locked(
-        "prompt", "", json_str,
+        params, "prompt", expected_grammar, json_str,
         [](auto s){}, [](){}, [](auto s){}
     );
 
@@ -94,9 +97,11 @@ TEST(LlamaControllerTest, CallbacksAreInvokedCorrectly) {
     bool wait_start_was_called = false;
     bool finish_was_called = false;
 
+    common_params params;  // @todo not this
+
     // Execute: Pass lambdas that modify our boolean flags.
     controller.generate_text_locked(
-        "prompt", "", "",
+        params, "prompt", "", "",
         [&](auto s){ update_was_called = true; },
         [&](){ wait_start_was_called = true; },
         [&](auto s){ finish_was_called = true; }
@@ -116,9 +121,11 @@ TEST(LlamaControllerTest, MutexPreventsConcurrentAccess) {
     MockLlamaRunner* mock_ptr = mock_runner.get();
     controller_shared->set_llama_runner(std::move(mock_runner));
 
+    common_params params;  // @todo not this
+
     auto task = [&]() {
         controller_shared->generate_text_locked(
-            "prompt", "", "", [](auto s){}, [](){}, [](auto s){}
+            params, "prompt", "", "", [](auto s){}, [](){}, [](auto s){}
         );
     };
 

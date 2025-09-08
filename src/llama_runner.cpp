@@ -42,13 +42,10 @@ namespace {
     }
 }
 
-LlamaRunner::LlamaRunner(
-    bool should_output_prompt
-) :
+LlamaRunner::LlamaRunner() :
     should_stop_generation{false},
     is_waiting_input{false},
-    input{""},
-    should_output_prompt{should_output_prompt}
+    input{""}
 { }
 
 LlamaRunner::~LlamaRunner() {}
@@ -383,7 +380,6 @@ std::string LlamaRunner::llama_generate_text(
     }
 
     bool is_antiprompt        = false;
-    bool input_echo           = should_output_prompt;
     bool display              = true;
     bool need_to_save_session = !session_path.empty() && n_matching_session_tokens < prompt_tokens.size();
 
@@ -603,7 +599,6 @@ std::string LlamaRunner::llama_generate_text(
 
             embd.push_back(token_id);
 
-            input_echo = true;
             --n_remain;
         } else {
             // some user input remains from prompt or interaction, forward it to processing
@@ -624,6 +619,7 @@ std::string LlamaRunner::llama_generate_text(
         }
 
         // display text
+        const bool input_echo = false;  // originally used for `should_output_prompt` 
         if (input_echo && display) {
             for (auto id : embd) {
                 const std::string token_str = common_token_to_piece(ctx, id, params.special);
@@ -650,7 +646,7 @@ std::string LlamaRunner::llama_generate_text(
         }
 
         // reset color to default if there is no pending user input
-        if (input_echo && (int) prompt_tokens.size() == n_consumed) {
+        if ((int) prompt_tokens.size() == n_consumed) {
             display = true;
         }
 
@@ -779,8 +775,6 @@ std::string LlamaRunner::llama_generate_text(
                 } else {
                     GDLOG_WARN("Empty line received, passing control back.");
                 }
-
-                input_echo = false; // do not echo this again
             }
 
             if (n_past > 0) {

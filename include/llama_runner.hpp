@@ -9,7 +9,6 @@ class LlamaRunner {
     private:
         bool should_stop_generation;
         bool is_waiting_input;
-        bool should_output_prompt;
         std::string input;
 
     private:
@@ -21,9 +20,7 @@ class LlamaRunner {
         std::string validate_params_for_initialization(const common_params &params);
 
     public:
-        LlamaRunner(
-            bool should_output_prompt = true
-        );
+        LlamaRunner();
         virtual ~LlamaRunner(); 
         virtual std::string llama_generate_text(
             std::string prompt,

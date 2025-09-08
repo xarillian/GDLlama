@@ -22,7 +22,6 @@ class GDLlama : public Node {
     protected:
         common_params params;
         std::unique_ptr<LlamaRunner> llama_runner;
-        bool should_output_prompt;
         std::string reverse_prompt;
         Ref<Mutex> generate_text_mutex;
         Ref<Mutex> func_mutex;
@@ -48,8 +47,6 @@ class GDLlama : public Node {
         void set_interactive(const bool p_interactive);
         String get_reverse_prompt() const;
         void set_reverse_prompt(const String p_reverse_prompt);
-        bool get_should_output_prompt() const;
-        void set_should_output_prompt(const bool p_should_output_prompt);
         bool get_should_output_special() const;
         void set_should_output_special(const bool p_should_output_special);
         String get_input_prefix() const;
