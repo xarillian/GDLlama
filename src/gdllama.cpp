@@ -1,456 +1,244 @@
 #include "gdllama.hpp"
 #include "conversion.hpp"
-#include "llama_runner.hpp"
 #include "logging_utils.hpp"
-#include <godot_cpp/classes/global_constants.hpp>
-#include <godot_cpp/classes/mutex.hpp>
-#include <godot_cpp/classes/thread.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/callable.hpp>
-#include <godot_cpp/variant/callable_method_pointer.hpp>
-#include <godot_cpp/variant/quaternion.hpp>
-#include <godot_cpp/variant/string.hpp>
-#include <godot_cpp/variant/utility_functions.hpp>
-#include <common/common.h>
-#include <common/json-schema-to-grammar.h>
-#include <nlohmann/json.hpp>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <thread>
+#include <mutex_lock.hpp>
 
 namespace godot {
+    void GDLlama::_bind_methods() {
+        // Model Management
+        ClassDB::bind_method(D_METHOD("load_model"), &GDLlama::load_model);
+        ClassDB::bind_method(D_METHOD("unload_model"), &GDLlama::unload_model);
+        ClassDB::bind_method(D_METHOD("is_model_loaded"), &GDLlama::is_model_loaded);
+        ClassDB::bind_method(D_METHOD("set_model_path", "p_model_path"), &GDLlama::set_model_path);
+        ClassDB::bind_method(D_METHOD("get_model_path"), &GDLlama::get_model_path);
+        ClassDB::add_property("GDLlama", PropertyInfo(Variant::STRING, "model_path", PROPERTY_HINT_FILE), "set_model_path", "get_model_path");
 
-void GDLlama::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("get_model_path"), &GDLlama::get_model_path);
-	ClassDB::bind_method(D_METHOD("set_model_path", "p_model_path"), &GDLlama::set_model_path);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::STRING, "model_path", PROPERTY_HINT_FILE), "set_model_path", "get_model_path");
+        // Generation Methods
+        ClassDB::bind_method(D_METHOD("generate_text", "prompt", "grammar", "json"), &GDLlama::generate_text, DEFVAL(""), DEFVAL(""));
+        ClassDB::bind_method(D_METHOD("generate_text_async", "prompt", "grammar", "json"), &GDLlama::generate_text_async, DEFVAL(""), DEFVAL(""));
+        ClassDB::bind_method(D_METHOD("generate_chat", "prompt", "grammar", "json"), &GDLlama::generate_chat, DEFVAL(""), DEFVAL(""));
+        ClassDB::bind_method(D_METHOD("generate_chat_async", "prompt", "grammar", "json"), &GDLlama::generate_chat_async, DEFVAL(""), DEFVAL(""));
+        ClassDB::bind_method(D_METHOD("reset_conversation"), &GDLlama::reset_conversation);
+        ClassDB::bind_method(D_METHOD("stop_generate_text"), &GDLlama::stop_generate_text);
 
-	ClassDB::bind_method(D_METHOD("get_interactive"), &GDLlama::get_interactive);
-	ClassDB::bind_method(D_METHOD("set_interactive", "p_interactive"), &GDLlama::set_interactive);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::BOOL, "interactive", PROPERTY_HINT_NONE), "set_interactive", "get_interactive");
+        // Generation Parameters
+        ClassDB::bind_method(D_METHOD("set_n_predict", "n_predict"), &GDLlama::set_n_predict);
+        ClassDB::bind_method(D_METHOD("get_n_predict"), &GDLlama::get_n_predict);
+        ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "n_predict"), "set_n_predict", "get_n_predict");
 
-	ClassDB::bind_method(D_METHOD("get_reverse_prompt"), &GDLlama::get_reverse_prompt);
-	ClassDB::bind_method(D_METHOD("set_reverse_prompt", "p_reverse_prompt"), &GDLlama::set_reverse_prompt);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::STRING, "reverse_prompt", PROPERTY_HINT_NONE), "set_reverse_prompt", "get_reverse_prompt");
+        ClassDB::bind_method(D_METHOD("set_temperature", "temp"), &GDLlama::set_temperature);
+        ClassDB::bind_method(D_METHOD("get_temperature"), &GDLlama::get_temperature);
+        ClassDB::add_property("GDLlama", PropertyInfo(Variant::FLOAT, "temperature"), "set_temperature", "get_temperature");
 
-	ClassDB::bind_method(D_METHOD("get_input_prefix"), &GDLlama::get_input_prefix);
-	ClassDB::bind_method(D_METHOD("set_input_prefix", "p_input_prefix"), &GDLlama::set_input_prefix);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::STRING, "input_prefix", PROPERTY_HINT_NONE), "set_input_prefix", "get_input_prefix");
+        ClassDB::bind_method(D_METHOD("set_top_k", "top_k"), &GDLlama::set_top_k);
+        ClassDB::bind_method(D_METHOD("get_top_k"), &GDLlama::get_top_k);
+        ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "top_k"), "set_top_k", "get_top_k");
 
-	ClassDB::bind_method(D_METHOD("get_input_suffix"), &GDLlama::get_input_suffix);
-	ClassDB::bind_method(D_METHOD("set_input_suffix", "p_input_suffix"), &GDLlama::set_input_suffix);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::STRING, "input_suffix", PROPERTY_HINT_NONE), "set_input_suffix", "get_input_suffix");
+        ClassDB::bind_method(D_METHOD("set_top_p", "top_p"), &GDLlama::set_top_p);
+        ClassDB::bind_method(D_METHOD("get_top_p"), &GDLlama::get_top_p);
+        ClassDB::add_property("GDLlama", PropertyInfo(Variant::FLOAT, "top_p"), "set_top_p", "get_top_p");
 
-    ClassDB::bind_method(D_METHOD("get_should_output_special"), &GDLlama::get_should_output_special);
-	ClassDB::bind_method(D_METHOD("set_should_output_special", "p_should_output_special"), &GDLlama::set_should_output_special);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::BOOL, "should_output_special", PROPERTY_HINT_NONE), "set_should_output_special", "get_should_output_special");
+        // State Checking
+        ClassDB::bind_method(D_METHOD("is_running"), &GDLlama::is_running);
 
-   	ClassDB::bind_method(D_METHOD("get_n_ctx"), &GDLlama::get_n_ctx);
-	ClassDB::bind_method(D_METHOD("set_n_ctx", "p_n_ctx"), &GDLlama::set_n_ctx);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "context_size", PROPERTY_HINT_NONE), "set_n_ctx", "get_n_ctx");
-
-	ClassDB::bind_method(D_METHOD("get_n_predict"), &GDLlama::get_n_predict);
-	ClassDB::bind_method(D_METHOD("set_n_predict", "p_n_predict"), &GDLlama::set_n_predict);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "n_predict", PROPERTY_HINT_NONE), "set_n_predict", "get_n_predict");
-
-	ClassDB::bind_method(D_METHOD("get_n_keep"), &GDLlama::get_n_keep);
-	ClassDB::bind_method(D_METHOD("set_n_keep", "p_n_keep"), &GDLlama::set_n_keep);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "n_keep", PROPERTY_HINT_NONE), "set_n_keep", "get_n_keep");
-
-    ClassDB::bind_method(D_METHOD("get_temperature"), &GDLlama::get_temperature);
-    ClassDB::bind_method(D_METHOD("set_temperature", "p_temperature"), &GDLlama::set_temperature);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::FLOAT, "temperature", PROPERTY_HINT_NONE), "set_temperature", "get_temperature");
-
-    ClassDB::bind_method(D_METHOD("get_penalty_repeat"), &GDLlama::get_penalty_repeat);
-    ClassDB::bind_method(D_METHOD("set_penalty_repeat", "p_penalty_repeat"), &GDLlama::set_penalty_repeat);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::FLOAT, "penalty_repeat", PROPERTY_HINT_NONE), "set_penalty_repeat", "get_penalty_repeat");
-
-    ClassDB::bind_method(D_METHOD("get_penalty_last_n"), &GDLlama::get_penalty_last_n);
-    ClassDB::bind_method(D_METHOD("set_penalty_last_n", "p_penalty_last_n"), &GDLlama::set_penalty_last_n);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "penalty_last_n", PROPERTY_HINT_NONE), "set_penalty_last_n", "get_penalty_last_n");
-
-    ClassDB::bind_method(D_METHOD("get_top_k"), &GDLlama::get_top_k);
-    ClassDB::bind_method(D_METHOD("set_top_k", "p_top_k"), &GDLlama::set_top_k);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "top_k", PROPERTY_HINT_NONE), "set_top_k", "get_top_k");
-
-    ClassDB::bind_method(D_METHOD("get_top_p"), &GDLlama::get_top_p);
-    ClassDB::bind_method(D_METHOD("set_top_p", "p_top_p"), &GDLlama::set_top_p);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::FLOAT, "top_p", PROPERTY_HINT_NONE), "set_top_p", "get_top_p");
-
-    ClassDB::bind_method(D_METHOD("get_min_p"), &GDLlama::get_min_p);
-    ClassDB::bind_method(D_METHOD("set_min_p", "p_min_p"), &GDLlama::set_min_p);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::FLOAT, "min_p", PROPERTY_HINT_NONE), "set_min_p", "get_min_p");
-
-    ClassDB::bind_method(D_METHOD("get_n_threads"), &GDLlama::get_n_threads);
-    ClassDB::bind_method(D_METHOD("set_n_threads", "p_n_threads"), &GDLlama::set_n_threads);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "n_threads", PROPERTY_HINT_NONE), "set_n_threads", "get_n_threads");
-
-	ClassDB::bind_method(D_METHOD("get_n_gpu_layer"), &GDLlama::get_n_gpu_layer);
-	ClassDB::bind_method(D_METHOD("set_n_gpu_layer", "p_n_gpu_layer"), &GDLlama::set_n_gpu_layer);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "n_gpu_layer", PROPERTY_HINT_NONE), "set_n_gpu_layer", "get_n_gpu_layer");
-
-    ClassDB::bind_method(D_METHOD("get_main_gpu"), &GDLlama::get_main_gpu);
-    ClassDB::bind_method(D_METHOD("set_main_gpu", "p_main_gpu"), &GDLlama::set_main_gpu);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "main_gpu", PROPERTY_HINT_NONE), "set_main_gpu", "get_main_gpu");
-
-    ClassDB::bind_method(D_METHOD("get_split_mode"), &GDLlama::get_split_mode);
-    ClassDB::bind_method(D_METHOD("set_split_mode", "p_split_mode"), &GDLlama::set_split_mode);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "split_mode", PROPERTY_HINT_ENUM, "NONE, LAYER, ROW"), "set_split_mode", "get_split_mode");
-
-	ClassDB::bind_method(D_METHOD("get_escape"), &GDLlama::get_escape);
-	ClassDB::bind_method(D_METHOD("set_escape", "p_escape"), &GDLlama::set_escape);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::BOOL, "escape", PROPERTY_HINT_NONE), "set_escape", "get_escape");
-
-   	ClassDB::bind_method(D_METHOD("get_n_batch"), &GDLlama::get_n_batch);
-	ClassDB::bind_method(D_METHOD("set_n_batch", "p_n_batch"), &GDLlama::set_n_batch);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "n_batch", PROPERTY_HINT_NONE), "set_n_batch", "get_n_batch");
-
-   	ClassDB::bind_method(D_METHOD("get_n_ubatch"), &GDLlama::get_n_ubatch);
-	ClassDB::bind_method(D_METHOD("set_n_ubatch", "p_n_ubatch"), &GDLlama::set_n_ubatch);
-    ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "n_ubatch", PROPERTY_HINT_NONE), "set_n_ubatch", "get_n_ubatch");
-
-    ClassDB::bind_method(D_METHOD("generate_text", "prompt", "grammar", "json"), &GDLlama::generate_text);
-    ClassDB::bind_method(D_METHOD("generate_text_async", "prompt", "grammar", "json"), &GDLlama::generate_text_async);
-    ClassDB::bind_method(D_METHOD("stop_generate_text"), &GDLlama::stop_generate_text);
-    ClassDB::bind_method(D_METHOD("input_text", "input"), &GDLlama::input_text);
-    ClassDB::bind_method(D_METHOD("is_running"), &GDLlama::is_running);
-    ClassDB::bind_method(D_METHOD("is_waiting_input"), &GDLlama::is_waiting_input);
-
-    ADD_SIGNAL(MethodInfo("generate_text_updated", PropertyInfo(Variant::STRING, "new_text")));
-    ADD_SIGNAL(MethodInfo("input_wait_started"));
-    ADD_SIGNAL(MethodInfo("generate_text_finished", PropertyInfo(Variant::STRING, "text")));
-}
-
-GDLlama::GDLlama() : params {common_params()},
-    llama_runner{new LlamaRunner()},
-    reverse_prompt {""},
-    generate_text_buffer {""}
-{
-    GDLOG_DEBUG("Instantiating GDLlama Mutex...");
-    func_mutex.instantiate();
-    generate_text_mutex.instantiate();
-    GDLOG_DEBUG("Instantiated!");
-
-    GDLOG_DEBUG("Instantiating generate_text_thread...");
-    generate_text_thread.instantiate();
-    auto f = (void(*)())[](){};
-    generate_text_thread->start(create_custom_callable_static_function_pointer(f));
-    generate_text_thread->wait_to_finish();
-    GDLOG_DEBUG("Instantiated!");
-
-    GDLOG_DEBUG("Ready");
-}
- 
-
-GDLlama::~GDLlama() {
-    GDLOG_DEBUG("Start");
-
-    //is_started instead of is_alive to properly clean up all threads
-    while (generate_text_thread->is_started()) {
-        stop_generate_text();
-        GDLOG_DEBUG("Waiting for thread to finish...");
-        generate_text_thread->wait_to_finish();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // Signals
+        ADD_SIGNAL(MethodInfo("generate_text_updated", PropertyInfo(Variant::STRING, "new_text")));
+        ADD_SIGNAL(MethodInfo("generate_text_finished", PropertyInfo(Variant::STRING, "full_text")));
     }
 
-    GDLOG_DEBUG("Done");
-}
+    GDLlama::GDLlama() {
+        llama_state = std::make_unique<LlamaState>();
+        controller = std::make_unique<LlamaController>();
 
-void GDLlama::_ready() { } // log?
+        generation_mutex.instantiate();
+        generate_text_thread.instantiate();
 
-void GDLlama::_exit_tree() {
-    //is_started instead of is_alive to properly clean up all threads
-    while (generate_text_thread->is_started()) {
-        stop_generate_text();
-        GDLOG_DEBUG("Waiting thread to finish...");
-        generate_text_thread->wait_to_finish();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        params = common_params{};
     }
-}
 
-String GDLlama::get_model_path() const {
-    return string_std_to_gd(params.model.path);
-}
+    GDLlama::~GDLlama() {
+        llama_state->unload();
+    }
 
-void GDLlama::set_model_path(const String p_model_path) {
-    params.model.path = string_gd_to_std(p_model_path.trim_prefix(String("res://")));
-}
-
-
-bool GDLlama::get_interactive() const {
-    return params.interactive;
-}
-
-void GDLlama::set_interactive(const bool p_interactive) {
-    params.interactive = p_interactive;
-}
-
-String GDLlama::get_reverse_prompt() const {
-    return string_std_to_gd(reverse_prompt);
-};
-
-void GDLlama::set_reverse_prompt(const String p_reverse_prompt) {
-    reverse_prompt = string_gd_to_std(p_reverse_prompt);
-};
-
-String GDLlama::get_input_prefix() const {
-    return string_std_to_gd(params.input_prefix);
-};
-
-void GDLlama::set_input_prefix(const String p_input_prefix) {
-    params.input_prefix = string_gd_to_std(p_input_prefix);
-};
-
-String GDLlama::get_input_suffix() const {
-    return string_std_to_gd(params.input_suffix);
-};
-
-void GDLlama::set_input_suffix(const String p_input_suffix) {
-    params.input_suffix = string_gd_to_std(p_input_suffix);
-};
-
-bool GDLlama::get_should_output_special() const {
-    return params.special;
-};
-
-void GDLlama::set_should_output_special(const bool p_should_output_special) {
-    params.special = p_should_output_special;
-};
-
-
-int32_t GDLlama::get_n_ctx() const {
-    return params.n_ctx;
-}
-
-void GDLlama::set_n_ctx(const int32_t p_n_ctx) {
-    params.n_ctx = p_n_ctx;
-}
-
-int32_t GDLlama::get_n_predict() const {
-    return params.n_predict;
-}
-
-void GDLlama::set_n_predict(const int32_t p_n_predict) {
-    params.n_predict = p_n_predict;
-}
-
-int32_t GDLlama::get_n_keep() const {
-    return params.n_keep;
-}
-
-void GDLlama::set_n_keep(const int32_t p_n_keep) {
-    params.n_keep = p_n_keep;
-}
-
-float GDLlama::get_temperature() const {
-    return params.sampling.temp;
-}
-
-void GDLlama::set_temperature(const float p_temperature) {
-    params.sampling.temp = p_temperature;
-}
-
-float GDLlama::get_penalty_repeat() const {
-    return params.sampling.penalty_repeat;
-}
-
-void GDLlama::set_penalty_repeat(const float p_penalty_repeat) {
-    params.sampling.penalty_repeat = p_penalty_repeat;
-}
-
-int32_t GDLlama::get_penalty_last_n() const {
-    return params.sampling.penalty_last_n;
-}
-
-void GDLlama::set_penalty_last_n(const int32_t p_penalty_last_n) {
-    params.sampling.penalty_last_n = p_penalty_last_n;
-}
-
-int32_t GDLlama::get_top_k() const {
-    return params.sampling.top_k;
-}
-
-void GDLlama::set_top_k(const int32_t p_top_k) {
-    params.sampling.top_k = p_top_k;
-}
-
-float GDLlama::get_top_p() const {
-    return params.sampling.top_p;
-}
-
-void GDLlama::set_top_p(const float p_top_p) {
-    params.sampling.top_p = p_top_p;
-}
-
-float GDLlama::get_min_p() const {
-    return params.sampling.min_p;
-}
-
-void GDLlama::set_min_p(const float p_min_p) {
-    params.sampling.min_p = p_min_p;
-}
-
-int32_t GDLlama::get_n_threads() const {
-    return params.cpuparams.n_threads;
-}
-
-void GDLlama::set_n_threads(const int32_t p_n_threads) {
-    params.cpuparams.n_threads = p_n_threads;
-}
-
-int32_t GDLlama::get_n_gpu_layer() const {
-    return params.n_gpu_layers;
-}
-
-void GDLlama::set_n_gpu_layer(const int32_t p_n_gpu_layers) {
-    params.n_gpu_layers = p_n_gpu_layers;
-}
-
-int32_t GDLlama::get_main_gpu() const {
-    return params.main_gpu;
-};
-
-void GDLlama::set_main_gpu(const int32_t p_main_gpu) {
-    params.main_gpu = p_main_gpu;
-};
-
-int32_t GDLlama::get_split_mode() {
-    return params.split_mode;
-};
-
-void GDLlama::set_split_mode(const int32_t p_split_mode) {
-    params.split_mode = static_cast<llama_split_mode>(p_split_mode);
-};
-
-bool GDLlama::get_escape() const {
-    return params.escape;
-}
-
-void GDLlama::set_escape(const bool p_escape) {
-    params.escape = p_escape;
-}
-
-int32_t GDLlama::get_n_batch() const {
-    return params.n_batch;
-}
-
-void GDLlama::set_n_batch(const int32_t p_n_batch) {
-    params.n_batch = p_n_batch;
-}
-
-int32_t GDLlama::get_n_ubatch() const {
-    return params.n_ubatch;
-}
-
-void GDLlama::set_n_ubatch(const int32_t p_n_ubatch) {
-    params.n_ubatch = p_n_ubatch;
-}
-
-/**
- * @param prompt The input text to generate from. Required.
- * @param grammar Optional BNF grammar string to constrain generation. Empty string for no grammar.
- * @param json Optional JSON schema to constrain generation. Will be converted to grammar 
- *             internally. If both grammar and JSON are provided, grammar takes precedence.
- * 
- * @return The complete generated text. Returns an error message string if generation fails.
- */
-String GDLlama::generate_text(String prompt, String grammar, String json) {
-    generate_text_mutex->lock();
-
-    String result = generate_text_locked(prompt, grammar, json);
-
-    generate_text_mutex->unlock();
-
-    return result;
-}
-
-String GDLlama::generate_text_locked(String prompt, String grammar, String json) {
-    std::string s_prompt = string_gd_to_std(prompt);
-    std::string s_grammar = string_gd_to_std(grammar);
-    std::string s_json = string_gd_to_std(json);
-
-    auto on_update = [this](std::string s) {
-        if (generate_text_buffer.empty() && is_utf8(s.data())){
-            call_deferred("emit_signal", "generate_text_updated", string_std_to_gd(s));
-        } else {
-            generate_text_buffer.append(s);
-            if (is_utf8(generate_text_buffer.data())) {
-                String new_text = string_std_to_gd(generate_text_buffer);
-                generate_text_buffer.clear();
-                call_deferred("emit_signal", "generate_text_updated", new_text);
-            }
+    void GDLlama::_exit_tree() {
+        if (is_running()) {
+            stop_generate_text();
+            generate_text_thread->wait_to_finish();
         }
-    };
-
-    auto on_wait_start = [this]() {
-        call_deferred("emit_signal", "input_wait_started");
-    };
-
-    auto on_finish = [this](std::string s) {
-        call_deferred("emit_signal", "generate_text_finished", string_std_to_gd(s));
-    };
-
-    std::string result = controller.generate_text_locked(
-        this->params,
-        s_prompt,
-        s_grammar,
-        s_json,
-        on_update,
-        on_wait_start,
-        on_finish
-    );
-
-    return string_std_to_gd(result);
-}
-
-
-/**
- * @param prompt The input text to generate from. Required.
- * @param grammar Optional BNF grammar string to constrain generation. Empty string for no grammar.
- * @param json Optional JSON schema to constrain generation. Will be converted to grammar 
- *             internally. If both grammar and JSON are provided, grammar takes precedence.
- * 
- * @return OK if generation started successfully, or an error code if failed.
- */
-Error GDLlama::generate_text_async(String prompt, String grammar, String json) {
-    GDLOG_DEBUG("Start");
-
-    if (generate_text_thread->is_alive()) {
-        GDLOG_WARN("An async generation is already in progress.");
-        return FAILED;
+        unload_model();
     }
 
-    if (generate_text_thread->is_started()) {
-        generate_text_thread->wait_to_finish();
+    Error GDLlama::load_model() {
+        if (params.model.path.empty()) {
+            GDLOG_ERROR("Cannot load model: model_path is not set.");
+            return FAILED;
+        }
+        bool success = llama_state->load(params);
+        return success ? OK : FAILED;
     }
 
-    generate_text_thread.instantiate();
-    GDLOG_DEBUG("generate_text_thread instantiated");
+    void GDLlama::unload_model() {
+        llama_state->unload();
+    }
 
-    Callable c = callable_mp(this, &GDLlama::generate_text);
-    Error error = generate_text_thread->start(c.bind(prompt, grammar, json));
+    bool GDLlama::is_model_loaded() const {
+        return llama_state->is_loaded();
+    }
 
-    GDLOG_DEBUG("Done");
-    return error;
-}
+    void GDLlama::set_model_path(const String p_model_path) {
+        params.model.path = string_gd_to_std(p_model_path.trim_prefix("res://"));
+    }
 
-void GDLlama::stop_generate_text() {
-    GDLOG_DEBUG("Stopping llama_runner");
-    llama_runner->llama_stop_generate_text();
-}
+    String GDLlama::get_model_path() const {
+        return string_std_to_gd(params.model.path);
+    }
 
-void GDLlama::input_text(String input) {
-    GDLOG_DEBUG("input_text: " +  string_gd_to_std(input));
-    llama_runner->set_input(string_gd_to_std(input));
-}
+    String GDLlama::_generate(
+        String prompt,
+        String grammar,
+        String json,
+        bool is_continuous,
+        bool should_emit_finish_signal
+    ) {
+        if (!is_model_loaded()) {
+            std::string err_msg = "Cannot generate text: Model is not loaded.";
+            GDLOG_ERROR(err_msg);
+            throw std::runtime_error(err_msg);  // @todo not this
+        }
 
-bool GDLlama::is_running() {
-    return generate_text_thread->is_alive();
-}
+        if (!is_continuous) { reset_conversation(); }
 
-bool GDLlama::is_waiting_input() {
-    return llama_runner->get_is_waiting_input();
-}
+        auto on_update = [this](std::string text_chunk) {
+            call_deferred(
+                "emit_signal",
+                "generate_text_updated",
+                string_std_to_gd(text_chunk)
+            );
+        };
 
-} //namespace godot
+        std::function<void(std::string)> on_finish = nullptr;
+        if (should_emit_finish_signal) {
+            on_finish = [this](std::string full_text) {
+                call_deferred(
+                    "emit_signal",
+                    "generate_text_finished",
+                    string_std_to_gd(full_text)
+                );
+            };
+        }
+
+        std::string s_prompt = string_gd_to_std(prompt);
+        std::string s_grammar = string_gd_to_std(grammar);
+        std::string s_json = string_gd_to_std(json);
+        llama_context* ctx = llama_state->get_context();
+        llama_model* model = llama_state->get_model();
+
+        std::string result = controller->start_generation(
+            model, ctx, params, s_prompt, s_grammar, s_json, on_update, on_finish
+        );
+
+        return string_std_to_gd(result);
+    }
+
+    void GDLlama::_generation_task(String prompt, String grammar, String json, bool is_continuous) {
+        generation_mutex->lock();
+        _generate(prompt, grammar, json, is_continuous, true);
+        generation_mutex->unlock();
+    }
+
+    Error GDLlama::_generate_async(Callable callable) {
+        if (is_running()) {
+            GDLOG_WARN("An async generation is already in progress.");
+            return FAILED;
+        }
+
+        if (generate_text_thread->is_started()) {
+            generate_text_thread->wait_to_finish();
+        }
+
+        generate_text_thread.instantiate();
+        return generate_text_thread->start(callable);
+    }
+
+    String GDLlama::generate_text(String prompt, String grammar, String json) {
+        generation_mutex->lock();
+        String result = _generate(prompt, grammar, json, false, false);
+        generation_mutex->unlock();
+        return result;
+    }
+
+    Error GDLlama::generate_text_async(String prompt, String grammar, String json) {
+        Callable c = callable_mp(
+            this,
+            &GDLlama::_generation_task
+        ).bind(prompt, grammar, json, false);
+        return _generate_async(c);
+    }
+
+    String GDLlama::generate_chat(String prompt, String grammar, String json) {
+        generation_mutex->lock();
+        String result = _generate(prompt, grammar, json, true, false);
+        generation_mutex->unlock();
+        return result;
+    }
+
+    Error GDLlama::generate_chat_async(String prompt, String grammar, String json) {
+        Callable c = callable_mp(
+            this,
+            &GDLlama::_generation_task
+        ).bind(prompt, grammar, json, true);
+        return _generate_async(c);
+    }
+
+    bool GDLlama::is_running() const {
+        return generate_text_thread->is_alive();
+    }
+
+    void GDLlama::reset_conversation() {
+        if (is_model_loaded()) {
+            llama_memory_clear(llama_get_memory(llama_state->get_context()), true);
+            GDLOG_DEBUG("LLM context (KV cache) cleared.");
+        }
+    }
+
+    void GDLlama::stop_generate_text() {
+        if (is_running()) {
+            controller->stop_generation();
+            GDLOG_INFO("Stop signal sent to generation thread.");
+        }
+    }
+
+    void GDLlama::set_n_predict(int n_predict) {
+        params.n_predict = n_predict;
+    }
+
+    int GDLlama::get_n_predict() const {
+        return params.n_predict;
+    }
+
+    void GDLlama::set_temperature(float temp) {
+        params.sampling.temp = temp;
+    }
+
+    float GDLlama::get_temperature() const {
+        return params.sampling.temp;
+    }
+
+    void GDLlama::set_top_k(int top_k) {
+        params.sampling.top_k = top_k;
+    }
+
+    int GDLlama::get_top_k() const {
+        return params.sampling.top_k;
+    }
+
+    void GDLlama::set_top_p(float top_p) {
+        params.sampling.top_p = top_p;
+    }
+
+    float GDLlama::get_top_p() const {
+        return params.sampling.top_p;
+    }
+}  // namespace godot

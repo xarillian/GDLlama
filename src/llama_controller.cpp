@@ -1,60 +1,20 @@
 #include "llama_controller.hpp"
-#include "llama_runner.hpp"
 #include <nlohmann/json.hpp>
 #include <json-schema-to-grammar.h>
 
-/**
- * @class LlamaController
- * @brief Manages the core, thread-safe logic for text generation using generic types.
- * 
- * This class is decoupled from the Godot engine and contains the primary logic for preparing and
- * executing text generation.
- * Its separation from GDLlama makes it independently testable.
- */
-LlamaController::LlamaController(): 
-    llama_runner(new LlamaRunner())  {}
+LlamaController::LlamaController() : llama_runner(new LlamaRunner()) {}
 
-/**
- * @brief Injects a LlamaRunner instance.
- * @param runner A std::unique_ptr to the LlamaRunner that will be used for generation.
- */
-void LlamaController::set_llama_runner(std::unique_ptr<LlamaRunner> runner) {
-    llama_runner = std::move(runner);
-}
-
-/**
- * @brief Sets the reverse prompt (antiprompt) for the generation.
- * @param p_reverse_prompt The string to use as the reverse prompt.
- */
-void LlamaController::set_reverse_prompt(const std::string& p_reverse_prompt) {
-    reverse_prompt = p_reverse_prompt;
-}
-
-/**
- * @param model_params @todo
- * @param prompt The input text to generate from. Required.
- * @param grammar Optional BNF grammar string to constrain generation. Empty string for no grammar.
- * @param json Optional JSON schema to constrain generation. Will be converted to grammar 
- *             internally. If both grammar and JSON are provided, grammar takes precedence.
- * @param on_update A callback function that is invoked with each new chunk of generated text.
- * @param on_wait_start A callback function that is invoked if the model enters an interactive 
- *                      state.
- * @param on_finish A callback function that is invoked with the complete generated text when 
- *                  finished.
- * @return The complete generated text as a std::string.
- */
-std::string LlamaController::generate_text_locked(
-    const common_params& model_params,
+std::string LlamaController::start_generation(
+    llama_model* model,
+    llama_context* context,
+    common_params& params,
     const std::string& prompt,
     const std::string& grammar,
     const std::string& json,
     std::function<void(std::string)> on_update,
-    std::function<void()> on_wait_start,
     std::function<void(std::string)> on_finish
 ) {
-    common_params params = model_params;
-
-    std::lock_guard<std::mutex> lock(generate_text_mutex);
+    params.prompt = prompt;
 
     if (!grammar.empty()) {
         params.sampling.grammar = grammar;
@@ -64,30 +24,21 @@ std::string LlamaController::generate_text_locked(
         );
     }
 
-    GDLOG_DEBUG("Start Generating Text");
-    llama_runner.reset(new LlamaRunner());  // @todo not this
-
-    params.antiprompt.clear();
-    if (reverse_prompt != "") {
-        GDLOG_INFO("Adding reverse prompt: " + reverse_prompt);
-        params.antiprompt.emplace_back(reverse_prompt);
-    }
-
-    std::string s_prompt;
-    if (!params.interactive) {
-        // In interactive mode, Llama automatically formats the prompt by adding the configured
-        // prefix and suffix. This code ensures that non-interactive prompts are formatted
-        // identically for consistent results.
-        s_prompt = params.input_prefix + prompt + params.input_suffix;
-    } else {
-        s_prompt = prompt;
-    }
-
-    std::string generated_text = llama_runner->llama_generate_text(
-        s_prompt, params, on_update, on_wait_start, on_finish
+    std::string generated_text = llama_runner->run_prediction(
+        model,
+        context,
+        params,
+        on_update,
+        on_finish
     );
 
-    params.sampling.grammar = std::string();
-    
+    params.sampling.grammar.clear();
+
     return generated_text;
+}
+
+void LlamaController::stop_generation() {
+    if (llama_runner) {
+        llama_runner->stop_generation();
+    }
 }

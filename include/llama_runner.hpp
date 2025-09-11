@@ -2,36 +2,48 @@
 #define LLAMA_RUNNER_HPP
 
 #include <common.h>
+#include <atomic>
 #include <functional>
 #include <string>
 
+/**
+ * @class LlamaRunner
+ * @brief Executes the core prediction loop on a pre-loaded model context.
+ */
 class LlamaRunner {
-    private:
-        bool should_stop_generation;
-        bool is_waiting_input;
-        std::string input;
-
-    private:
-        /**
-         * @brief Pre-flight check to validate parameters prior to model initialization.
-         * @param params The model parameters to validate.
-         * @return An error message. If there is no message, then there is no error.
-         */
-        std::string validate_params_for_initialization(const common_params &params);
-
     public:
+
+        /** @brief Default constructor. */
         LlamaRunner();
-        virtual ~LlamaRunner(); 
-        virtual std::string llama_generate_text(
-            std::string prompt,
-            common_params params,
+
+        /** @brief Default deconstructor. */
+        virtual ~LlamaRunner();
+
+        /**
+         * @brief Runs the prediction loop using an existing model and context.
+         * @param model A pointer to the loaded llama_model.
+         * @param ctx A pointer to the active llama_context.
+         * @param params The common_params struct for this generation task.
+         * @param on_generate_text_updated Callback for streaming text chunks.
+         * @param on_generate_text_finished Callback for when generation is complete.
+         * @return The complete generated text string.
+         */
+        virtual std::string run_prediction(
+            llama_model* model,
+            llama_context* ctx,
+            common_params& params,
             std::function<void(std::string)> on_generate_text_updated,
-            std::function<void()> on_input_wait_started,
             std::function<void(std::string)> on_generate_text_finished
         );
-        void llama_stop_generate_text();
-        void set_input(std::string input);
-        bool get_is_waiting_input();
+
+        void stop_generation();
+        void set_input(std::string input);  // unused?
+        bool is_waiting_for_input() const;  // unused?
+
+    private:
+        std::atomic<bool> should_stop_generation;
+        bool is_waiting_input;
+        std::string user_input;
 };
 
-#endif //LLAMA_RUNNER_H
+#endif //LLAMA_RUNNER_HPP
