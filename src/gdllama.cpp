@@ -70,6 +70,29 @@ namespace godot {
         unload_model();
     }
 
+    /*
+     * @todo something is fucked up with our threads
+     * An instance of `GDLlama` enters an unrecoverable state after an async generation
+     * task completes. Any subsequent operation on that same instance (another async call,
+     * a synchronous call like `generate_chat`, or even `unload_model`) fails,
+     * typically with a "Llama failed to decode" error from the llama.cpp backend.
+     * 
+     * The issue appears to be a subtle thread-safety or resource lifecycle problem
+     * that is not a simple data race or deadlock at our application level.
+     * 
+     * @note Next Steps & Hypothesis
+     *
+     * - Research the thread-safety guarantees of `llama.cpp`. Can a
+     * single `llama_context` be passed between and used by different OS threads?
+     *
+     * - As an experiment, try creating a *separate, temporary `llama_context`* just for the
+     * background thread inside `_generation_task`. This would be slow, but if it *fixes the 
+     * crash*, it will prove that context sharing is the root cause of the problem.
+     * 
+     * - Look into how Godot threading works. There may be subtleties here that we are not
+     * considering
+     */
+
     Error GDLlama::load_model() {
         if (params.model.path.empty()) {
             GDLOG_ERROR("Cannot load model: model_path is not set.");
@@ -144,7 +167,14 @@ namespace godot {
 
     void GDLlama::_generation_task(String prompt, String grammar, String json, bool is_continuous) {
         generation_mutex->lock();
+
+        common_params temp_params = params;
+        common_init_result temp_init = common_init_from_params(temp_params);
+        llama_context* temp_ctx = temp_init.context.get();
+        llama_model* temp_model = temp_init.model.get();
+
         _generate(prompt, grammar, json, is_continuous, true);
+
         generation_mutex->unlock();
     }
 
