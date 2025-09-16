@@ -32,13 +32,10 @@ class LlamaRunner {
             llama_model* model,
             llama_context* ctx,
             common_params& params,
-            std::function<void(std::string)> on_generate_text_updated,
-            std::function<void(std::string)> on_generate_text_finished
+            std::function<void(std::string)> on_generate_text_updated
         );
 
         void stop_generation();
-        void set_input(std::string input);  // unused?
-        bool is_waiting_for_input() const;  // unused?
 
     private:
         std::atomic<bool> should_stop_generation;

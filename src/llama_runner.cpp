@@ -16,23 +16,24 @@ void LlamaRunner::stop_generation() {
     should_stop_generation = true;
 }
 
-void LlamaRunner::set_input(std::string input) {
-    this->user_input = input;
-    is_waiting_input = false;
-}
-
-bool LlamaRunner::is_waiting_for_input() const {
-    return is_waiting_input;
-}
-
 std::string LlamaRunner::run_prediction(
     llama_model* model,
     llama_context* ctx,
     common_params& params,
-    std::function<void(std::string)> on_generate_text_updated,
-    std::function<void(std::string)> on_generate_text_finished
+    std::function<void(std::string)> on_generate_text_updated
 ){
     should_stop_generation = false;
+    if (ctx == nullptr) {
+        std::string err_msg = "Invalid context.";
+        GDLOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+    }
+
+    if (model == nullptr) {
+        std::string err_msg = "Invalid model";
+        GDLOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+    }
 
     const bool add_bos = llama_vocab_get_add_bos(llama_model_get_vocab(model));
     std::vector<llama_token> prompt_tokens = ::common_tokenize(ctx, params.prompt, add_bos, true);
@@ -41,8 +42,7 @@ std::string LlamaRunner::run_prediction(
     if ((int)prompt_tokens.size() > n_ctx - 4) {
         std::string err_msg = "Prompt is too long for the context size.";
         GDLOG_ERROR(err_msg);
-        on_generate_text_finished(err_msg);
-        return err_msg;
+        throw std::runtime_error(err_msg);
     }
 
     auto * sampler_chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
@@ -68,9 +68,13 @@ std::string LlamaRunner::run_prediction(
 
     std::string generated_text = "";
     int n_remain = params.n_predict;
-    int n_past = 0;
     std::vector<llama_token> embd;
+    const llama_pos max_pos = llama_memory_seq_pos_max(llama_get_memory(ctx), 0);
+    int n_past = (max_pos == -1) ? 0 : max_pos + 1;
     const auto * vocab = llama_model_get_vocab(model);
+    
+    // int n_past = llama_vocab_n_tokens(vocab); <- prob not this, but keep it around for now
+    
     const llama_token EOD_TOKEN = llama_vocab_eos(vocab);
 
     GDLOG_DEBUG("Starting Generation Loop.");
@@ -113,7 +117,7 @@ std::string LlamaRunner::run_prediction(
             llama_token new_token_id = llama_sampler_sample(sampler_chain, ctx, -1);
             llama_sampler_accept(sampler_chain, new_token_id);
 
-            if (new_token_id == EOD_TOKEN) {
+            if (new_token_id == EOD_TOKEN && !params.sampling.ignore_eos) {
                 GDLOG_DEBUG("End of generation token found.");
                 break;
             }
@@ -122,6 +126,7 @@ std::string LlamaRunner::run_prediction(
             on_generate_text_updated(token_str);
             generated_text.append(token_str);
 
+            GDLOG_DEBUG("Token string chunk generated: " + token_str);
             n_remain--;
 
             embd.clear();
@@ -131,11 +136,7 @@ std::string LlamaRunner::run_prediction(
 
     llama_sampler_free(sampler_chain);
 
-    GDLOG_DEBUG("Generated Text: " + generated_text);
-
-    if (on_generate_text_finished) {
-        on_generate_text_finished(generated_text);
-    }
+    GDLOG_DEBUG(("Generated Text: \"\"\"\n" + generated_text + "\n\"\"\"").c_str());
 
     GDLOG_INFO("Prediction finished.");
     return generated_text;

@@ -32,7 +32,7 @@ class GDLlama : public Node {
         Error generate_text_async(String prompt, String grammar = "", String json = "");
         String generate_chat(String prompt, String grammar = "", String json = "");
         Error generate_chat_async(String prompt, String grammar = "", String json = "");
-        void reset_conversation();
+        void reset_context();
         void stop_generate_text();
 
         // State Checking
@@ -51,33 +51,45 @@ class GDLlama : public Node {
         void set_top_p(float top_p);
         float get_top_p() const;
 
+        void set_ignore_eos(bool p_ignore_eos);
+        bool get_ignore_eos() const;
+
+        void set_penalty_repeat(float p_penalty_repeat);
+        float get_penalty_repeat() const;
+
+        void set_penalty_last_n(int p_penalty_last_n);
+        int get_penalty_last_n() const;
+
     protected:
         static void _bind_methods();
 
     private:
-        String _generate(
-            String prompt,
-            String grammar,
-            String json,
-            bool is_continuous,
-            bool should_emit_finish_signal
-        );
-        void _generation_task(
-            String prompt,
-            String grammar,
-            String json,
-            bool is_continuous
-        );
-        Error _generate_async(Callable callable);
-
-        std::unique_ptr<LlamaState> llama_state;
         std::unique_ptr<LlamaController> controller;
         common_params params;
 
-        godot::Ref<Thread> generate_text_thread;
-        godot::Ref<Mutex> generation_mutex;
+        godot::Ref<godot::Thread> generate_text_thread;
+        mutable godot::Ref<godot::Mutex> generation_mutex;
         std::string text_generation_buffer;
+        bool is_thread_busy = false;
+
+        godot::String _generate(
+            // @todo should these be godot strings?
+            godot::String prompt,
+            godot::String grammar,
+            godot::String json,
+            bool is_continuous
+        );
+        void _generation_task(
+            godot::String prompt,
+            godot::String grammar,
+            godot::String json,
+            bool is_continuous
+        );
+        godot::Error _generate_async(godot::Callable callable);
+        void _async_generation_completed(String result);
+        void _mark_thread_idle();
+        void _mark_thread_busy();
     };
 } // namespace godot
 
-#endif GDLLAMA_HPP
+#endif // GDLLAMA_HPP
