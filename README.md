@@ -26,9 +26,10 @@ There are three main access methods the moment:
 - `generate_text_async` -> Generates a single response from the loaded model. Clear context after a generation.
 - `generate_chat_async` -> Generates a single response from the loaded model and keeps track of context history. 
 
-and two signals:
+and three signals:
 - `generate_text_updated` -> Emitted during generation.
-- `generate_text_finished` -> Emitted when an async generation is finished. 
+- `generate_text_finished` -> Emitted when an async generation is finished.
+- `generate_text_error` -> Emitted when there is an error with text generation.
 
 For a full reference, properties, and signals, view the API Guide: [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
 

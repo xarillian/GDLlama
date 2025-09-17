@@ -58,7 +58,7 @@ namespace godot {
         // Signals
         ADD_SIGNAL(MethodInfo("generate_text_updated", PropertyInfo(Variant::STRING, "new_text")));
         ADD_SIGNAL(MethodInfo("generate_text_finished", PropertyInfo(Variant::STRING, "full_text")));
-        // ADD_SIGNAL(MethodInfo("_async_generation_completed", PropertyInfo(Variant::STRING, "full_text")));
+        ADD_SIGNAL(MethodInfo("generate_text_error", PropertyInfo(Variant::STRING, "error_message")));
     }
 
     GDLlama::GDLlama() {
@@ -143,9 +143,17 @@ namespace godot {
 
     void GDLlama::_generation_task(String prompt, String grammar, String json, bool is_continuous) {
         godot::MutexLock lock(*(generation_mutex.ptr()));
-        String result = _generate(prompt, grammar, json, is_continuous);
-        Callable cleanup_callable = callable_mp(this, &GDLlama::_async_generation_completed);
-        cleanup_callable.call_deferred(result);
+
+        try {
+            String result = _generate(prompt, grammar, json, is_continuous);
+            Callable cleanup_callable = callable_mp(this, &GDLlama::_async_generation_completed);
+            cleanup_callable.call_deferred(result);
+        } catch (const std::runtime_error& e) {
+            String error_msg = string_std_to_gd(e.what());
+            call_deferred("emit_signal", "generate_text_error", error_msg);
+            callable_mp(this, &GDLlama::_mark_thread_idle).call_deferred();
+            GDLOG_ERROR("Async generation failed: " + std::string(e.what()));
+        }
     }
 
     void GDLlama::_async_generation_completed(String result) {
@@ -164,8 +172,13 @@ namespace godot {
 
     String GDLlama::generate_text(String prompt, String grammar, String json) {
         godot::MutexLock lock(*(generation_mutex.ptr()));
-        String result = _generate(prompt, grammar, json, false);
-        return result;
+        try {
+            String result = _generate(prompt, grammar, json, false);
+            return result;
+        } catch (const std::runtime_error& e) {
+            GDLOG_ERROR("generate_text failed: " + std::string(e.what()));
+            return "";
+        }
     }
 
     Error GDLlama::generate_text_async(String prompt, String grammar, String json) {
@@ -178,8 +191,13 @@ namespace godot {
 
     String GDLlama::generate_chat(String prompt, String grammar, String json) {
         godot::MutexLock lock(*(generation_mutex.ptr()));
-        String result = _generate(prompt, grammar, json, true);
-        return result;
+        try {
+            String result = _generate(prompt, grammar, json, true);
+            return result;
+        } catch (const std::runtime_error& e) {
+            GDLOG_ERROR("generate_chat failed: " + std::string(e.what()));
+            return "";
+        }
     }
 
     Error GDLlama::generate_chat_async(String prompt, String grammar, String json) {

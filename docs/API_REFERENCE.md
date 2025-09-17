@@ -45,6 +45,7 @@ The default values for these properties are provided by `llama.cpp`, as defined 
 |---|---|---|
 | `generate_text_updated` | `new_text: String` | Emitted repeatedly during an async generation, providing new tokens as they are generated.
 | `generate_text_finished` | `full_text: String` | Emitted once when an async generation has completed. Provides the entire text generated during the run.
+| `generate_text_error` | `error_text: String` | Emitted once when async generation has completed with an error. |
 
 ## Example Godot Usage
 ```
