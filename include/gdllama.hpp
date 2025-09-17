@@ -70,7 +70,7 @@ class GDLlama : public Node {
         godot::Ref<godot::Thread> generate_text_thread;
         mutable godot::Ref<godot::Mutex> generation_mutex;
         std::string text_generation_buffer;
-        bool is_thread_busy = false;
+        std::atomic<bool> is_thread_busy = false;
 
         godot::String _generate(
             godot::String prompt,
