@@ -32,7 +32,8 @@ void log_to_godot_and_file(ggml_log_level level, const std::string& msg) {
     switch (level) {
         case GGML_LOG_LEVEL_ERROR:
             LOG_ERR("%s\n", msg.c_str());
-            godot::UtilityFunctions::push_error(string_std_to_gd(msg));
+            // godot::UtilityFunctions::push_error(string_std_to_gd(msg));
+            godot::UtilityFunctions::printerr(string_std_to_gd("GDLlama: " + msg));
             break;
         case GGML_LOG_LEVEL_WARN:
             LOG_WRN("%s\n", msg.c_str());
