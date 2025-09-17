@@ -108,7 +108,7 @@ std::string LlamaRunner::run_prediction(
             if (llama_decode(ctx, batch) != 0) {
                 std::string err_msg = "Llama failed to decode.";
                 GDLOG_ERROR(err_msg);
-                throw std::runtime_error(err_msg);  // @todo not this
+                throw std::runtime_error(err_msg);
             }
             n_past += embd.size();
         }

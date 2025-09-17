@@ -27,22 +27,10 @@ class LlamaState {
         /** @brief Unloads the model and frees all associated resources. */
         void unload();
 
-        /**
-         * @brief Checks if a model is currently loaded.
-         * @return True if a model is loaded, false otherwise.
-         */
         bool is_loaded() const;
 
-        /**
-         * @brief Gets the pointer to the current llama_context.
-         * @return A pointer to the llama_context, or nullptr if no model is loaded.
-         */
         llama_context* get_context();
-
-        /** 
-         * @brief @todo
-         * @return @todo 
-         */        
+ 
         llama_model * get_model();
 
     private:

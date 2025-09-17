@@ -13,10 +13,8 @@
 class LlamaRunner {
     public:
 
-        /** @brief Default constructor. */
         LlamaRunner();
 
-        /** @brief Default deconstructor. */
         virtual ~LlamaRunner();
 
         /**
@@ -25,7 +23,6 @@ class LlamaRunner {
          * @param ctx A pointer to the active llama_context.
          * @param params The common_params struct for this generation task.
          * @param on_generate_text_updated Callback for streaming text chunks.
-         * @param on_generate_text_finished Callback for when generation is complete.
          * @return The complete generated text string.
          */
         virtual std::string run_prediction(

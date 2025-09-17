@@ -73,7 +73,6 @@ class GDLlama : public Node {
         bool is_thread_busy = false;
 
         godot::String _generate(
-            // @todo should these be godot strings?
             godot::String prompt,
             godot::String grammar,
             godot::String json,
