@@ -1,4 +1,5 @@
 name: Build with Latest Llama
+description: The "oh my god, it broke again" workflow
 
 on:
   schedule:
@@ -18,7 +19,8 @@ jobs:
     - name: Update llama.cpp to latest
       run: |
         cd llama.cpp
-        git pull origin master
+        git fetch
+        git reset --hard origin/master
 
     - name: Configure and Build
       run: |
