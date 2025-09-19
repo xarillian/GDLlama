@@ -60,6 +60,9 @@ class GDLlama : public Node {
         void set_penalty_last_n(int p_penalty_last_n);
         int get_penalty_last_n() const;
 
+        void set_chat_template(const String &p_chat_template);
+        String get_chat_template() const;
+
     protected:
         static void _bind_methods();
 

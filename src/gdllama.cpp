@@ -42,6 +42,7 @@ namespace godot {
         BIND_GDL_PROPERTY(ignore_eos, Variant::BOOL);
         BIND_GDL_PROPERTY(penalty_repeat, Variant::FLOAT);
         BIND_GDL_PROPERTY(penalty_last_n, Variant::INT);
+        BIND_GDL_PROPERTY(chat_template, Variant::STRING);
 
         // ## State Checking ##
         ClassDB::bind_method(D_METHOD("is_running"), &GDLlama::is_running);
@@ -302,5 +303,15 @@ namespace godot {
     int GDLlama::get_penalty_last_n() const {
         godot::MutexLock lock(*(generation_mutex.ptr()));
         return params.sampling.penalty_last_n;
+    }
+
+    void GDLlama::set_chat_template(const String &p_chat_template) {
+        godot::MutexLock lock(*(generation_mutex.ptr()));
+        params.chat_template = string_gd_to_std(p_chat_template);
+    }
+
+    String GDLlama::get_chat_template() const {
+        godot::MutexLock lock(*(generation_mutex.ptr()));
+        return string_std_to_gd(params.chat_template);
     }
 }  // namespace godot
