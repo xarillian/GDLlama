@@ -2,9 +2,9 @@
 > Isn't it cool to utilize large language model (LLM) to generate contents for your game?
 - @Adriankhl, original creator of GDLlama
 
-Why, yes, I do think it is cool! The generative space is an exciting frontier for video games that has been sorely under-explored so far. LLMs and multimodal models have a great potential to complement multiple aspects of game design, from dialogue generation to quest generation and beyond. Thanks to `llama.cpp`, we can perform inference fast enough locally to enable some genuinely interesting gameplay. I want Godot to be at the forefront of that, or at least keeping pace with Unity and Unreal.
+Why, yes, I do think it is cool! The generative space is an exciting frontier for video games that has been sorely under-explored so far. LLMs and multimodal models have a great potential to complement multiple aspects of game design, from dialogue generation to quest generation and beyond. Thanks to `llama.cpp`, we can perform inference fast enough locally to enable some genuinely interesting gameplay. I want to help Godot at least keep pace with Unity and Unreal.
 
-I intend to maintain this for an indefinite amount of time while it continues to be useful to me. This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent `llama.cpp` versions. It has been almost entirely re-written.
+I intend to maintain this for an indefinite amount of time while it continues to be useful to me. This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent `llama.cpp` versions. It has been almost entirely re-written with a number of new features. It is notable that, at the moment, I do not know the state of embeddings or the DB functionality. I intend to resolve these issues before a full release to the Godot Asset Shop. For progress, see: https://github.com/xarillian/GDLlama/milestone/1
 
 # Getting Started
 For now, everything has to be built by the user. GDLlama is not yet in the asset library, no sir. I'd like a bit more polish on the project before getting to a 1.0 release state where I'd put it in the library.
