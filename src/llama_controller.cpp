@@ -1,7 +1,6 @@
 #include "llama_controller.hpp"
 #include <nlohmann/json.hpp>
 #include <common/json-schema-to-grammar.h>
-#include <winerror.h>
 
 LlamaController::LlamaController() : 
     llama_state(std::make_unique<LlamaState>()),
