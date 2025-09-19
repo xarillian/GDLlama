@@ -6,8 +6,6 @@ Why, yes, I do think it is cool! The generative space is an exciting frontier fo
 
 I intend to maintain this for an indefinite amount of time while it continues to be useful to me. This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent `llama.cpp` versions. It has been almost entirely re-written.
 
-**I am actively re-developing this at the moment. Expect breaking changes.**
-
 # Getting Started
 For now, everything has to be built by the user. GDLlama is not yet in the asset library, no sir. I'd like a bit more polish on the project before getting to a 1.0 release state where I'd put it in the library.
 

@@ -7,15 +7,26 @@
 
 namespace godot {
     void GDLlama::_bind_methods() {
-        // Model Management
+        #define BIND_GDL_PROPERTY(m_name, m_type) \
+            ClassDB::bind_method(D_METHOD("set_" #m_name, #m_name), &GDLlama::set_##m_name); \
+            ClassDB::bind_method(D_METHOD("get_" #m_name), &GDLlama::get_##m_name); \
+            ClassDB::add_property("GDLlama", PropertyInfo(m_type, #m_name), "set_" #m_name, "get_" #m_name);
+
+        #define BIND_GDL_PROPERTY_HINT(m_name, m_type, m_hint) \
+            ClassDB::bind_method(D_METHOD("set_" #m_name, "p_" #m_name), &GDLlama::set_##m_name); \
+            ClassDB::bind_method(D_METHOD("get_" #m_name), &GDLlama::get_##m_name); \
+            ClassDB::add_property("GDLlama", PropertyInfo(m_type, #m_name, m_hint), "set_" #m_name, "get_" #m_name);
+
+        // ## Model Management ##
         ClassDB::bind_method(D_METHOD("load_model"), &GDLlama::load_model);
         ClassDB::bind_method(D_METHOD("unload_model"), &GDLlama::unload_model);
         ClassDB::bind_method(D_METHOD("is_model_loaded"), &GDLlama::is_model_loaded);
         ClassDB::bind_method(D_METHOD("set_model_path", "p_model_path"), &GDLlama::set_model_path);
         ClassDB::bind_method(D_METHOD("get_model_path"), &GDLlama::get_model_path);
+    
         ClassDB::add_property("GDLlama", PropertyInfo(Variant::STRING, "model_path", PROPERTY_HINT_FILE), "set_model_path", "get_model_path");
 
-        // Generation Methods
+        // ## Text Generation Methods ##
         ClassDB::bind_method(D_METHOD("generate_text", "prompt", "grammar", "json"), &GDLlama::generate_text, DEFVAL(""), DEFVAL(""));
         ClassDB::bind_method(D_METHOD("generate_text_async", "prompt", "grammar", "json"), &GDLlama::generate_text_async, DEFVAL(""), DEFVAL(""));
         ClassDB::bind_method(D_METHOD("generate_chat", "prompt", "grammar", "json"), &GDLlama::generate_chat, DEFVAL(""), DEFVAL(""));
@@ -23,42 +34,25 @@ namespace godot {
         ClassDB::bind_method(D_METHOD("reset_context"), &GDLlama::reset_context);
         ClassDB::bind_method(D_METHOD("stop_generate_text"), &GDLlama::stop_generate_text);
 
-        // Generation Parameters
-        ClassDB::bind_method(D_METHOD("set_n_predict", "n_predict"), &GDLlama::set_n_predict);
-        ClassDB::bind_method(D_METHOD("get_n_predict"), &GDLlama::get_n_predict);
-        ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "n_predict"), "set_n_predict", "get_n_predict");
+        // ## Generation Parameters ##
+        BIND_GDL_PROPERTY(n_predict, Variant::INT);
+        BIND_GDL_PROPERTY(temperature, Variant::FLOAT);
+        BIND_GDL_PROPERTY(top_k, Variant::INT);
+        BIND_GDL_PROPERTY(top_p, Variant::FLOAT);
+        BIND_GDL_PROPERTY(ignore_eos, Variant::BOOL);
+        BIND_GDL_PROPERTY(penalty_repeat, Variant::FLOAT);
+        BIND_GDL_PROPERTY(penalty_last_n, Variant::INT);
 
-        ClassDB::bind_method(D_METHOD("set_temperature", "temp"), &GDLlama::set_temperature);
-        ClassDB::bind_method(D_METHOD("get_temperature"), &GDLlama::get_temperature);
-        ClassDB::add_property("GDLlama", PropertyInfo(Variant::FLOAT, "temperature"), "set_temperature", "get_temperature");
-
-        ClassDB::bind_method(D_METHOD("set_top_k", "top_k"), &GDLlama::set_top_k);
-        ClassDB::bind_method(D_METHOD("get_top_k"), &GDLlama::get_top_k);
-        ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "top_k"), "set_top_k", "get_top_k");
-
-        ClassDB::bind_method(D_METHOD("set_top_p", "top_p"), &GDLlama::set_top_p);
-        ClassDB::bind_method(D_METHOD("get_top_p"), &GDLlama::get_top_p);
-        ClassDB::add_property("GDLlama", PropertyInfo(Variant::FLOAT, "top_p"), "set_top_p", "get_top_p");
-
-        ClassDB::bind_method(D_METHOD("set_ignore_eos", "ignore_eos"), &GDLlama::set_ignore_eos);
-        ClassDB::bind_method(D_METHOD("get_ignore_eos"), &GDLlama::get_ignore_eos);
-        ClassDB::add_property("GDLlama", PropertyInfo(Variant::BOOL, "ignore_eos"), "set_ignore_eos", "get_ignore_eos");
-
-        ClassDB::bind_method(D_METHOD("set_penalty_repeat", "penalty_repeat"), &GDLlama::set_penalty_repeat);
-        ClassDB::bind_method(D_METHOD("get_penalty_repeat"), &GDLlama::get_penalty_repeat);
-        ClassDB::add_property("GDLlama", PropertyInfo(Variant::FLOAT, "penalty_repeat"), "set_penalty_repeat", "get_penalty_repeat");
-
-        ClassDB::bind_method(D_METHOD("set_penalty_last_n", "penalty_last_n"), &GDLlama::set_penalty_last_n);
-        ClassDB::bind_method(D_METHOD("get_penalty_last_n"), &GDLlama::get_penalty_last_n);
-        ClassDB::add_property("GDLlama", PropertyInfo(Variant::INT, "penalty_last_n"), "set_penalty_last_n", "get_penalty_last_n");
-
-        // State Checking
+        // ## State Checking ##
         ClassDB::bind_method(D_METHOD("is_running"), &GDLlama::is_running);
 
-        // Signals
+        // ## Signals ##
         ADD_SIGNAL(MethodInfo("generate_text_updated", PropertyInfo(Variant::STRING, "new_text")));
         ADD_SIGNAL(MethodInfo("generate_text_finished", PropertyInfo(Variant::STRING, "full_text")));
-        ADD_SIGNAL(MethodInfo("generate_text_error", PropertyInfo(Variant::STRING, "error_message")));
+        ADD_SIGNAL(MethodInfo("generate_text_error", PropertyInfo(Variant::STRING, "error_text")));
+    
+        #undef BIND_GDL_PROPERTY
+        #undef BIND_GDL_PROPERTY_HINT
     }
 
     GDLlama::GDLlama() {
@@ -246,10 +240,10 @@ namespace godot {
         return params.n_predict;
     }
 
-    void GDLlama::set_temperature(float temp) {
+    void GDLlama::set_temperature(float temperature) {
         godot::MutexLock lock(*(generation_mutex.ptr()));
-        GDLOG_DEBUG("Setting temperature to " + std::to_string(temp));
-        params.sampling.temp = temp;
+        GDLOG_DEBUG("Setting temperature to " + std::to_string(temperature));
+        params.sampling.temp = temperature;
     }
 
     float GDLlama::get_temperature() const {

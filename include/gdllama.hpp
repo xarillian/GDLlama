@@ -42,7 +42,7 @@ class GDLlama : public Node {
         void set_n_predict(int n_predict);
         int get_n_predict() const;
 
-        void set_temperature(float temp);
+        void set_temperature(float temperature);
         float get_temperature() const;
 
         void set_top_k(int top_k);
