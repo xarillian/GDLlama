@@ -31,8 +31,14 @@ and three signals:
 - `generate_text_finished` -> Emitted when an async generation is finished.
 - `generate_text_error` -> Emitted when there is an error with text generation.
 
-For a full reference, properties, and signals, view the API Guide: [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
+That's a quick overview, but with those three methods and those three signals you can be well on your way to using this thing. If you want to dive deeper, GDLlama includes a full suite of docs for your convenience.
+
+- [API Reference](docs/API_REFERENCE.md): A breakdown of every function, property, and signal.
+- [Architecture Guide](docs/ARCHITECTURE.md): Best practices for how to structure your code with `GDLlama`.
+- [Usage Examples](docs/EXAMPLES.md) or a [Basic Example](docs/API_REFERENCE.md#example-godot-usage): Getting started, common use-cases.
+- [LLM Legal](docs/AI_LEGAL.md): A curated list of legal resources for generative content in games.
 
 # Contributions
-- PRs are welcome! This is my first big open source contribution and I am more than happy to share with the community.
-- Huge thanks to @Adriankhl for originally creating this project. See: https://github.com/Adriankhl/godot-llm
+PRs are welcome! This is my first big open source contribution and I am more than happy to share with the community. 
+
+Huge thanks to @Adriankhl for originally creating this project: https://github.com/Adriankhl/godot-llm

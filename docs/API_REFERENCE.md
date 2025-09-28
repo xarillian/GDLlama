@@ -1,4 +1,7 @@
 # API
+
+// TODO needs embedding methods, properties, and signals :/
+
 The `GDLlama` node is a custom Godot node that acts as a bridge to the `llama.cpp` library, allowing you to perform complex AI text generation tasks directly from GDScript or C# without halting your game. Key features include:
 
 - Conversational AI: Maintain context between calls to create multi-turn chatbots.
