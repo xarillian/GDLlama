@@ -72,16 +72,13 @@ std::string LlamaRunner::run_prediction(
     const llama_pos max_pos = llama_memory_seq_pos_max(llama_get_memory(ctx), 0);
     int n_past = (max_pos == -1) ? 0 : max_pos + 1;
     const auto * vocab = llama_model_get_vocab(model);
-    
-    // int n_past = llama_vocab_n_tokens(vocab); <- prob not this, but keep it around for now
-    
+        
     const llama_token EOD_TOKEN = llama_vocab_eos(vocab);
 
     GDLOG_DEBUG("Starting Generation Loop.");
     GDLOG_DEBUG("n_remain: " + std::to_string(n_remain));
     while (n_remain > 0 && !should_stop_generation) {
         if (n_past < prompt_tokens.size()) {
-            // If we haven't processed the whole prompt yet, let's do that first.
             embd.clear();
             int n_eval = (int)prompt_tokens.size() - n_past;
             if (n_eval > params.n_batch) n_eval = params.n_batch;
@@ -140,4 +137,59 @@ std::string LlamaRunner::run_prediction(
 
     GDLOG_INFO("Prediction finished.");
     return generated_text;
+}
+
+std::vector<float> LlamaRunner::run_embedding(
+    llama_model* model,
+    llama_context* ctx,
+    common_params& params
+) {
+    GDLOG_DEBUG("Starting embedding generation for prompt of size: " + std::to_string(params.prompt.length()));
+
+    const bool add_bos = llama_vocab_get_add_bos(llama_model_get_vocab(model));
+    std::vector<llama_token> prompt_tokens = ::common_tokenize(ctx, params.prompt, add_bos, true);
+
+    if (prompt_tokens.empty()) {
+        GDLOG_WARN("Prompt is empty, cannot generate embedding.");
+        return {};
+    }
+
+    if (ctx == nullptr) {
+        std::string err_msg = "Invalid context.";
+        GDLOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+    }
+
+    if (model == nullptr) {
+        std::string err_msg = "Invalid model";
+        GDLOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+    }
+
+    const int n_tokens = prompt_tokens.size();
+    GDLOG_DEBUG("Prompt tokenized into " + std::to_string(n_tokens) + " tokens.");
+
+    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), n_tokens);
+
+    std::vector<llama_pos> positions;
+    positions.reserve(n_tokens);
+    for(size_t i = 0; i < n_tokens; ++i) {
+        positions.push_back(i);
+    }
+    batch.pos = positions.data();
+
+    if (llama_decode(ctx, batch) != 0) {
+        throw std::runtime_error("Llama failed to decode for embedding.");
+    }
+
+    const int n_embd = llama_n_embd(model);
+    const float * embd_ptr = llama_get_embeddings(ctx);
+    if (embd_ptr == nullptr) {
+        throw std::runtime_error("Failed to get embeddings.");
+    }
+
+    std::vector<float> embeddings(embd_ptr, embd_ptr + n_embd);
+
+    GDLOG_DEBUG("Embedding generated successfully.");
+    return embeddings;
 }

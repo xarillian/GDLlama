@@ -94,20 +94,18 @@ add_subdirectory(llama.cpp)
 # ============================================================================
 set(src_files
   "src/conversion.cpp"
-  "src/gdembedding.cpp"
   "src/gdllama.cpp"
-  "src/embedding_runner.cpp"
   "src/llama_runner.cpp"
-  "src/llm_db.cpp"
+  # "src/llm_db.cpp"
   "src/register_types.cpp"
   "src/logging_utils.cpp"
   "src/llama_controller.cpp"
   "src/llama_state.cpp"
 )
-set(vendor_files
-  "vendor/sqlite3.c"
-  "vendor/sqlite-vec.c"
-)
+# set(vendor_files
+#   "vendor/sqlite3.c"
+#   "vendor/sqlite-vec.c"
+# )
 
 string(TOLOWER ${CMAKE_SYSTEM_NAME} SYSTEM_NAME_LOWER)
 

@@ -55,7 +55,7 @@ std::string LlamaController::start_generation(
     } else {
         // For non-continuous (single-shot) generation, we don't apply a chat
         // template. This mode is for raw text completion, and applying chat
-        // formatting would be incorrect.
+        // formatting not supplied by the user would be incorrect.
         reset_context();
         params.prompt = prompt;
     }
@@ -79,6 +79,31 @@ std::string LlamaController::start_generation(
 
     return generated_text;
 }
+
+
+std::vector<float> LlamaController::generate_embedding(
+    common_params& params,
+    const std::string& prompt
+) {
+    if (!is_model_loaded()) {
+        std::string err_msg = "Cannot generate embedding: Model is not loaded.";
+        GDLOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+    }
+
+    reset_context();
+
+    params.n_predict = 0;
+    params.prompt = prompt;
+
+    llama_context* ctx = llama_state->get_context();
+    llama_model* model = llama_state->get_model();
+
+    std::vector<float> embedding = llama_runner->run_embedding(model, ctx, params);
+
+    return embedding;
+}
+
 
 void LlamaController::stop_generation() {
     if (llama_runner) {

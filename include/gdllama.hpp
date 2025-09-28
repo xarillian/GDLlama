@@ -35,6 +35,11 @@ class GDLlama : public Node {
         void reset_context();
         void stop_generate_text();
 
+        // Embedding Methods
+        PackedFloat32Array compute_embedding(String prompt);
+        Error compute_embedding_async(String prompt);
+        float similarity_cos(PackedFloat32Array array1, PackedFloat32Array array2);
+
         // State Checking
         bool is_running() const;
 
@@ -63,17 +68,29 @@ class GDLlama : public Node {
         void set_chat_template(const String &p_chat_template);
         String get_chat_template() const;
 
+        void set_n_batch(int p_n_batch);
+        int get_n_batch() const;
+
+        void set_n_gpu_layers(int p_n_gpu_layer);
+        int get_n_gpu_layers() const;
+
+        void set_n_ctx(int p_n_ctx);
+        int get_n_ctx() const;
+
+        void set_main_gpu(int p_main_gpu);
+        int get_main_gpu() const;
+
+        void set_seed(int64_t p_seed);
+        int64_t get_seed() const;
+
     protected:
         static void _bind_methods();
 
     private:
+        // Core
         std::unique_ptr<LlamaController> controller;
         common_params params;
-
-        godot::Ref<godot::Thread> generate_text_thread;
-        mutable godot::Ref<godot::Mutex> generation_mutex;
         std::string text_generation_buffer;
-        std::atomic<bool> is_thread_busy = false;
 
         godot::String _generate(
             godot::String prompt,
@@ -81,16 +98,40 @@ class GDLlama : public Node {
             godot::String json,
             bool is_continuous
         );
+
+        PackedFloat32Array _compute_embedding(godot::String prompt);
+
+        // Threading & State
+        godot::Ref<godot::Thread> generate_text_thread;
+        mutable godot::Ref<godot::Mutex> generation_mutex;
+        std::atomic<bool> is_thread_busy = false;
+
+        void _mark_thread_idle();
+        void _mark_thread_busy();
+
+        // Asynchronous Task Workers & Launchers
+        godot::Error _call_async_process(godot::Callable callable);
         void _generation_task(
             godot::String prompt,
             godot::String grammar,
             godot::String json,
             bool is_continuous
         );
-        godot::Error _generate_async(godot::Callable callable);
-        void _async_generation_completed(String result);
-        void _mark_thread_idle();
-        void _mark_thread_busy();
+        void _embedding_task(String prompt);
+
+        // Asynchronous Callbacks & Signals
+        void _async_generation_completed(godot::String result);
+        void _on_generate_text_update(std::string text_chunk);
+        void _on_generate_text_error(godot::String error_msg);
+        void _async_embedding_completed(PackedFloat32Array result);
+        void _on_embedding_failed(godot::String error_msg);
+
+        // Godot Bindings
+        static void _bind_model_methods();
+        static void _bind_generation_methods();
+        static void _bind_embedding_methods();
+        static void _bind_properties();
+        static void _bind_signals();
     };
 } // namespace godot
 

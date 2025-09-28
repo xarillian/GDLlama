@@ -28,7 +28,7 @@ class LlamaController {
         /**
          * @brief Generates text using a provided context and parameters. Isolated from Godot.
          * @param params Parameters for the generation (sampling, prompt, etc.).
-         * @param prompt The user's input prompt.
+         * @param prompt The input.
          * @param grammar Optional BNF grammar string to constrain generation. Empty string for no grammar.         
          * @param json Optional JSON schema to constrain generation. Will be converted to grammar
          *             internally. If both grammar and JSON are provided, grammar takes precedence.
@@ -43,6 +43,17 @@ class LlamaController {
             const std::string& json,
             bool is_continuous,
             std::function<void(std::string)> on_update
+        );
+
+        /**
+         * @brief Generates an embedding vector for the given prompt.
+         * @param params Parameters for the generation (sampling, prompt, etc.).
+         * @param prompt The input.
+         * @return A vector of floats representing the embedding.
+         */
+        std::vector<float> generate_embedding(
+            common_params& params,
+            const std::string& prompt
         );
 
 

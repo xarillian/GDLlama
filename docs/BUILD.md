@@ -33,8 +33,6 @@ cmake .. -GNinja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMA
 ```
 
 ### Linux
-I haven't tested this at all, sorry. Here's the advice from the original project:
-
 ```shell
 cmake .. -GNinja -DLLAMA_NATIVE=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DLLAMA_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
 ```
