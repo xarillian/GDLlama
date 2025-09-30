@@ -1,5 +1,142 @@
 # Examples
-@TODO
+This document provides practical examples for using the `GDLlama` node in your projects.
+
+## Basic Text Generation
+The most fundamental use is generating text from a prompt. You can do this synchronously, which is blocking, or asynchronously, which is non-blocking.
+
+### Synchronous
+```gdscript
+func _run_examples() -> void:
+    llm.model_path = "res://models/your_model.gguf"
+    var error = llm.load_model()
+    if error != OK:
+        printerr("Failed to load model!")
+        return
+    
+    var prompt = "You are a powerful wizard! Respond with your favorite spell."
+
+    var sync_result = llm.generate_text(prompt)
+    print("Result: ", sync_result.strip_edges())
+
+    llm.unload_model()
+```
+
+### Asynchronous
+```gdscript
+# This function is called when the 'generate_text_finished' signal is emitted.
+func _on_generation_finished(full_text: String):
+    print("[Signal Received] Result: ", full_text.strip_edges())
+
+func _run_examples() -> void:
+    llm.model_path = "res://models/your_model.gguf"
+    var error = llm.load_model()
+    if error != OK:
+        printerr("Failed to load model!")
+        return
+    
+    var prompt = "You are a powerful wizard! Respond with your favorite spell."
+
+    # Connect to the signal that fires when the generation is complete.
+    llm.generate_text_finished.connect(_on_generation_finished)
+    llm.generate_text_async(prompt)
+
+    # We wait here for the signal to be emitted for the example to complete.
+    # In a real game, you might not wait and instead let the signal handler do its job.
+    await llm.generate_text_finished
+    llm.generate_text_finished.disconnect(_on_generation_finished)
+```
+
+## Using Chat
+In some (many) scenarios, it may be preferable to have the model retain context between turns. To have a conversation where the model remembers previous turns, use `generate_chat` or `generate_chat_async`. These methods maintain context. When you want the model to "forget" the conversation, you can call `reset_context`.
+
+```gdscript
+func run_chat_example():    
+    # Turn 1: Give the model a secret.
+    var response_1 = llm.generate_chat("Remember this secret word: 'avocado'")
+    print("NPC Response 1: ", response_1.strip_edges())
+    
+    # Turn 2: The model should remember the secret from the previous turn.
+    var response_2 = llm.generate_chat("What was the secret word?")
+    print("NPC Response 2: ", response_2.strip_edges())
+
+    # Now, reset the model's memory.
+    print("\n...Resetting context...\n")
+    llm.reset_context()
+    
+    # Turn 3: Ask again. The model has now forgotten the secret.
+    var response_3 = llm.generate_chat("What was the secret word?")
+    print("NPC Response 3: ", response_3.strip_edges())
+```
+
+## Streaming Responses in Real-Time
+Often, you'll want to display the text as it's being written. User inference times may be long, and streaming is a way to show that your project is working to the user. This is achieved by connecting to the `generate_text_updated` signal.
+
+```gdscript
+@onready var llm: GDLlama = $GDLlama
+var full_response: String = ""
+
+func _ready() -> void:
+    llm.model_path = "res://models/your_model.gguf"
+    
+    # Connect to BOTH signals: one for streaming chunks, one for the final result.
+    llm.generate_text_updated.connect(_on_text_stream_updated)
+    llm.generate_text_finished.connect(_on_text_stream_finished)
+    
+    var error = llm.load_model()
+    if error != OK:
+        return
+
+    # Start an async generation. The connected signals will handle the response.
+    var prompt = "Tell me a short story about a brave knight."
+    llm.generate_text_async(prompt)
+
+# This signal is fired repeatedly with new pieces of text.
+func _on_text_stream_updated(new_text_chunk: String):
+    # In a real scenario, you would append this new_text_chunk to a Label's text property.
+    prints(new_text_chunk) # `prints` prints to the console without a newline.
+    full_response += new_text_chunk
+
+# This signal is fired once at the very end.
+func _on_text_stream_finished(_full_text: String):
+    print("\nGeneration Complete")
+```
+
+## Using GBNF Grammar
+GBNF (GGML BNF) is a format for defining strict rules for the model's output.
+
+```gdscript
+func run_grammar_example():    
+    # This grammar attempts to force the model to create a list of specific fruits.
+    var fruit_grammar = 'root ::= "A list of fruits:\\n" ("- " ("apple" | "banana" | "orange") "\\n")+'
+    var prompt = "List some fruits for me."
+    
+    print("Grammar: ", fruit_grammar)
+    var grammar_result = llm.generate_text(prompt, fruit_grammar)
+    print("Grammar Result: ", grammar_result.strip_edges())
+```
+
+### Using JSON to Provide Grammar
+JSON is schemas are converted to grammar under the hood, but are a reader-friendly way to devise grammar.
+
+```gdscript
+func run_json_example():
+    var spell_json_schema = """
+    {
+        "type": "object",
+        "properties": {
+            "spell_name": { "type": "string" },
+            "mana_cost": { "type": "integer" },
+            "effect": { "type": "string", "description": "A brief description of the spell's effect." }
+        },
+        "required": ["spell_name", "mana_cost", "effect"]
+    }
+    """
+    var prompt = "You are a powerful wizard! Invent a spell and describe it."
+    
+    print("JSON Schema: ", spell_json_schema)
+    var json_result = llm.generate_text(prompt, "", spell_json_schema)
+    print("JSON Schema Result: ", json_result.strip_edges())
+```
 
 ## Using Specialized Nodes
 You may have cases where you want multiple LLMs in a scene. For this, I recommend multiple nodes.

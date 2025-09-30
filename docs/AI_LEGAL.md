@@ -2,7 +2,7 @@
 Policy moves slow. Development moves fast. This document is intended to provide a curated, non-exhaustive list of external resources to serve as a starting point for a developer to understand the legal ecosystem concerning generated content.
 
 ## Platform Policies
-- Steam [AI Content on Steam](https://steamcommunity.com/groups/steamworks/announcements/detail/3862463747997849619)
+- Steam: [AI Content on Steam](https://steamcommunity.com/groups/steamworks/announcements/detail/3862463747997849619)
 - Apple App Store: [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
 - Google Play Store: [AI-Generated Content](https://support.google.com/googleplay/android-developer/answer/13985936?hl=en&sjid=9467856337995787019-NC)
 - Sony PlayStation: [Developer & Publisher Code of Conduct](https://www.playstation.com/en-ca/legal/psn-developer-publisher-code-of-conduct/) 
@@ -14,7 +14,7 @@ Policy moves slow. Development moves fast. This document is intended to provide 
 - European Union: The AI Act
     - https://artificialintelligenceact.eu/
     - https://en.wikipedia.org/wiki/Artificial_Intelligence_Act
-- United States:
+- United States
     - California's Generative AI Copyright Disclosure Act: https://en.wikipedia.org/wiki/Generative_AI_Copyright_Disclosure_Act
     - U.S. Copyright Office Guidance on AI: https://www.copyright.gov/ai/
     - U.S. Copyright Office Policy Guidance: https://www.copyright.gov/ai/ai_policy_guidance.pdf
