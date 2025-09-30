@@ -487,16 +487,5 @@ namespace godot {
         return params.main_gpu;
     }
 
-    void GDLlama::set_seed(int64_t p_seed) {
-        godot::MutexLock lock(*(generation_mutex.ptr()));
-        GDLOG_DEBUG("Setting seed to " + std::to_string(p_seed));
-        params.sampling.seed = static_cast<uint32_t>(p_seed);
-    }
-
-    int64_t GDLlama::get_seed() const {
-        godot::MutexLock lock(*(generation_mutex.ptr()));
-        return params.sampling.seed;
-    }
-
     // endregion: Properties
 }  // namespace godot

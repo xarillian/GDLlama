@@ -52,6 +52,13 @@ class LlamaRunner {
         std::atomic<bool> should_stop_generation;
         bool is_waiting_input;
         std::string user_input;
+
+        void decode_with_error_handling(
+            llama_context* ctx,
+            llama_batch& batch,
+            bool free_batch_on_failure
+        );
+
 };
 
 #endif //LLAMA_RUNNER_HPP
