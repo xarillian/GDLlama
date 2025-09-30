@@ -122,3 +122,22 @@ You may want to decouple your service, also. A global event bus can solve this p
 
 ### Other Upgrades?
 There are many upgraded forms of the Singleton Service. Utilizing a priority queue, creating some kind of context pool manager, etc. etc. If you have a usage that isn't supported, post [an issue to the GitHub](https://github.com/xarillian/GDLlama/issues) or create a PR.
+
+# Databases and Vector Storage
+`GDLlama` provides the core tools to create vector embeddings and calculate similarity between them, but it does not include a built-in vector database for storage or advanced querying. You are responsible for managing how and where you store your generated embeddings. This may be a point of future development, but for now remains true.
+
+The ideal storage solution depends entirely on the scale and requirements of your project.
+
+## In-Memory Storage
+For many games, especially those with a limited amount of searchable data, or in contexts where long-term storage doesn't matter as much, a simple in-memory approach is perfectly fine. You can simply store embeddings as a `PackedFloat32Array` array, which is simple and fast. An example is provided in [EXAMPLES.md](EXAMPLES.md#Using_Embeddings)
+
+## File-Based Storage
+If you need to persist your embeddings or prompts between game sessions but don't require a full database server, saving them to a file is a great option.
+
+### Using Godot's `FileAccess` Object
+### Using JSON Files
+
+## External Database
+The best approach is to use a dedicated vector database that runs as an external service. Your Godot application could communicate with this database over the network using the `HTTPRequest` node.
+
+A database can also be added to Godot through the GDExtensions feature.
