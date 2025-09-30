@@ -16,6 +16,21 @@ void LlamaRunner::stop_generation() {
     should_stop_generation = true;
 }
 
+void LlamaRunner::decode_with_error_handling(
+    llama_context* ctx,
+    llama_batch& batch,
+    bool free_batch_on_failure
+) {
+    if (llama_decode(ctx, batch) != 0) {
+        if (free_batch_on_failure) {
+            llama_batch_free(batch);
+        }
+        std::string err_msg = "Llama failed to decode.";
+        GDLOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+    }
+}
+
 std::string LlamaRunner::run_prediction(
     llama_model* model,
     llama_context* ctx,
@@ -102,11 +117,8 @@ std::string LlamaRunner::run_prediction(
             }
             batch.pos = positions.data();
 
-            if (llama_decode(ctx, batch) != 0) {
-                std::string err_msg = "Llama failed to decode.";
-                GDLOG_ERROR(err_msg);
-                throw std::runtime_error(err_msg);
-            }
+            decode_with_error_handling(ctx, batch, false);
+
             n_past += embd.size();
         }
 
@@ -144,15 +156,7 @@ std::vector<float> LlamaRunner::run_embedding(
     llama_context* ctx,
     common_params& params
 ) {
-    GDLOG_DEBUG("Starting embedding generation for prompt of size: " + std::to_string(params.prompt.length()));
-
-    const bool add_bos = llama_vocab_get_add_bos(llama_model_get_vocab(model));
-    std::vector<llama_token> prompt_tokens = ::common_tokenize(ctx, params.prompt, add_bos, true);
-
-    if (prompt_tokens.empty()) {
-        GDLOG_WARN("Prompt is empty, cannot generate embedding.");
-        return {};
-    }
+    GDLOG_DEBUG("Starting embedding generation for prompt: " + params.prompt);
 
     if (ctx == nullptr) {
         std::string err_msg = "Invalid context.";
@@ -166,30 +170,77 @@ std::vector<float> LlamaRunner::run_embedding(
         throw std::runtime_error(err_msg);
     }
 
+    const bool add_bos = llama_vocab_get_add_bos(llama_model_get_vocab(model));
+    std::vector<llama_token> prompt_tokens = ::common_tokenize(ctx, params.prompt, add_bos, false);
+
+    if (prompt_tokens.empty()) {
+        GDLOG_WARN("Prompt is empty, cannot generate embedding.");
+        return {};
+    }
+
     const int n_tokens = prompt_tokens.size();
     GDLOG_DEBUG("Prompt tokenized into " + std::to_string(n_tokens) + " tokens.");
-
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), n_tokens);
-
-    std::vector<llama_pos> positions;
-    positions.reserve(n_tokens);
-    for(size_t i = 0; i < n_tokens; ++i) {
-        positions.push_back(i);
-    }
-    batch.pos = positions.data();
-
-    if (llama_decode(ctx, batch) != 0) {
-        throw std::runtime_error("Llama failed to decode for embedding.");
+    if (n_tokens > llama_n_ctx(ctx)) {
+        std::string err_msg = "Prompt is too long for the context size.";
+        GDLOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
     }
 
-    const int n_embd = llama_n_embd(model);
-    const float * embd_ptr = llama_get_embeddings(ctx);
+    const int n_embd = llama_model_n_embd(model);
+    struct llama_batch batch = llama_batch_init(n_tokens, 0, 1);
+    const float* embd_ptr = nullptr;
+    std::vector<float> embedding(n_embd);
+
+    const enum llama_pooling_type pooling_type = llama_pooling_type(ctx);
+    
+    if (pooling_type == LLAMA_POOLING_TYPE_NONE) {
+        GDLOG_DEBUG("Using last-token pooling strategy for embedding.");
+
+        for (int32_t i = 0; i < n_tokens; i++) {
+            batch.token[i]       = prompt_tokens[i];
+            batch.pos[i]         = i;
+            batch.n_seq_id[i]    = 1;
+            batch.seq_id[i][0]   = 0;
+            // Only compute logits for the last token
+            batch.logits[i]      = (i == n_tokens - 1);
+        }
+        batch.n_tokens = n_tokens;
+
+        decode_with_error_handling(ctx, batch, true);
+
+        embd_ptr = llama_get_embeddings(ctx);
+
+    } else if (pooling_type != LLAMA_POOLING_TYPE_UNSPECIFIED) {
+        GDLOG_DEBUG("Using built-in pooling strategy for embedding: " + std::to_string(pooling_type));
+
+        for (int32_t i = 0; i < n_tokens; i++) {
+            batch.token[i]       = prompt_tokens[i];
+            batch.pos[i]         = i;
+            batch.n_seq_id[i]    = 1;
+            batch.seq_id[i][0]   = 0;
+            batch.logits[i]      = true;
+        }
+        batch.n_tokens = n_tokens;
+
+        decode_with_error_handling(ctx, batch, true);
+
+        embd_ptr = llama_get_embeddings_seq(ctx, 0);
+
+    } else {
+        GDLOG_WARN("Model uses an unspecified pooling strategy. Embeddings will not be generated.");
+        llama_batch_free(batch);
+        return {};
+    }
+
+    
     if (embd_ptr == nullptr) {
-        throw std::runtime_error("Failed to get embeddings.");
+        llama_batch_free(batch);
+        std::string err_msg = "Failed to get sequence embeddings.";
+        GDLOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
     }
 
-    std::vector<float> embeddings(embd_ptr, embd_ptr + n_embd);
-
-    GDLOG_DEBUG("Embedding generated successfully.");
-    return embeddings;
+    common_embd_normalize(embd_ptr, embedding.data(), n_embd, params.embd_normalize);
+    llama_batch_free(batch);
+    return embedding;
 }

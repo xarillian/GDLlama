@@ -91,13 +91,14 @@ std::vector<float> LlamaController::generate_embedding(
         throw std::runtime_error(err_msg);
     }
 
-    reset_context();
 
     params.n_predict = 0;
     params.prompt = prompt;
 
     llama_context* ctx = llama_state->get_context();
     llama_model* model = llama_state->get_model();
+
+    reset_context();
 
     std::vector<float> embedding = llama_runner->run_embedding(model, ctx, params);
 
@@ -117,8 +118,9 @@ bool LlamaController::is_model_loaded() const {
 
 void LlamaController::reset_context() {
     if (is_model_loaded()) {
-        llama_memory_clear(llama_get_memory(llama_state->get_context()), true);
-        GDLOG_DEBUG("LLM context (KV cache) cleared.");
+        llama_memory_t mem = llama_get_memory(llama_state->get_context());
+        llama_memory_clear(mem, true);
+        GDLOG_DEBUG("LLM context sequence reset.");
     }
     conversation_history.clear();
 }
