@@ -22,6 +22,7 @@ These properties belong to a `GDLlama` node and can be set via code or the Godot
 | Property | Type | Range | Description |
 |---|---|---|---|
 | `model_path`| `string` | N/A | The file path to your llama-compatible model file (e.g., `"res://models/model.gguf"`) |
+| `seed` | `int` | `-1` to `4294967295` | The seed for the random number generator. Using the same seed with the same prompt and parameters will produce the exact same output. A value of -1 (default) means a random seed will be used. |
 | `n_predict` | `int` | `-1` to context size defined on the model | The maximum number of new tokens the model should generate in a single run. `-1` specifies generation until an EOS token is found or the context is full. |
 | `temperature` | `float` | `0.0` to `2.0` | Controls randomness. Higher values (e.g., `1.0`) make the output more random or potentially creative; lower values (e.g., `0.1`) make it more focused and deterministic. |
 | `top_k` | `int` | `0` to vocab size | Reduces the pool of tokens to the `k` most likely ones (`0` = disabled). A lower value (e.g., `40`) can prevent strange tokens from appearing. |

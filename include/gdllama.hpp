@@ -80,8 +80,8 @@ class GDLlama : public Node {
         void set_main_gpu(int p_main_gpu);
         int get_main_gpu() const;
 
-        void set_seed(int64_t p_seed);
-        int64_t get_seed() const;
+        void set_seed(int  p_seed);
+        int  get_seed() const;
 
     protected:
         static void _bind_methods();

@@ -135,7 +135,6 @@ std::string LlamaRunner::run_prediction(
             on_generate_text_updated(token_str);
             generated_text.append(token_str);
 
-            GDLOG_DEBUG("Token string chunk generated: " + token_str);
             n_remain--;
 
             embd.clear();
