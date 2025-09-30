@@ -55,7 +55,7 @@ std::string LlamaController::start_generation(
     } else {
         // For non-continuous (single-shot) generation, we don't apply a chat
         // template. This mode is for raw text completion, and applying chat
-        // formatting would be incorrect.
+        // formatting not supplied by the user would be incorrect.
         reset_context();
         params.prompt = prompt;
     }
@@ -80,6 +80,32 @@ std::string LlamaController::start_generation(
     return generated_text;
 }
 
+
+std::vector<float> LlamaController::generate_embedding(
+    common_params& params,
+    const std::string& prompt
+) {
+    if (!is_model_loaded()) {
+        std::string err_msg = "Cannot generate embedding: Model is not loaded.";
+        GDLOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+    }
+
+
+    params.n_predict = 0;
+    params.prompt = prompt;
+
+    llama_context* ctx = llama_state->get_context();
+    llama_model* model = llama_state->get_model();
+
+    reset_context();
+
+    std::vector<float> embedding = llama_runner->run_embedding(model, ctx, params);
+
+    return embedding;
+}
+
+
 void LlamaController::stop_generation() {
     if (llama_runner) {
         llama_runner->stop_generation();
@@ -92,8 +118,9 @@ bool LlamaController::is_model_loaded() const {
 
 void LlamaController::reset_context() {
     if (is_model_loaded()) {
-        llama_memory_clear(llama_get_memory(llama_state->get_context()), true);
-        GDLOG_DEBUG("LLM context (KV cache) cleared.");
+        llama_memory_t mem = llama_get_memory(llama_state->get_context());
+        llama_memory_clear(mem, true);
+        GDLOG_DEBUG("LLM context sequence reset.");
     }
     conversation_history.clear();
 }

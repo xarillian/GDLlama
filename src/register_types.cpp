@@ -1,8 +1,6 @@
 #include "register_types.hpp"
 
 #include "gdllama.hpp"
-#include "gdembedding.hpp"
-#include "llm_db.hpp"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/class_db.hpp>
@@ -19,21 +17,12 @@ void initialize_llm_module(ModuleInitializationLevel p_level) {
 	}
 
 	ClassDB::register_class<GDLlama>();
-	ClassDB::register_class<GDEmbedding>();
-	ClassDB::register_class<LlmDBMetaData>();
-	ClassDB::register_class<LlmDB>();
-
-	auto llmDBMetaData = memnew(LlmDBMetaData);
-	Engine::get_singleton()->register_singleton("LlmDBMetaData", llmDBMetaData);
 }
 
 void uninitialize_llm_module(ModuleInitializationLevel p_level) {
-
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
-
-	Engine::get_singleton()->unregister_singleton("LlmDBMetaData");
 }
 
 extern "C" {

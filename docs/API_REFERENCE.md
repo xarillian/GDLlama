@@ -30,6 +30,10 @@ These properties belong to a `GDLlama` node and can be set via code or the Godot
 | `penalty_repeat` | `float` | `1.0` to `2.0` | Penalizes the model for repeating tokens it has recently used (`1.0` = no penalty). |
 | `penalty_last_n` | `int` | `0` to context size | The number of recent tokens to consider for the repetition penalty (`0` = disabled). |
 | `chat_template` | `string` | N/A | A custom chat template in Jinja2 format. If empty (default), the model's built-in chat template is used automatically. This is an advanced feature for supporting models with non-standard prompt formats or for models with incorrect metadata (or doing weird things). |
+| `n_gpu_layers` | `int` | `0` to layer count | The number of model layers to offload to the GPU for acceleration. `-1` uses the default recommended value. |
+| `n_ctx` | `int` | `0` to model max | The context window size in tokens. This determines the maximum amount of text (prompt + generation) the model can remember at once. |
+| `n_batch` | `int` | `8` to `n_ctx` | The number of tokens to process in parallel during prompt evaluation. A higher value may improve performance on powerful hardware. |
+| `main_gpu` | `int` | `0` to number of GPUs | The index of the primary GPU to use for miscellaneous computations when using multi-GPU setups. |
 
 The default values for these properties are provided by `llama.cpp`, as defined by the `common_params_sampling` struct. See: https://github.com/ggml-org/llama.cpp/blob/3d4053f77f0f78ee2b791088c02af653ebee42dd/common/common.h#L137
 
@@ -46,6 +50,9 @@ The default values for these properties are provided by `llama.cpp`, as defined 
 | `stop_generate_text() -> void` | Sends a stop signal to the currently running asynchronous generation. The generation will finish its current token and then stop gracefully. |
 | `is_running() -> bool` | Returns `true` if an asynchronous generation thread is currently active. |
 | `reset_context() -> void` | Clears the model's conversational memory (the KV cache). **The user is responsible for maintaining their context in chat contexts.** |
+| `compute_embedding(prompt: String) -> PackedFloat32Array` |  Generates a vector embedding for the given prompt synchronously (blocking). Returns an empty array if embedding is unavailable. |
+| `compute_embedding_async(prompt: String) -> Error` | Starts an asynchronous (non-blocking) embedding generation. The result is delivered via the embedding_computed or embedding_failed signal. |
+| `similarity_cos(array1: PackedFloat32Array, array2: PackedFloat32Array) -> float` | A utility function that calculates the cosine similarity between two vector embeddings, returning a value between `-1.0` and `1.0`. |
 
 ## Signals
 | Signal | Arguments | Description |
@@ -53,6 +60,8 @@ The default values for these properties are provided by `llama.cpp`, as defined 
 | `generate_text_updated` | `new_text: String` | Emitted repeatedly during an async generation, providing new tokens as they are generated.
 | `generate_text_finished` | `full_text: String` | Emitted once when an async generation has completed. Provides the entire text generated during the run.
 | `generate_text_error` | `error_text: String` | Emitted once when async generation has completed with an error. |
+| `embedding_computed` | `embedding: PackedFloat32Array` | Emitted when an async embedding generation is successful. |
+| `embedding_failed` | `error_message: String` | Emitted if an error occurs during async embedding generation. |
 
 ## Example Godot Usage
 ```gdscript
