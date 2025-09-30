@@ -209,6 +209,7 @@ namespace godot {
         BIND_GDL_PROPERTY(n_gpu_layers, Variant::INT);
         BIND_GDL_PROPERTY(n_ctx, Variant::INT);
         BIND_GDL_PROPERTY(main_gpu, Variant::INT);
+        BIND_GDL_PROPERTY(seed, Variant::INT);
 
         #undef BIND_GDL_PROPERTY
         #undef BIND_GDL_PROPERTY_HINT
@@ -485,6 +486,17 @@ namespace godot {
     int GDLlama::get_main_gpu() const {
         godot::MutexLock lock(*(generation_mutex.ptr()));
         return params.main_gpu;
+    }
+
+    void GDLlama::set_seed(int p_seed) {
+        godot::MutexLock lock(*(generation_mutex.ptr()));
+        GDLOG_DEBUG("Setting seed to " + std::to_string(p_seed));
+        params.sampling.seed = p_seed;
+    }
+
+    int GDLlama::get_seed() const {
+        godot::MutexLock lock(*(generation_mutex.ptr()));
+        return params.sampling.seed;
     }
 
     // endregion: Properties
