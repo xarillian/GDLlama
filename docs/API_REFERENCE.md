@@ -6,6 +6,7 @@ The `GDLlama` node is a custom Godot node that acts as a bridge to the `llama.cp
 - Real-time Streaming: Receive text as it's being generated using signals.
 - Flexible Generation: Perform both synchronous and asynchronous text generation.
 - Model Management: Load and unload .gguf model files at runtime.
+- Embeddings: Enable features like semantic search and content similarity checks.
 
 To use it, add a `GDLlama` node to your scene from the "Add Child Node" dialog. You can then give the node any unique name and access it from your scripts like any other node.
 
