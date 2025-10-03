@@ -2,12 +2,9 @@
 > Isn't it cool to utilize large language model (LLM) to generate contents for your game?
 - @Adriankhl, original creator of GDLlama
 
-Why, yes, I do think it is cool! The generative space is an exciting frontier for video games that has been sorely under-explored so far. LLMs and multimodal models have a great potential to complement multiple aspects of game design, from dialogue generation to quest generation and beyond. Thanks to `llama.cpp`, we can perform inference fast enough locally to enable some genuinely interesting gameplay. I want to help Godot at least keep pace with Unity and Unreal.
+Why, yes, I do think it is cool! 
 
-I intend to maintain this for an indefinite amount of time while it continues to be useful to me. This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent `llama.cpp` versions. It has been almost entirely re-written with a number of new features. For a full release, I intend to publish this to the Godot Asset Shop. For progress, see: https://github.com/xarillian/GDLlama/milestone/1
-
-## What is GDLlama?
-`GDLlama` is a GDExtension for Godot 4.0+ that acts as a bridge to the powerful `llama.cpp` library. This allows you to perform fast, local inference with Large Language Models (LLMs) directly in your game, without needing an internet connection or external servers.
+`GDLlama` is a GDExtension for Godot 4.2+ that acts as a bridge to the powerful `llama.cpp` library. This allows you to perform fast, local inference with Large Language Models (LLMs) directly in your game, without needing an internet connection or external servers.
 
 It's implemented as a custom GDLlama node that you can add to any scene, making generative AI a native part of your project. It's designed to be flexible and powerful, supporting key features like:
 - Conversational AI: Maintain context between calls to create multi-turn chatbots.
@@ -15,6 +12,10 @@ It's implemented as a custom GDLlama node that you can add to any scene, making 
 - Real-time Streaming: Receive text as it's being generated using signals.
 - Flexible Generation: Perform both synchronous and asynchronous text generation.
 - Embeddings: Enable features like semantic search and content similarity checks.
+
+The generative space is an exciting frontier for video games that has been sorely under-explored so far. LLMs and multimodal models have a great potential to complement multiple aspects of game design, from dialogue generation to quest generation and beyond. Thanks to `llama.cpp`, we can perform inference fast enough locally to enable some genuinely interesting gameplay. I want to help Godot at least keep pace with Unity and Unreal.
+
+I intend to maintain this for an indefinite amount of time while it continues to be useful to me. This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent `llama.cpp` versions. It has been almost entirely re-written with a number of new features. For a full release, I intend to publish this to the Godot Asset Shop. For progress, see: https://github.com/xarillian/GDLlama/milestone/1
 
 # Getting Started
 For now, everything has to be built by the user. GDLlama is not yet in the asset library, no sir. I'd like a bit more polish on the project before getting to a 1.0 release state where I'd put it in the library.

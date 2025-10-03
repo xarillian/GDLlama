@@ -38,3 +38,5 @@
 build/
 bulid_release/
 install/
+
+/tests/models/
