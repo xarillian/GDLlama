@@ -3,6 +3,7 @@
   "configurePresets": [
     {
       "name": "windows-vulkan-debug",
+      "displayName": "Windows Vulkan Debug with Tests",
       "generator": "Ninja",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "clang-cl",
@@ -10,7 +11,8 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "LLAMA_NATIVE": "OFF",
         "LLAMA_VULKAN": "ON",
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_TESTING": "ON"
       }
     },
     {
