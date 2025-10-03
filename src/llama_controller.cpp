@@ -71,7 +71,10 @@ std::string LlamaController::start_generation(
 
     std::string generated_text = llama_runner->run_prediction(model, ctx, params, on_update);
 
-    if (is_continuous && !generated_text.empty()) {
+    if (is_continuous) {
+        // We specifically add empty assistant messages to the history here.
+        // These could be ignored, but it's useful to see where the model responded
+        // in the conversation.
         conversation_history.push_back({ "assistant", generated_text.c_str() });
     }
 
@@ -141,4 +144,8 @@ void LlamaController::unload_model() {
     GDLOG_DEBUG("Chat history cleared on model unload.");
     llama_state->unload();
     GDLOG_DEBUG("Model unloaded.");
+}
+
+std::vector<ChatMessage> LlamaController::get_conversation_history() const {
+    return conversation_history;
 }
