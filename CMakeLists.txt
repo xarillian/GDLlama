@@ -75,15 +75,6 @@ endif()
 # Dependencies
 # ============================================================================
 
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  GIT_REPOSITORY https://github.com/google/googletest.git
-  GIT_TAG        v1.17.0
-)
-set(gtest_force_shared_crt ON CACHE BOOL "Force shared CRT for gtest")
-FetchContent_MakeAvailable(googletest)
-
 add_subdirectory(godot-cpp)
 set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
@@ -96,16 +87,11 @@ set(src_files
   "src/conversion.cpp"
   "src/gdllama.cpp"
   "src/llama_runner.cpp"
-  # "src/llm_db.cpp"
   "src/register_types.cpp"
   "src/logging_utils.cpp"
   "src/llama_controller.cpp"
   "src/llama_state.cpp"
 )
-# set(vendor_files
-#   "vendor/sqlite3.c"
-#   "vendor/sqlite-vec.c"
-# )
 
 string(TOLOWER ${CMAKE_SYSTEM_NAME} SYSTEM_NAME_LOWER)
 
@@ -124,7 +110,7 @@ endif()
 
 set(LIB_NAME godot_llm)
 
-add_library(${LIB_NAME} SHARED ${src_files} ${vendor_files})
+add_library(${LIB_NAME} SHARED ${src_files})
 
 set_target_properties(${LIB_NAME} PROPERTIES
     OUTPUT_NAME "libgodot_llm"
@@ -140,12 +126,101 @@ target_include_directories(${LIB_NAME}
   PUBLIC
     include
   PRIVATE
-    vendor
+    godot-cpp
+    godot-cpp/include
+    godot-cpp/gdextension/include
+    godot-cpp/gen/include 
     llama.cpp
+    llama.cpp/include
     llama.cpp/common
     llama.cpp/src
     llama.cpp/vendor
+    llama.cpp/ggml/src
+    llama.cpp/ggml/include
 )
+
+# ============================================================================
+# Testing
+# ============================================================================
+if (BUILD_TESTING)
+  enable_testing()
+  include(FetchContent)
+
+  FetchContent_Declare(
+    googletest
+    URL https://github.com/google/googletest/archive/03597a01ee50ed33e9dfd640b249b4be3799d395.zip # v1.14.0
+    DOWNLOAD_EXTRACT_TIMESTAMP true 
+  )
+
+  # For Windows: Prevent gtest from overriding /MT /MD settings
+  set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(googletest)
+
+  add_library(godot_llm_test_lib STATIC
+    src/conversion.cpp
+    src/logging_utils.cpp
+    src/llama_controller.cpp
+    src/llama_state.cpp
+    src/llama_runner.cpp
+  )
+
+  target_compile_definitions(godot_llm_test_lib PRIVATE LOG_DISABLE_LOGS)
+
+  target_include_directories(godot_llm_test_lib PUBLIC
+    include
+    godot-cpp
+    godot-cpp/include
+    godot-cpp/gdextension/include
+    godot-cpp/gen/include 
+    llama.cpp
+    llama.cpp/include
+    llama.cpp/common
+    llama.cpp/src
+    llama.cpp/vendor
+    llama.cpp/ggml/src
+    llama.cpp/ggml/include
+  )
+
+  target_link_libraries(godot_llm_test_lib PUBLIC
+    godot-cpp
+    common
+    llama
+  )
+
+  add_executable(run_tests
+    tests/main.cpp
+    tests/test_llama_state.cpp
+    tests/test_llama_controller.cpp
+  )
+
+  target_link_libraries(run_tests PRIVATE
+    gtest_main
+    godot_llm_test_lib
+  )
+
+  if (WIN32)
+    add_custom_command(TARGET run_tests POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:gtest>
+        $<TARGET_FILE:ggml-base>
+        $<TARGET_FILE:ggml>
+        $<TARGET_FILE:ggml-cpu>
+        $<TARGET_FILE:llama>
+        $<TARGET_FILE_DIR:run_tests>
+      COMMENT "Copying DLLs to test directory"
+    )
+
+    add_custom_command(TARGET run_tests POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E create_symlink
+        ${CMAKE_SOURCE_DIR}/tests
+        ${CMAKE_BINARY_DIR}/tests
+      COMMENT "Creating symlink to tests directory"
+    )
+  endif()
+
+  add_test(NAME run_tests COMMAND run_tests)
+endif()
+
 # ============================================================================
 # Install Rules
 # ============================================================================

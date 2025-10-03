@@ -6,7 +6,7 @@
 #include "logging_utils.hpp"
 #include <mutex>
 #include <functional>
-#include <common/common.h>
+#include <common.h>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 
@@ -56,6 +56,7 @@ class LlamaController {
             const std::string& prompt
         );
 
+        std::vector<ChatMessage> get_conversation_history() const;
 
         void reset_context();
         void stop_generation();
@@ -67,7 +68,6 @@ class LlamaController {
         std::unique_ptr<LlamaState> llama_state;
         std::unique_ptr<LlamaRunner> llama_runner;
         std::vector<ChatMessage> conversation_history;
-
 };
 
 
