@@ -15,11 +15,26 @@
 git clone https://github.com/xarillian/GDLlama.git
 cd godot-llm
 git submodule update --init --recursive
+```
+
+2. Generate the necessary Godot bindings. 
+
+```shell
+cd godot-cpp
+scons generate_bindings=True
+cd ..
+```
+
+Godot recommends scons for building and has an SConstruct.  
+
+3. Run `cmake`.
+
+First, create a build dir and move into it.
+
+```shell
 mkdir build
 cd build
 ```
-
-2. Run `cmake`.
 
 ### Windows
 from preset (recommended):
@@ -46,14 +61,14 @@ For Android, set `$NDK_PATH` to your android ndk directory, then:
 cmake .. -GNinja -DCMAKE_TOOLCHAIN_FILE=$NDK_PATH\cmake\android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-23 -DCMAKE_C_FLAGS="-mcpu=generic" -DCMAKE_CXX_FLAGS="-mcpu=generic" -DCMAKE_BUILD_TYPE=Release
 ```
 
-3. Compile and install with `ninja`.
+4. Compile and install with `ninja`.
 
 ```shell
 ninja
 ninja install
 ```
 
-4. The folder `godot-llm/install/gpu/addons/godot_llm` can be copied to the `addons` folder of your Godot project. On Windows at least, you will also need to copy the required DLL dependencies from `godot-llm/install/bin` into your Godot project's `addons/godot_llm/bin/` directory:
+5. The folder `godot-llm/install/gpu/addons/godot_llm` can be copied to the `addons` folder of your Godot project. On Windows at least, you will also need to copy the required DLL dependencies from `godot-llm/install/bin` into your Godot project's `addons/godot_llm/bin/` directory:
 - `ggml.dll`
 - `ggml-base.dll`
 - `ggml-cpu.dll`
