@@ -3,6 +3,8 @@ name: Continuous Integration
 on:
   push:
     branches: [ master ]
+  pull_request: # test!
+    branches: [ master ] 
   workflow_dispatch:
 
 jobs:
