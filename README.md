@@ -8,7 +8,7 @@ Why, yes, I do think it is cool!
 
 It's implemented as a custom GDLlama node that you can add to any scene, making generative AI a native part of your project. It's designed to be flexible and powerful, supporting key features like:
 - Conversational AI: Maintain context between calls to create multi-turn chatbots.
-- Non-conversational Responses: One-shot generation for single use text generation.
+- Function Calling & Tool Use: Constrain the model's output to a specific JSON schema or GBNF grammar for reliable, structured output.
 - Real-time Streaming: Receive text as it's being generated using signals.
 - Flexible Generation: Perform both synchronous and asynchronous text generation.
 - Embeddings: Enable features like semantic search and content similarity checks.
@@ -42,7 +42,7 @@ and three signals:
 - `generate_text_finished` -> Emitted when an async generation is finished.
 - `generate_text_error` -> Emitted when there is an error with text generation.
 
-That's a quick overview, but with those three methods and those three signals you can be well on your way to using this thing. If you want to dive deeper, GDLlama includes a full suite of docs for your convenience.
+That's a quick overview, but with those three methods and those three signals you can be well on your way to using this thing. The generation methods also accept grammar and JSON schema parameters for advanced use cases like function calling. If you want to dive deeper, GDLlama includes a full suite of docs for your convenience.
 
 - [API Reference](docs/API_REFERENCE.md): A breakdown of every function, property, and signal.
 - [Architecture Guide](docs/ARCHITECTURE.md): Best practices for how to structure your code with `GDLlama`.
