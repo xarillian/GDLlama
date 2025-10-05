@@ -44,9 +44,11 @@ void log_to_godot_and_file(ggml_log_level level, const std::string& msg) {
             LOG_INF("%s\n", msg.c_str());
             // We don't print info messages to the Godot console to avoid spam
             break;
+        #ifdef GDLLAMA_ENABLE_DEBUG_LOGS
         case GGML_LOG_LEVEL_DEBUG:
             LOG_INF("%s\n", msg.c_str());  // LOG_DBG seems broken
             // We don't print debug messages to the Godot console to avoid spam
             break;
+        #endif
     }
 }

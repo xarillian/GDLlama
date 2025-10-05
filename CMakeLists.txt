@@ -80,6 +80,11 @@ set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 add_subdirectory(llama.cpp)
 
+# ===========================================================================
+# Logging Configuration
+# ===========================================================================
+option(GDLLAMA_DEBUG_LOGGING "Enable verbose debug level logging" OFF)
+
 # ============================================================================
 # Target Library (libgodot_llm)
 # ============================================================================
@@ -112,6 +117,10 @@ set(LIB_NAME godot_llm)
 
 add_library(${LIB_NAME} SHARED ${src_files})
 
+if (GDLLAMA_DEBUG_LOGGING)
+  target_compile_definitions(${LIB_NAME} PRIVATE GDLLAMA_ENABLE_DEBUG_LOGS)
+endif()
+
 set_target_properties(${LIB_NAME} PROPERTIES
     OUTPUT_NAME "libgodot_llm"
     DEBUG_POSTFIX ".${SYSTEM_NAME_LOWER}.debug.${ARCH_SUFFIX}"
@@ -126,17 +135,10 @@ target_include_directories(${LIB_NAME}
   PUBLIC
     include
   PRIVATE
-    godot-cpp
-    godot-cpp/include
-    godot-cpp/gdextension/include
-    godot-cpp/gen/include 
     llama.cpp
-    llama.cpp/include
     llama.cpp/common
     llama.cpp/src
     llama.cpp/vendor
-    llama.cpp/ggml/src
-    llama.cpp/ggml/include
 )
 
 # ============================================================================
