@@ -52,4 +52,4 @@ That's a quick overview, but with those three methods and those three signals yo
 # Contributions
 PRs are welcome! This is my first big open source contribution and I am more than happy to share with the community. Check out [Contributing.md](docs/CONTRIBUTING.md) for more information.
 
-This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent `llama.cpp` versions. I've since detatched the fork as the work has compounded beyond his original vision. Huge thanks to them for creating this project! I could not have made it this far without their contributions.
+This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent `llama.cpp` versions. I've since detached the fork as the work has compounded beyond his original vision. Huge thanks to them for creating this project! I could not have made it this far without their contributions.
