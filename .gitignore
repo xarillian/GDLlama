@@ -5,6 +5,7 @@
 build/
 build_release/
 install/
+out/
 
 # Compiled objects and libraries
 *.o

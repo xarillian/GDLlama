@@ -1,0 +1,39 @@
+name: Test with Latest Llama
+description: The "oh my god, it broke again" workflow
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # Weekly on Sundays at midnight to conserve precious github minutes
+  workflow_dispatch:
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+
+    - name: Update llama.cpp to latest
+      run: |
+        cd llama.cpp
+        git fetch
+        git reset --hard origin/master
+
+    - name: Configure and Build
+      run: |
+        cmake -S . -B build -GNinja \
+          -DLLAMA_NATIVE=OFF \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
+          -DLLAMA_VULKAN=ON \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DBUILD_TESTING=ON \
+          -DGDLLAMA_DEBUG_LOGGING=ON
+        cmake --build build -- -j4
+
+    - name: Run Tests
+      run: |
+        cd build
+        ctest --output-on-failure

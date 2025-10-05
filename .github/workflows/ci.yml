@@ -1,0 +1,100 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+        build_type: [debug, release]
+        gpu_backend: [cpu, gpu]
+        exclude:
+          - os: macos-latest
+            gpu_backend: gpu # Metal is the only GPU backend for macOS
+          - os: ubuntu-22.04
+            gpu_backend: metal
+          - os: windows-latest
+            gpu_backend: metal
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      VULKAN_VERSION: 1.3.283.0
+    
+    steps:
+      - name: Clone Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      
+      - name: Setup MSVC Environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          if [ "${{ matrix.gpu_backend }}" == "gpu" ]; then
+            sudo apt-get install -y libvulkan-dev
+          fi
+
+      - name: Install Windows Dependencies
+        if: runner.os == 'Windows'
+        run: |
+          irm get.scoop.sh | iex
+          scoop install ninja llvm
+          Add-Content $env:GITHUB_PATH "$HOME\scoop\apps\llvm\current\bin"
+          Add-Content $env:GITHUB_PATH "$HOME\scoop\shims"
+
+      - name: Install Vulkan SDK (Windows)
+        if: runner.os == 'Windows' && matrix.gpu_backend == 'gpu'
+        run: |
+          curl.exe -o $env:RUNNER_TEMP/VulkanSDK-Installer.exe -L "https://sdk.lunarg.com/sdk/download/${{ env.VULKAN_VERSION }}/windows/VulkanSDK-${{ env.VULKAN_VERSION }}-Installer.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\${{ env.VULKAN_VERSION }}"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\${{ env.VULKAN_VERSION }}\bin"
+
+      - name: Install macOS Dependencies
+        if: runner.os == 'macOS'
+        run: brew update
+
+      - name: Configure and Build
+        shell: bash
+        run: |
+          os_name=""
+          if [ "${{ runner.os }}" == "Linux" ]; then os_name="linux"; fi
+          if [ "${{ runner.os }}" == "Windows" ]; then os_name="windows"; fi
+          if [ "${{ runner.os }}" == "macOS" ]; then os_name="macos"; fi
+
+          gpu_name="cpu"
+          if [ "${{ matrix.gpu_backend }}" == "gpu" ]; then
+            if [ "${{ runner.os }}" == "macOS" ]; then gpu_name="metal"; else gpu_name="vulkan"; fi
+          fi
+
+          PRESET_NAME="${os_name}-${gpu_name}-${{ matrix.build_type }}"
+          echo "Using preset: ${PRESET_NAME}"
+
+          mkdir build
+          cd build
+
+          cmake .. --preset ${PRESET_NAME}
+
+          if [ "${{ runner.os }}" == "macOS" ]; then
+            cmake --build . --config ${{ matrix.build_type == 'debug' && 'Debug' || 'Release' }} -j $(sysctl -n hw.logicalcpu)
+          else
+            ninja -j $(nproc || echo ${NUMBER_OF_PROCESSORS})
+          fi
+
+      - name: Run Tests (on Debug builds)
+        if: matrix.build_type == 'debug'
+        shell: bash
+        run: |
+          cd build
+          ctest --output-on-failure
