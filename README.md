@@ -15,7 +15,7 @@ It's implemented as a custom GDLlama node that you can add to any scene, making 
 
 The generative space is an exciting frontier for video games that has been sorely under-explored so far. LLMs and multimodal models have a great potential to complement multiple aspects of game design, from dialogue generation to quest generation and beyond. Thanks to `llama.cpp`, we can perform inference fast enough locally to enable some genuinely interesting gameplay. I want to help Godot at least keep pace with Unity and Unreal.
 
-I intend to maintain this for an indefinite amount of time while it continues to be useful to me. This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent `llama.cpp` versions. It has been almost entirely re-written with a number of new features. For a full release, I intend to publish this to the Godot Asset Shop. For progress, see: https://github.com/xarillian/GDLlama/milestone/1
+I intend to maintain this for an indefinite amount of time while it continues to be useful to me. It has been almost entirely re-written with a number of new features. For a full release, I intend to publish this to the Godot Asset Shop. For progress, see: https://github.com/xarillian/GDLlama/milestone/1
 
 # Getting Started
 For now, everything has to be built by the user. GDLlama is not yet in the asset library, no sir. I'd like a bit more polish on the project before getting to a 1.0 release state where I'd put it in the library.
@@ -52,4 +52,4 @@ That's a quick overview, but with those three methods and those three signals yo
 # Contributions
 PRs are welcome! This is my first big open source contribution and I am more than happy to share with the community. Check out [Contributing.md](docs/CONTRIBUTING.md) for more information.
 
-Huge thanks to @Adriankhl for originally creating this project: https://github.com/Adriankhl/godot-llm
+This is a fork of [Adriankhl's original godot-llm](https://github.com/Adriankhl/godot-llm) with updated build instructions and fixes for recent `llama.cpp` versions. I've since detached the fork as the work has compounded beyond his original vision. Huge thanks to them for creating this project! I could not have made it this far without their contributions.
