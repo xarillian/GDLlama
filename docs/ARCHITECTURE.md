@@ -103,7 +103,7 @@ func _on_generation_finished(full_text: String):
         _process_request(next_request)
 ```
 
-When you actually would like to use your service, then, you would something like:
+When you actually would like to use your service, you would do something like:
 ```GDScript
 extends CharacterBody2D
 
