@@ -211,14 +211,14 @@ if (BUILD_TESTING)
         $<TARGET_FILE_DIR:run_tests>
       COMMENT "Copying DLLs to test directory"
     )
-
-    add_custom_command(TARGET run_tests POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E create_symlink
-        ${CMAKE_SOURCE_DIR}/tests
-        ${CMAKE_BINARY_DIR}/tests
-      COMMENT "Creating symlink to tests directory"
-    )
   endif()
+
+  add_custom_command(TARGET run_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+      ${CMAKE_SOURCE_DIR}/tests
+      ${CMAKE_BINARY_DIR}/tests
+    COMMENT "Creating symlink to tests directory"
+  )
 
   add_test(NAME run_tests COMMAND run_tests)
 endif()
