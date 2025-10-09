@@ -10,7 +10,7 @@ class LlamaControllerTest : public ::testing::Test {
             controller = std::make_unique<LlamaController>();
             params.model.path = "tests/models/gemma-3-270m-it-F16.gguf";
             params.n_ctx = 256;
-            params.n_gpu_layers = 0;
+            params.n_gpu_layers = 0;  // Use CPU for testing
         }
 
         void TearDown() override {

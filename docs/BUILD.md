@@ -21,7 +21,7 @@ cd godot-llm
 git submodule update --init --recursive
 ```
 
-2.  Generate Godot Bindings
+2.  Generate Godot Bindings (if building for the first time or updating Godot)
 
 You need to generate the C++ bindings for Godot. This step is run from the `godot-cpp` directory.
 

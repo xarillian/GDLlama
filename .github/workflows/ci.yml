@@ -67,6 +67,22 @@ jobs:
         if: runner.os == 'macOS'
         run: brew update
 
+      - name: Cache and Download Model
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: tests/models
+          key: model-gemma-3-270m-it-F16-gguf
+
+      - name: Download Model if not Cached
+        if: steps.cache-model.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p tests/models
+          echo "Downloading model..."
+          curl -L "https://huggingface.co/unsloth/gemma-3-270m-it-GGUF/resolve/main/gemma-3-270m-it-F16.gguf" -o tests/models/gemma-3-270m-it-F16.gguf
+
+
       - name: Configure and Build
         shell: bash
         run: |

@@ -10,7 +10,7 @@ class LlamaStateTest : public ::testing::Test {
         void SetUp() override {
             params.model.path = "tests/models/gemma-3-270m-it-F16.gguf";
             params.n_ctx = 128;
-            params.n_gpu_layers = 0;
+            params.n_gpu_layers = 0;  // Use CPU for testing
         }
 };
 
