@@ -115,15 +115,4 @@ jobs:
         shell: bash
         run: |
           cd build
-
-          echo "Current directory: $(pwd)"
-          
-          echo "Listing contents of source 'tests' directory before copy:"
-          ls -lR ../tests/
-          
-          echo "NOT copying test models (should be symlinked in CMakeLists.txt)..."
-          
-          echo "Listing ALL contents of build dir:"
-          ls -lR .
-
           ctest --output-on-failure

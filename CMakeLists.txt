@@ -45,6 +45,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
       -Wno-old-style-cast
       -Wno-implicit-float-conversion
       -Wno-unsafe-buffer-usage
+      -Wno-unused-function
       -Wno-unused-command-line-argument
       -Wno-newline-eof
       -Wno-float-equal
@@ -62,6 +63,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
       -Wno-exit-time-destructors
       -Wno-covered-switch-default
       -Wno-global-constructors
+      -Wno-character-conversion  # nuke it for gtest
       "$<$<CONFIG:Debug>:-fstandalone-debug>"
     )
   endif()
