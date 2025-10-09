@@ -115,4 +115,8 @@ jobs:
         shell: bash
         run: |
           cd build
+
+          echo "Copying test models..."
+          cp -r ../tests/models ./tests/
+
           ctest --output-on-failure
