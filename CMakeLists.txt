@@ -1,6 +1,9 @@
 # ============================================================================
 # Basic Configuration
 # ============================================================================
+
+# TODO better messaging throughout
+
 # Minimum of 3.14 for:
 # - `add_link_options`
 # - implicit target dirs
@@ -63,7 +66,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
       -Wno-exit-time-destructors
       -Wno-covered-switch-default
       -Wno-global-constructors
-      -Wno-character-conversion  # nuke it for gtest
+      # -Wno-character-conversion  # TODO this doesn't work locally but I need it for the CI build :()
       "$<$<CONFIG:Debug>:-fstandalone-debug>"
     )
   endif()
@@ -78,6 +81,9 @@ endif()
 # ============================================================================
 
 add_subdirectory(godot-cpp)
+set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH};${godot-cpp_SOURCE_DIR}/cmake")
+include(GodotCPPModule)
+
 set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 add_subdirectory(llama.cpp)
@@ -119,10 +125,14 @@ set(LIB_NAME godot_llm)
 
 add_library(${LIB_NAME} SHARED ${src_files})
 
+# TODO is there a point to this?
+# target_compile_definitions(${LIB_NAME} PRIVATE TOOLS_ENABLED )
+
 if (GDLLAMA_DEBUG_LOGGING)
   target_compile_definitions(${LIB_NAME} PRIVATE GDLLAMA_ENABLE_DEBUG_LOGS)
 endif()
 
+# TODO fix up the postfixes for a better standard
 set_target_properties(${LIB_NAME} PROPERTIES
     OUTPUT_NAME "libgodot_llm"
     DEBUG_POSTFIX ".${SYSTEM_NAME_LOWER}.debug.${ARCH_SUFFIX}"
@@ -142,6 +152,27 @@ target_include_directories(${LIB_NAME}
     llama.cpp/src
     llama.cpp/vendor
 )
+
+# ============================================================================
+# Documentation
+# ============================================================================
+get_target_property(GODOTCPP_TARGET godot::cpp GODOTCPP_TARGET)
+
+file(
+  GLOB_RECURSE DOC_XML
+  LIST_DIRECTORIES NO 
+  CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/docs/doc_classes/*.xml"
+)
+
+if(DOC_XML)
+  message(STATUS "Found documentation files: ${DOC_XML}")
+  if(GODOTCPP_TARGET MATCHES "editor|template_debug")
+    target_doc_sources(${LIB_NAME} ${DOC_XML})
+    message(STATUS "Documentation embedded for target: ${GODOTCPP_TARGET}")
+  else()
+    message(STATUS "Skipping documentation (target: ${GODOTCPP_TARGET})")
+  endif()
+endif()
 
 # ============================================================================
 # Testing
@@ -251,3 +282,5 @@ else()
 endif()
 
 install(FILES "godot_llm.gdextension" DESTINATION ${LLM_LIB_INSTALL_DIR})
+
+# TODO copy the icon, copy (or create?) the plugin stuff, double check the dlls are actually required

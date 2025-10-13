@@ -141,3 +141,6 @@ If you need to persist your embeddings or prompts between game sessions but don'
 The best approach is to use a dedicated vector database that runs as an external service. Your Godot application could communicate with this database over the network using the `HTTPRequest` node.
 
 A database can also be added to Godot through the GDExtensions feature.
+
+# MCPs
+GDLlama should be all you need to build an MCP in Godot. Really, if you're intending to use this project at all it is likely you _are_ building an MCP, whether it appears that way to you or not!

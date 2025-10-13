@@ -34,3 +34,4 @@ out/
 
 # Project-specific ignores
 /tests/models/
+/demo/

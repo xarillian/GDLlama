@@ -21,6 +21,10 @@ class GDLlama : public Node {
         void _exit_tree() override;
 
         // Model Management
+        /**
+         * @brief Loads the model from the specified path.
+         * @return OK if the model was loaded successfully.
+         */
         Error load_model();
         void unload_model();
         bool is_model_loaded() const;
