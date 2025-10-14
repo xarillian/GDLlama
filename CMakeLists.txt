@@ -125,10 +125,6 @@ set(LIB_NAME godot_llm)
 
 add_library(${LIB_NAME} SHARED ${src_files})
 
-if (NOT MSVC)
-  target_compile_options(${LIB_NAME} PRIVATE -fexceptions)
-endif()
-
 if (GDLLAMA_DEBUG_LOGGING)
   message(STATUS "Enabling GDLlama debug logging")
   target_compile_definitions(${LIB_NAME} PRIVATE GDLLAMA_ENABLE_DEBUG_LOGS)
@@ -143,6 +139,12 @@ set_target_properties(${LIB_NAME} PROPERTIES
 )
 
 target_link_libraries(${LIB_NAME} PRIVATE godot-cpp common llama)
+
+if (NOT MSVC)
+  # Sorry, Godot. We're using exceptions in the other layers.
+  message(STATUS "Enabling -fexceptions for ${LIB_NAME}")
+  target_compile_options(${LIB_NAME} PRIVATE -fexceptions)
+endif()
 
 target_include_directories(${LIB_NAME}
   PUBLIC
@@ -200,9 +202,6 @@ if (BUILD_TESTING)
     src/llama_runner.cpp
   )
 
-  if (NOT MSVC)
-    target_compile_options(godot_llm_test_lib PRIVATE -fexceptions)
-  endif()
 
   target_compile_definitions(godot_llm_test_lib PRIVATE LOG_DISABLE_LOGS)
 
@@ -226,6 +225,10 @@ if (BUILD_TESTING)
     common
     llama
   )
+
+  if (NOT MSVC)
+    target_compile_options(godot_llm_test_lib PRIVATE -fexceptions)
+  endif()
 
   add_executable(run_tests
     tests/main.cpp
