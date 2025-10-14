@@ -4,7 +4,7 @@
 
 Why, yes, I do think it is cool! 
 
-`GDLlama` is a GDExtension for Godot 4.2+ that acts as a bridge to the powerful `llama.cpp` library. This allows you to perform fast, local inference with Large Language Models (LLMs) directly in your game, without needing an internet connection or external servers.
+`GDLlama` is a GDExtension for Godot 4.4+ that acts as a bridge to the powerful `llama.cpp` library. This allows you to perform fast, local inference with Large Language Models (LLMs) directly in your game, without needing an internet connection or external servers.
 
 It's implemented as a custom GDLlama node that you can add to any scene, making generative AI a native part of your project. It's designed to be flexible and powerful, supporting key features like:
 - Conversational AI: Maintain context between calls to create multi-turn chatbots.

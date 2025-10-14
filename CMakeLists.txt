@@ -1,9 +1,7 @@
 # ============================================================================
 # Basic Configuration
 # ============================================================================
-
-# TODO better messaging throughout
-
+message("Starting CMake configuration for godot_llm")
 # Minimum of 3.14 for:
 # - `add_link_options`
 # - implicit target dirs
@@ -25,8 +23,6 @@ endif ()
 # ============================================================================
 # Platform and Compiler Settings
 # ============================================================================
-add_definitions(-DSQLITE_CORE)
-
 if (MSVC)
   # Disable MSVC fopen warning
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
@@ -66,9 +62,13 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
       -Wno-exit-time-destructors
       -Wno-covered-switch-default
       -Wno-global-constructors
-      # -Wno-character-conversion  # TODO this doesn't work locally but I need it for the CI build :()
       "$<$<CONFIG:Debug>:-fstandalone-debug>"
     )
+
+    if (DEFINED ENV{CI})
+      message(STATUS "In a CI environment, adding -Wno-character-conversion")
+      add_compile_options(-Wno-character-conversion)
+    endif()
   endif()
 endif()
 
@@ -125,20 +125,16 @@ set(LIB_NAME godot_llm)
 
 add_library(${LIB_NAME} SHARED ${src_files})
 
-# TODO is there a point to this?
-# target_compile_definitions(${LIB_NAME} PRIVATE TOOLS_ENABLED )
-
 if (GDLLAMA_DEBUG_LOGGING)
+  message(STATUS "Enabling GDLlama debug logging")
   target_compile_definitions(${LIB_NAME} PRIVATE GDLLAMA_ENABLE_DEBUG_LOGS)
 endif()
 
-# TODO fix up the postfixes for a better standard
 set_target_properties(${LIB_NAME} PROPERTIES
     OUTPUT_NAME "libgodot_llm"
+    PREFIX ""
     DEBUG_POSTFIX ".${SYSTEM_NAME_LOWER}.debug.${ARCH_SUFFIX}"
     RELEASE_POSTFIX ".${SYSTEM_NAME_LOWER}.release.${ARCH_SUFFIX}"
-    MINSIZEREL_POSTFIX ".${SYSTEM_NAME_LOWER}.minsizerel.${ARCH_SUFFIX}"
-    RELWITHDEBINFO_POSTFIX ".${SYSTEM_NAME_LOWER}.relwithdebinfo.${ARCH_SUFFIX}"
 )
 
 target_link_libraries(${LIB_NAME} PRIVATE godot-cpp common llama)
@@ -161,7 +157,7 @@ get_target_property(GODOTCPP_TARGET godot::cpp GODOTCPP_TARGET)
 file(
   GLOB_RECURSE DOC_XML
   LIST_DIRECTORIES NO 
-  CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/docs/doc_classes/*.xml"
+  CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/plugin/doc_classes/*.xml"
 )
 
 if(DOC_XML)
@@ -262,25 +258,46 @@ endif()
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/install)
 
 if (LLAMA_VULKAN OR LLAMA_METAL)
-  # GPU Build
   set(LLM_LIB_INSTALL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/install/gpu/addons/godot_llm)
+  message(STATUS "Configuring GPU build install to: ${LLM_LIB_INSTALL_DIR}")
 else()
-  # CPU Build
   set(LLM_LIB_INSTALL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/install/cpu/addons/godot_llm)
+  message(STATUS "Configuring CPU build install to: ${LLM_LIB_INSTALL_DIR}")
 endif()
+
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/plugin/godot_llm.gdextension" GDEXTENSION_CONTENT)
+string(REPLACE "@POSTFIX_TYPE@" "$<LOWER_CASE:$<CONFIG>>" GDEXTENSION_CONTENT "${GDEXTENSION_CONTENT}")
+file(GENERATE
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/godot_llm.gdextension"
+  CONTENT "${GDEXTENSION_CONTENT}"
+)
 
 if (WIN32)
   install(TARGETS ${LIB_NAME}
-    RUNTIME
+    RUNTIME DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
+  )
+  
+  # Install required DLLs on Windows
+  install(FILES
+    $<TARGET_FILE:ggml-base>
+    $<TARGET_FILE:ggml>
+    $<TARGET_FILE:ggml-cpu>
+    $<TARGET_FILE:llama>
     DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
   )
 else()
   install(TARGETS ${LIB_NAME}
-    LIBRARY
-    DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
+    LIBRARY DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
   )
 endif()
 
-install(FILES "godot_llm.gdextension" DESTINATION ${LLM_LIB_INSTALL_DIR})
+install(
+  FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/godot_llm.gdextension"
+  "plugin/plugin.cfg"
+  "plugin/plugin.gd"
+  "plugin/icon.png"
+  DESTINATION ${LLM_LIB_INSTALL_DIR}
+)
 
-# TODO copy the icon, copy (or create?) the plugin stuff, double check the dlls are actually required
+message(STATUS "Install directory configured: ${LLM_LIB_INSTALL_DIR}")

@@ -104,14 +104,6 @@ The compiled addon is now ready to be used in a Godot project. The `ninja instal
 
 Copy the `godot_llm` folder from the appropriate path into the `addons` folder of your Godot project.
 
-On Windows, you must also copy the required DLLs from `install/bin` into your Godot project's `addons/godot_llm/bin`. These DLLs include:
-- `ggml.dll`
-- `ggml-base.dll`
-- `ggml-cpu.dll`
-- `llama.dll`
-
-and probably all the others! This builds appropriately on at least linux.
-
 ## Running Tests
 If you configure the project using a debug preset (e.g. `linux-vulkan-debug`), the test suite will be enabled.
 

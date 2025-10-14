@@ -3,6 +3,7 @@
 
 # Build directories
 build/
+bin/
 build_release/
 install/
 out/

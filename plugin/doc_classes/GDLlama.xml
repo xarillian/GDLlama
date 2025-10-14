@@ -2,25 +2,16 @@
 <class name="GDLlama" inherits="Node" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
     <brief_description>
         A node that acts as a bridge to the llama.cpp library for AI text generation tasks.
+        Docs: https://github.com/xarillian/GDLlama/tree/master/docs
     </brief_description>
     <description>
-        The [code]GDLlama[/code] node allows you to perform complex AI text generation tasks directly from GDScript or C# without halting your game. Key features include:
-        [ul]
-        [li]Conversational AI: Maintain context between calls to create multi-turn chatbots.[/li]
-        [li]Non-conversational Responses: One-shot generation for single use text generation.[/li]
-        [li]Real-time Streaming: Receive text as it's being generated using signals.[/li]
-        [li]Flexible Generation: Perform both synchronous and asynchronous text generation.[/li]
-        [li]Model Management: Load and unload .gguf model files at runtime.[/li]
-        [li]Embeddings: Enable features like semantic search and content similarity checks.[/li]
-        [/ul]
-
+        The [code]GDLlama[/code] node allows you to perform complex AI text generation tasks directly from GDScript or C# without halting your game.
         [b]Getting Started:[/b]
         1) Add a [code]GDLlama[/code] node to your scene.
         2) Set the [member model_path] property to your desired, llama-compatible model.
         3) Reference the node and call [method load_model] to load the model into memory.
         4) You can now call generation methods like [method generate_chat_async] and connect to its signals to receive the results.
         5) Unload the model using [method unload_model] when you are finished.
-
         [b]Example Usage:[/b]
         [codeblocks]
         [gdscript]
