@@ -220,6 +220,10 @@ if (BUILD_TESTING)
     llama
   )
 
+  if (NOT MSVC)
+    target_compile_options(godot_llm_test_lib PRIVATE -fexceptions)
+  endif()
+
   add_executable(run_tests
     tests/main.cpp
     tests/test_llama_state.cpp
