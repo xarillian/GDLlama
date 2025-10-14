@@ -220,10 +220,6 @@ if (BUILD_TESTING)
     llama
   )
 
-  if (NOT MSVC)
-    target_compile_options(godot_llm_test_lib PRIVATE -fexceptions)
-  endif()
-
   add_executable(run_tests
     tests/main.cpp
     tests/test_llama_state.cpp
@@ -233,6 +229,10 @@ if (BUILD_TESTING)
   target_link_libraries(run_tests PRIVATE
     gtest_main
     godot_llm_test_lib
+  )
+
+  target_include_directories(run_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/godot-cpp/gdextension
   )
 
   if (WIN32)
