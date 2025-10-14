@@ -125,6 +125,11 @@ set(LIB_NAME godot_llm)
 
 add_library(${LIB_NAME} SHARED ${src_files})
 
+target_compile_options(${LIB_NAME} PRIVATE 
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fexceptions>
+  $<$<CXX_COMPILER_ID:MSVC>:/EHsc>
+)
+
 if (GDLLAMA_DEBUG_LOGGING)
   message(STATUS "Enabling GDLlama debug logging")
   target_compile_definitions(${LIB_NAME} PRIVATE GDLLAMA_ENABLE_DEBUG_LOGS)
