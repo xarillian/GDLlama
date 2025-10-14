@@ -149,11 +149,6 @@ if (NOT MSVC)
   target_compile_options(${LIB_NAME} PRIVATE -fexceptions)
   message(STATUS "Enabling -fexceptions for ${LIB_NAME}")
 endif()
-This explicitly removes the offending flag before adding yours.
-
-
-
-
 
 target_include_directories(${LIB_NAME}
   PUBLIC
