@@ -196,7 +196,6 @@ if (BUILD_TESTING)
     src/llama_runner.cpp
   )
 
-
   target_compile_definitions(godot_llm_test_lib PRIVATE LOG_DISABLE_LOGS)
 
   target_include_directories(godot_llm_test_lib PUBLIC
@@ -214,15 +213,11 @@ if (BUILD_TESTING)
     llama.cpp/ggml/include
   )
 
-  target_link_libraries(godot_llm_test_lib PRIVATE
+  target_link_libraries(godot_llm_test_lib PUBLIC
     godot-cpp
     common
     llama
   )
-
-  if (NOT MSVC)
-    target_compile_options(godot_llm_test_lib PRIVATE -fexceptions)
-  endif()
 
   add_executable(run_tests
     tests/main.cpp
@@ -233,10 +228,6 @@ if (BUILD_TESTING)
   target_link_libraries(run_tests PRIVATE
     gtest_main
     godot_llm_test_lib
-  )
-
-  target_include_directories(run_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/godot-cpp/gdextension
   )
 
   if (WIN32)

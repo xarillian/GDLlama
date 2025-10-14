@@ -42,12 +42,18 @@
     {
       "name": "macos-base",
       "hidden": true,
-      "inherits": "base"
+      "inherits": "base",
+      "cacheVariables": {
+        "BUILD_TESTING": "OFF"
+      }
     },
     {
       "name": "linux-base",
       "hidden": true,
-      "inherits": "base"
+      "inherits": "base",
+      "cacheVariables": {
+        "BUILD_TESTING": "OFF"
+      }
     },
     {
       "name": "windows-vulkan-debug",
