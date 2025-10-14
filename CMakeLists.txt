@@ -140,11 +140,19 @@ set_target_properties(${LIB_NAME} PROPERTIES
 
 target_link_libraries(${LIB_NAME} PRIVATE godot-cpp common llama)
 
-if (NOT MSVC)
-  # Sorry, Godot. We're using exceptions in the other layers.
-  message(STATUS "Enabling -fexceptions for ${LIB_NAME}")
-  target_compile_options(${LIB_NAME} PRIVATE -fexceptions)
+if (NOT MSVC)\
+  get_target_property(LIB_OPTIONS ${LIB_NAME} COMPILE_OPTIONS)
+  if(LIB_OPTIONS)
+    list(REMOVE_ITEM LIB_OPTIONS "-fno-exceptions")
+    set_target_properties(${LIB_NAME} PROPERTIES COMPILE_OPTIONS "${LIB_OPTIONS}")
+  endif()
+  target_compile_options(${LIB_NAME} PRIVATE -fexceptions)  message(STATUS "Enabling -fexceptions for ${LIB_NAME}")
 endif()
+This explicitly removes the offending flag before adding yours.
+
+
+
+
 
 target_include_directories(${LIB_NAME}
   PUBLIC
@@ -227,7 +235,14 @@ if (BUILD_TESTING)
   )
 
   if (NOT MSVC)
-    target_compile_options(godot_llm_test_lib PRIVATE -fexceptions)
+    # Sorry Godot, but we need exceptions for now.
+    get_target_property(LIB_OPTIONS ${LIB_NAME} COMPILE_OPTIONS)
+    if(LIB_OPTIONS)
+      list(REMOVE_ITEM LIB_OPTIONS "-fno-exceptions")
+      set_target_properties(${LIB_NAME} PROPERTIES COMPILE_OPTIONS "${LIB_OPTIONS}")
+    endif()
+    target_compile_options(${LIB_NAME} PRIVATE -fexceptions)
+    message(STATUS "Enabling -fexceptions for ${LIB_NAME}")
   endif()
 
   add_executable(run_tests
