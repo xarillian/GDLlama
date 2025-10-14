@@ -146,7 +146,8 @@ if (NOT MSVC)
     list(REMOVE_ITEM LIB_OPTIONS "-fno-exceptions")
     set_target_properties(${LIB_NAME} PROPERTIES COMPILE_OPTIONS "${LIB_OPTIONS}")
   endif()
-  target_compile_options(${LIB_NAME} PRIVATE -fexceptions)  message(STATUS "Enabling -fexceptions for ${LIB_NAME}")
+  target_compile_options(${LIB_NAME} PRIVATE -fexceptions)
+  message(STATUS "Enabling -fexceptions for ${LIB_NAME}")
 endif()
 This explicitly removes the offending flag before adding yours.
 
