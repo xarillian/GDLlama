@@ -125,6 +125,10 @@ set(LIB_NAME godot_llm)
 
 add_library(${LIB_NAME} SHARED ${src_files})
 
+if (NOT MSVC)
+  target_compile_options(${LIB_NAME} PRIVATE -fexceptions)
+endif()
+
 if (GDLLAMA_DEBUG_LOGGING)
   message(STATUS "Enabling GDLlama debug logging")
   target_compile_definitions(${LIB_NAME} PRIVATE GDLLAMA_ENABLE_DEBUG_LOGS)
@@ -132,9 +136,10 @@ endif()
 
 set_target_properties(${LIB_NAME} PROPERTIES
     OUTPUT_NAME "libgodot_llm"
-    PREFIX ""
     DEBUG_POSTFIX ".${SYSTEM_NAME_LOWER}.debug.${ARCH_SUFFIX}"
     RELEASE_POSTFIX ".${SYSTEM_NAME_LOWER}.release.${ARCH_SUFFIX}"
+    MINSIZEREL_POSTFIX ".${SYSTEM_NAME_LOWER}.minsizerel.${ARCH_SUFFIX}"
+    RELWITHDEBINFO_POSTFIX ".${SYSTEM_NAME_LOWER}.relwithdebinfo.${ARCH_SUFFIX}"
 )
 
 target_link_libraries(${LIB_NAME} PRIVATE godot-cpp common llama)
@@ -194,6 +199,10 @@ if (BUILD_TESTING)
     src/llama_state.cpp
     src/llama_runner.cpp
   )
+
+  if (NOT MSVC)
+    target_compile_options(godot_llm_test_lib PRIVATE -fexceptions)
+  endif()
 
   target_compile_definitions(godot_llm_test_lib PRIVATE LOG_DISABLE_LOGS)
 
