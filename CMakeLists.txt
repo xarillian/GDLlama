@@ -140,7 +140,7 @@ set_target_properties(${LIB_NAME} PROPERTIES
 
 target_link_libraries(${LIB_NAME} PRIVATE godot-cpp common llama)
 
-if (NOT MSVC)\
+if (NOT MSVC)
   get_target_property(LIB_OPTIONS ${LIB_NAME} COMPILE_OPTIONS)
   if(LIB_OPTIONS)
     list(REMOVE_ITEM LIB_OPTIONS "-fno-exceptions")
