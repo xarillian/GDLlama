@@ -142,7 +142,16 @@ The best approach is to use a dedicated vector database that runs as an external
 
 A database can also be added to Godot through the GDExtensions feature.
 
-# MCP (Model Context Protocol)
-GDLlama should be all you need to build an MCP in Godot. Really, if you're intending to use this project at all it is likely you _are_ building an MCP, whether it appears that way to you or not!
+# Agentic Tool Use (MCP-Inspired Architecture)
+A powerful architecture you can build with `GDLlama` is a tool-use pattern. This turns your LLM from a simple text generator into an active agent that can interact with your game world. The core loop is simple: the LLM generates a structured function call, your code executes that function, and the result is fed back to the LLM to inform its next action.
+`GDLlama` is well suited for this pattern, as it provides the two most critical components:
+1. Conversational Context: The `generate_chat_async` method remembers the history of the conversation, which is essential for stateful, multi-step actions.
+2. Structured Output: The `json` parameter in the generation methods allows you to force the model's output to conform to a specific JSON schema, guaranteeing a predictable, machine-readable tool call.
 
-The Model Context Protocol pattern is simple: your LLM generates structured tool calls, maintains conversation state, and your code executes those tools. GDLlama handles the model inference and context management through `generate_chat`. The `json` parameter lets you pass JSON schemas that constrain outputs to valid tool calls. You implement the actual tool functions and dispatch logic.
+Future updates to `GDLlama` will further support the pattern. 
+
+## MCP Architecture
+It's important to distinguish this internal pattern from the formal Model Context Protocol (MCP) specification. The pattern described here is a self-contained loop inside your Godot application. The formal MCP specification is a standardized protocol for communication between separate services (e.g., an LLM service, a game client, and a tool server communicating over a network).
+For a self-contained or monolithic system, implementing the full, formal protocol is likely unnecessary. However, the specification provides a valuable philosophical pattern and an excellent reference for how to think about structuring tool definitions and handling agent-based logic. 
+For a project that relies on external communication, the formal MCP specification becomes a highly practical guide. Adhering to its standards will ensure your system is robust, scalable, and interoperable with other tools that speak the same protocol.
+For more information on the MCP pattern, see: https://modelcontextprotocol.io/docs/learn/architecture
