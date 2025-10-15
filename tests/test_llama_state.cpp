@@ -35,6 +35,6 @@ TEST_F(LlamaStateTest, CanUnloadModel) {
 
 TEST_F(LlamaStateTest, UnloadingWhenNotLoadedDoesNothing) {
     ASSERT_FALSE(llama_state.is_loaded());
-    ASSERT_NO_THROW(llama_state.unload());
+    llama_state.unload();  // no crash pl0x
     ASSERT_FALSE(llama_state.is_loaded());
 }
