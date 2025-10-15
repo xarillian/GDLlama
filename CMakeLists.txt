@@ -130,6 +130,18 @@ if (GDLLAMA_DEBUG_LOGGING)
   target_compile_definitions(${LIB_NAME} PRIVATE GDLLAMA_ENABLE_DEBUG_LOGS)
 endif()
 
+if(APPLE)
+  set_target_properties(${LIB_NAME} PROPERTIES
+    INSTALL_RPATH "@loader_path"
+    BUILD_WITH_INSTALL_RPATH TRUE
+  )
+elseif(UNIX)
+  set_target_properties(${LIB_NAME} PROPERTIES
+    INSTALL_RPATH "$ORIGIN"
+    BUILD_WITH_INSTALL_RPATH TRUE
+  )
+endif()
+
 set_target_properties(${LIB_NAME} PROPERTIES
     OUTPUT_NAME "libgodot_llm"
     DEBUG_POSTFIX ".${SYSTEM_NAME_LOWER}.debug.${ARCH_SUFFIX}"
@@ -273,25 +285,23 @@ file(GENERATE
   CONTENT "${GDEXTENSION_CONTENT}"
 )
 
-if (WIN32)
-  install(TARGETS ${LIB_NAME}
-    RUNTIME DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
-  )
-  
-  # Install required DLLs on Windows
-  install(FILES
-    $<TARGET_FILE:ggml-base>
-    $<TARGET_FILE:ggml>
-    $<TARGET_FILE:ggml-cpu>
-    $<TARGET_FILE:llama>
-    DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
-  )
-else()
-  install(TARGETS ${LIB_NAME}
-    LIBRARY DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
-  )
-endif()
+# Install the base gdextension
+install(TARGETS ${LIB_NAME}
+  RUNTIME DESTINATION ${LLM_LIB_INSTALL_DIR}/bin  # .dll on Windows
+  LIBRARY DESTINATION ${LLM_LIB_INSTALL_DIR}/bin  # .so/.dylib on Unix
+  ARCHIVE DESTINATION ${LLM_LIB_INSTALL_DIR}/bin  # .lib/.a
+)
 
+# Install shared library dependencies
+install(FILES
+  $<TARGET_FILE:ggml-base>
+  $<TARGET_FILE:ggml>
+  $<TARGET_FILE:ggml-cpu>
+  $<TARGET_FILE:llama>
+  DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
+)
+
+# Install plugin bits
 install(
   FILES
   "${CMAKE_CURRENT_BINARY_DIR}/godot_llm.gdextension"
