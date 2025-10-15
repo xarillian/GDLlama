@@ -100,10 +100,11 @@ class GDLlama : public Node {
             godot::String prompt,
             godot::String grammar,
             godot::String json,
-            bool is_continuous
+            bool is_continuous,
+            std::string* error_msg = nullptr
         );
 
-        PackedFloat32Array _compute_embedding(godot::String prompt);
+        PackedFloat32Array _compute_embedding(godot::String prompt, std::string* error_msg = nullptr);
 
         // Threading & State
         godot::Ref<godot::Thread> generate_text_thread;

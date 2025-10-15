@@ -12,13 +12,15 @@ std::string LlamaController::start_generation(
     const std::string& grammar,
     const std::string& json,
     bool is_continuous,
-    std::function<void(std::string)> on_update
+    std::function<void(std::string)> on_update,
+    std::string* error_msg
 ) {
 
     if (!is_model_loaded()) {
-        std::string err_msg = "Cannot generate text: Model is not loaded.";
-        GDLOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        std::string err = "Cannot generate text: Model is not loaded.";
+        GDLOG_ERROR(err);
+        if (error_msg) *error_msg = err;
+        return "";
     }
 
     if (is_continuous) {
@@ -43,12 +45,18 @@ std::string LlamaController::start_generation(
         
         if (formatted_size < 0) {
             conversation_history.pop_back();
-            throw std::runtime_error("Failed to apply chat template.");
+            std::string err = "Failed to apply chat template.";
+            GDLOG_ERROR(err);
+            if (error_msg) *error_msg = err;
+            return "";
         }
 
         if (static_cast<int32_t>(buffer.size()) <= formatted_size) {
             conversation_history.pop_back();
-            throw std::runtime_error("Formatted chat prompt exceeds the buffer size.");
+            std::string err = "Formatted chat prompt exceeds the buffer size.";
+            GDLOG_ERROR(err);
+            if (error_msg) *error_msg = err;
+            return "";
         }
 
         params.prompt = std::string(buffer.data());
@@ -69,7 +77,11 @@ std::string LlamaController::start_generation(
     llama_context* ctx = llama_state->get_context();
     llama_model* model = llama_state->get_model();
 
-    std::string generated_text = llama_runner->run_prediction(model, ctx, params, on_update);
+    std::string generated_text = llama_runner->run_prediction(model, ctx, params, on_update, error_msg);
+
+    if (error_msg && !error_msg->empty()) {
+        return "";  // Error occurred in runner
+    }
 
     if (is_continuous) {
         // We specifically add empty assistant messages to the history here.
@@ -86,14 +98,15 @@ std::string LlamaController::start_generation(
 
 std::vector<float> LlamaController::generate_embedding(
     common_params& params,
-    const std::string& prompt
+    const std::string& prompt,
+    std::string* error_msg
 ) {
     if (!is_model_loaded()) {
-        std::string err_msg = "Cannot generate embedding: Model is not loaded.";
-        GDLOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        std::string err = "Cannot generate embedding: Model is not loaded.";
+        GDLOG_ERROR(err);
+        if (error_msg) *error_msg = err;
+        return {};
     }
-
 
     params.n_predict = 0;
     params.prompt = prompt;
@@ -103,7 +116,11 @@ std::vector<float> LlamaController::generate_embedding(
 
     reset_context();
 
-    std::vector<float> embedding = llama_runner->run_embedding(model, ctx, params);
+    std::vector<float> embedding = llama_runner->run_embedding(model, ctx, params, error_msg);
+
+    if (error_msg && !error_msg->empty()) {
+        return {};  // Error occurred in runner
+    }
 
     return embedding;
 }

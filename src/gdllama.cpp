@@ -49,7 +49,8 @@ namespace godot {
         String prompt,
         String grammar,
         String json,
-        bool is_continuous
+        bool is_continuous,
+        std::string* error_msg
     ) {
         auto on_update = [this](const std::string& text_chunk) {
             this->_on_generate_text_update(text_chunk);
@@ -58,6 +59,7 @@ namespace godot {
         std::string s_prompt = string_gd_to_std(prompt);
         std::string s_grammar = string_gd_to_std(grammar);
         std::string s_json = string_gd_to_std(json);
+        std::string internal_error; 
 
         std::string result = controller->start_generation(
             params,
@@ -65,30 +67,41 @@ namespace godot {
             s_grammar,
             s_json,
             is_continuous,
-            on_update
+            on_update,
+            &internal_error
         );
+
+        if (!internal_error.empty()) {
+            GDLOG_ERROR("Generation failed: " + internal_error);
+            if (error_msg) *error_msg = internal_error;
+            return "";
+        }
 
         return string_std_to_gd(result);
     }
 
-    PackedFloat32Array GDLlama::_compute_embedding(godot::String prompt) {
+    PackedFloat32Array GDLlama::_compute_embedding(
+        godot::String prompt,
+        std::string* error_msg
+    ) {
         PackedFloat32Array result;
+        std::string internal_error;
+        
+        std::vector<float> embd_vec = controller->generate_embedding(
+            params, 
+            string_gd_to_std(prompt),
+            &internal_error
+        );
 
-        try {
-            std::vector<float> embd_vec = controller->generate_embedding(
-                params, 
-                string_gd_to_std(prompt)
-            );
-            result.resize(embd_vec.size());
-            for (size_t i = 0; i < embd_vec.size(); ++i) {
-                result.set(i, embd_vec[i]);
-            }
-        } catch (const std::runtime_error& e) {
-            GDLOG_ERROR("_compute_embedding failed: " + std::string(e.what()));
-        } catch (const std::exception& e) {
-            GDLOG_ERROR("_compute_embedding failed with a standard exception: " + std::string(e.what()));
-        } catch (...) {
-            GDLOG_ERROR("_compute_embedding failed with an unknown, non-standard exception.");
+        if (!internal_error.empty()) {
+            GDLOG_ERROR("_compute_embedding failed: " + internal_error);
+            if (error_msg) *error_msg = internal_error;
+            return {};
+        }
+
+        result.resize(embd_vec.size());
+        for (size_t i = 0; i < embd_vec.size(); ++i) {
+            result.set(i, embd_vec[i]);
         }
 
         return result;
@@ -112,30 +125,29 @@ namespace godot {
 
     void GDLlama::_generation_task(String prompt, String grammar, String json, bool is_continuous) {
         godot::MutexLock lock(*(generation_mutex.ptr()));
-
-        try {
-            String result = _generate(prompt, grammar, json, is_continuous);
+        std::string error_msg;
+        String result = _generate(prompt, grammar, json, is_continuous, &error_msg);
+    
+        if (!error_msg.empty()) {
+            callable_mp(this, &GDLlama::_on_generate_text_error).call_deferred(string_std_to_gd(error_msg));
+        } else {
             callable_mp(this, &GDLlama::_async_generation_completed).call_deferred(result);
-        } catch (const std::runtime_error& e) {
-            String error_msg = string_std_to_gd(e.what());
-            callable_mp(this, &GDLlama::_on_generate_text_error).call_deferred(error_msg);
-            GDLOG_ERROR("Async generation failed: " + std::string(e.what()));
         }
     }
 
     void GDLlama::_embedding_task(String prompt) {
         godot::MutexLock lock(*(generation_mutex.ptr()));
+        
+        std::string error_msg;
+        PackedFloat32Array result = _compute_embedding(prompt, &error_msg);
 
-        try {
-            PackedFloat32Array result = _compute_embedding(prompt);
+        if (!error_msg.empty()) {
+            callable_mp(this, &GDLlama::_on_embedding_failed)
+                .call_deferred(string_std_to_gd(error_msg));
+        } else {
             callable_mp(this, &GDLlama::_async_embedding_completed).call_deferred(result);
-        } catch (const std::runtime_error& e) {
-            String error_msg = string_std_to_gd(e.what());
-            callable_mp(this, &GDLlama::_on_embedding_failed).call_deferred(error_msg);
-            GDLOG_ERROR("Async embedding failed: " + std::string(e.what()));
         }
     }
-
     // endregion: Asynchronous Task Workers & Launchers
 
     // region: Threading & State
@@ -265,13 +277,7 @@ namespace godot {
 
     String GDLlama::generate_text(String prompt, String grammar, String json) {
         godot::MutexLock lock(*(generation_mutex.ptr()));
-        try {
-            String result = _generate(prompt, grammar, json, false);
-            return result;
-        } catch (const std::runtime_error& e) {
-            GDLOG_ERROR("generate_text failed: " + std::string(e.what()));
-            return "";
-        }
+        return _generate(prompt, grammar, json, false);
     }
 
     Error GDLlama::generate_text_async(String prompt, String grammar, String json) {
@@ -284,13 +290,7 @@ namespace godot {
 
     String GDLlama::generate_chat(String prompt, String grammar, String json) {
         godot::MutexLock lock(*(generation_mutex.ptr()));
-        try {
-            String result = _generate(prompt, grammar, json, true);
-            return result;
-        } catch (const std::runtime_error& e) {
-            GDLOG_ERROR("generate_chat failed: " + std::string(e.what()));
-            return "";
-        }
+        return _generate(prompt, grammar, json, true);
     }
 
     Error GDLlama::generate_chat_async(String prompt, String grammar, String json) {
