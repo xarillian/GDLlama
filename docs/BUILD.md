@@ -99,8 +99,8 @@ This will place the final files in the install directory at the root of the proj
 5. Add to Your Godot Project
 
 The compiled addon is now ready to be used in a Godot project. The `ninja install` command creates an `install` directory in the product root. The addon is located inside, organized by backend:
-    - CPU builds: `install/gpu/addons/godot_llm`
-    - GPU builds: `install/cpu/addons/godot_llm`
+    - CPU builds: `install/cpu/addons/godot_llm`
+    - GPU builds: `install/gpu/addons/godot_llm`
 
 Copy the `godot_llm` folder from the appropriate path into the `addons` folder of your Godot project.
 
