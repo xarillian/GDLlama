@@ -18,7 +18,7 @@ The generative space is an exciting frontier for video games that has been sorel
 I intend to maintain this for an indefinite amount of time while it continues to be useful to me. It has been almost entirely re-written with a number of new features. For a full release, I intend to publish this to the Godot Asset Shop. For progress, see: https://github.com/xarillian/GDLlama/milestone/1
 
 # Getting Started
-For now, everything has to be built by the user. GDLlama is not yet in the asset library, no sir. I'd like a bit more polish on the project before getting to a 1.0 release state where I'd put it in the library.
+For now, everything has to be built by the user. GDLlama is not yet in the asset library, no sir.
 
 ## Build
 You'll need these tools:
