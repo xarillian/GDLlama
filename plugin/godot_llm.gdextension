@@ -1,0 +1,12 @@
+[configuration]
+
+entry_symbol = "llm_library_init"
+compatibility_minimum = "4.4"
+
+[libraries]
+windows.x86_64 = "bin/libgodot_llm.windows.@POSTFIX_TYPE@.amd64.dll"
+linux.x86_64 = "bin/libgodot_llm.linux.@POSTFIX_TYPE@.x86_64.so"
+macos.universal = "bin/libgodot_llm.darwin.@POSTFIX_TYPE@.universal.dylib"
+
+[icons]
+GDLlama = "res://addons/godot_llm/icon.png"

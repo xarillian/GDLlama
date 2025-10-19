@@ -34,6 +34,7 @@ class LlamaController {
          *             internally. If both grammar and JSON are provided, grammar takes precedence.
          * @param on_update Callback for streaming text chunks.
          * @param on_finish Callback for when generation is complete.
+         * @param error_msg Optional output parameter for error messages.
          * @return The complete generated text.
          */
         std::string start_generation(
@@ -42,18 +43,21 @@ class LlamaController {
             const std::string& grammar,
             const std::string& json,
             bool is_continuous,
-            std::function<void(std::string)> on_update
+            std::function<void(std::string)> on_update,
+            std::string* error_msg = nullptr
         );
 
         /**
          * @brief Generates an embedding vector for the given prompt.
          * @param params Parameters for the generation (sampling, prompt, etc.).
          * @param prompt The input.
+         * @param error_msg Optional output parameter for error messages.
          * @return A vector of floats representing the embedding.
          */
         std::vector<float> generate_embedding(
             common_params& params,
-            const std::string& prompt
+            const std::string& prompt,
+            std::string* error_msg = nullptr
         );
 
         std::vector<ChatMessage> get_conversation_history() const;

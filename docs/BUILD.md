@@ -4,74 +4,107 @@
 - Ninja build system
 - Vulkan SDK (for GPU builds)
 - Git
-- (for Windows): Visual Studio Build Tools with clang-cl
-    - or some equivalent
+- Platform-specific tools
+    - Windows: Visual Studio with the "Desktop development with C++" workload (for `clang-cl` and linkers)
+    - Linux: A C++ compiler like `clang` or `gcc`
+    - macOS: Xcode Command Line Tools
+- GPU-Specific SDKs
+    - Vulkan SDK: For GPU-accelerated builds on Windows and Linux
+    - Xcode: Provides the Metal framework for GPU-accelerated builds on macOS
 
 ## Build Steps
 
-1. Install the necessary build tools (e.g. `clang`) and Vulkan SDK for your operating system, then clone this repository.
-
+1. Clone the repository and initialize its submodules.
 ```shell
 git clone https://github.com/xarillian/GDLlama.git
 cd godot-llm
 git submodule update --init --recursive
 ```
 
-2. Generate the necessary Godot bindings. 
+2.  Generate Godot Bindings (if building for the first time or updating Godot)
+
+You need to generate the C++ bindings for Godot. This step is run from the `godot-cpp` directory.
 
 ```shell
 cd godot-cpp
-scons generate_bindings=True
+```
+
+Execute the `SCons` command that matches your operating system (`windows`, `linux`, or `macos`.) and desired build type (debug or release):
+
+```shell
+SCons platform=X target=template_release use_clang=yes
+```
+
+After the command finishes, return to the root directory:
+```shell
 cd ..
 ```
 
-Godot recommends scons for building and has an SConstruct.  
+3. Configure the Build with CMake
 
-3. Run `cmake`.
-
-First, create a build dir and move into it.
+GDLlama uses CMake Presets to simplify configuration. Create a build directory and run cmake from inside it.
 
 ```shell
 mkdir build
 cd build
 ```
 
-### Windows
-from preset (recommended):
+**Windows**
+
+GPU (Vulkan):
 ```shell
 cmake --preset windows-vulkan-release ..
 ```
 
-or manually:
+CPU Only:
 ```shell
-cmake .. -GNinja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_CXX_FLAGS="/EHsc" -DLLAMA_NATIVE=OFF -DLLAMA_VULKAN=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_COMMON=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DCMAKE_BUILD_TYPE=Release
+cmake --preset windows-cpu-release ..
 ```
 
-### Linux
+**Linux**
+
+GPU (Vulkan):
 ```shell
-cmake .. -GNinja -DLLAMA_NATIVE=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DLLAMA_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+cmake --preset linux-vulkan-release ..
 ```
 
-### Android
-I haven't tested this at all, sorry. Here's the advice from the original project:
-
-For Android, set `$NDK_PATH` to your android ndk directory, then:
-
+CPU Only:
 ```shell
-cmake .. -GNinja -DCMAKE_TOOLCHAIN_FILE=$NDK_PATH\cmake\android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-23 -DCMAKE_C_FLAGS="-mcpu=generic" -DCMAKE_CXX_FLAGS="-mcpu=generic" -DCMAKE_BUILD_TYPE=Release
+cmake --preset linux-cpu-release ..
 ```
 
-4. Compile and install with `ninja`.
+**macOS**
+
+GPU (Metal):
+```shell
+cmake --preset macos-metal-release ..
+```
+
+CPU Only:
+```shell
+cmake --preset macos-cpu-release ..
+```
+
+4. Compile and Install
+
+Once CMake has configured the project, compile and install it using Ninja.
 
 ```shell
 ninja
 ninja install
 ```
 
-5. The folder `godot-llm/install/gpu/addons/godot_llm` can be copied to the `addons` folder of your Godot project. On Windows at least, you will also need to copy the required DLL dependencies from `godot-llm/install/bin` into your Godot project's `addons/godot_llm/bin/` directory:
-- `ggml.dll`
-- `ggml-base.dll`
-- `ggml-cpu.dll`
-- `llama.dll`
+This will place the final files in the install directory at the root of the project.
 
-Replace "gpu" with "cpu" for a CPU build.
+5. Add to Your Godot Project
+
+The compiled addon is now ready to be used in a Godot project. The `ninja install` command creates an `install` directory in the product root. The addon is located inside, organized by backend:
+    - CPU builds: `install/cpu/addons/godot_llm`
+    - GPU builds: `install/gpu/addons/godot_llm`
+
+Copy the `godot_llm` folder from the appropriate path into the `addons` folder of your Godot project.
+
+## Running Tests
+If you configure the project using a debug preset (e.g. `linux-vulkan-debug`), the test suite will be enabled.
+
+After running `ninja`, you can execute the tests from the build directory using `ctest` or `ninja test`.

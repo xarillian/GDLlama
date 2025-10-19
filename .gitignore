@@ -3,8 +3,10 @@
 
 # Build directories
 build/
+bin/
 build_release/
 install/
+out/
 
 # Compiled objects and libraries
 *.o
@@ -33,3 +35,4 @@ install/
 
 # Project-specific ignores
 /tests/models/
+/demo/

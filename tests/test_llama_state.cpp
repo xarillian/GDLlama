@@ -10,7 +10,7 @@ class LlamaStateTest : public ::testing::Test {
         void SetUp() override {
             params.model.path = "tests/models/gemma-3-270m-it-F16.gguf";
             params.n_ctx = 128;
-            params.n_gpu_layers = 0;
+            params.n_gpu_layers = 0;  // Use CPU for testing
         }
 };
 
@@ -35,6 +35,6 @@ TEST_F(LlamaStateTest, CanUnloadModel) {
 
 TEST_F(LlamaStateTest, UnloadingWhenNotLoadedDoesNothing) {
     ASSERT_FALSE(llama_state.is_loaded());
-    ASSERT_NO_THROW(llama_state.unload());
+    llama_state.unload();  // no crash pl0x
     ASSERT_FALSE(llama_state.is_loaded());
 }

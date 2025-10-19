@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GDLlama" inherits="Node" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+    <brief_description>
+        A node that acts as a bridge to the llama.cpp library for AI text generation tasks.
+        Docs: https://github.com/xarillian/GDLlama/tree/master/docs
+    </brief_description>
+    <description>
+        The [code]GDLlama[/code] node allows you to perform complex AI text generation tasks directly from GDScript or C# without halting your game.
+        [b]Getting Started:[/b]
+        1) Add a [code]GDLlama[/code] node to your scene.
+        2) Set the [member model_path] property to your desired, llama-compatible model.
+        3) Reference the node and call [method load_model] to load the model into memory.
+        4) You can now call generation methods like [method generate_chat_async] and connect to its signals to receive the results.
+        5) Unload the model using [method unload_model] when you are finished.
+        [b]Example Usage:[/b]
+        [codeblocks]
+        [gdscript]
+@onready var llm: GDLlama = $GDLlama
+var full_response: String = ""
+
+func _ready():
+    llm.generate_text_updated.connect(_on_text_updated)
+    llm.generate_text_finished.connect(_on_text_finished)
+    llm.model_path = "res://models/your_model.gguf"
+
+    if not llm.is_model_loaded():
+        var error = llm.load_model()
+        if error != OK:
+            return
+    
+    var prompt = "Tell me a story about the river of Saskatoon."
+    llm.generate_text_async(prompt)
+    await llm.generate_text_finished
+    llm.unload_model()
+
+func _on_text_updated(new_text: String):
+    full_response += new_text
+    prints(new_text)
+
+func _on_text_finished(full_text: String):
+    print(full_text)
+        [/gdscript]
+        [/codeblocks]
+    </description>
+    <methods>
+        <method name="load_model">
+            <return type="int" enum="Error" />
+            <description>
+                Loads the model specified by the [member model_path] property into memory. Returns [code]@GlobalScope.OK[/code] on success.
+            </description>
+        </method>
+        <method name="unload_model">
+            <return type="void" />
+            <description>
+                Unloads the currently loaded model from memory, freeing resources.
+            </description>
+        </method>
+        <method name="is_model_loaded">
+            <return type="bool" />
+            <description>
+                Returns [code]true[/code] if a model is currently loaded and ready for use.
+            </description>
+        </method>
+        <method name="generate_text">
+            <return type="String" />
+            <param index="0" name="prompt" type="String" />
+            <param index="1" name="grammar" type="String" default="&quot;&quot;" />
+            <param index="2" name="json" type="String" default="&quot;&quot;" />
+            <description>
+                Performs a synchronous (blocking) text generation.
+            </description>
+        </method>
+        <method name="generate_text_async">
+            <return type="int" enum="Error" />
+            <param index="0" name="prompt" type="String" />
+            <param index="1" name="grammar" type="String" default="&quot;&quot;" />
+            <param index="2" name="json" type="String" default="&quot;&quot;" />
+            <description>
+                Starts an asynchronous (non-blocking) generation. The result is delivered via the [signal generate_text_finished] signal.
+            </description>
+        </method>
+        <method name="generate_chat">
+            <return type="String" />
+            <param index="0" name="prompt" type="String" />
+            <param index="1" name="grammar" type="String" default="&quot;&quot;" />
+            <param index="2" name="json" type="String" default="&quot;&quot;" />
+            <description>
+                A synchronous (blocking) method that maintains conversational context between calls.
+            </description>
+        </method>
+        <method name="generate_chat_async">
+            <return type="int" enum="Error" />
+            <param index="0" name="prompt" type="String" />
+            <param index="1" name="grammar" type="String" default="&quot;&quot;" />
+            <param index="2" name="json" type="String" default="&quot;&quot;" />
+            <description>
+                The asynchronous (non-blocking) version of generate_chat. Delivers the result via a signal.
+            </description>
+        </method>
+        <method name="stop_generate_text">
+            <return type="void" />
+            <description>
+                Sends a stop signal to the currently running asynchronous generation.
+            </description>
+        </method>
+        <method name="is_running">
+            <return type="bool" />
+            <description>
+                Returns [code]true[/code] if an asynchronous generation thread is currently active.
+            </description>
+        </method>
+        <method name="reset_context">
+            <return type="void" />
+            <description>
+                Clears the model's conversational memory (the KV cache).
+            </description>
+        </method>
+        <method name="compute_embedding">
+            <return type="PackedFloat32Array" />
+            <param index="0" name="prompt" type="String" />
+            <description>
+                Generates a vector embedding for the given prompt synchronously (blocking).
+            </description>
+        </method>
+        <method name="compute_embedding_async">
+            <return type="int" enum="Error" />
+            <param index="0" name="prompt" type="String" />
+            <description>
+                Starts an asynchronous (non-blocking) embedding generation. The result is delivered via the [signal embedding_computed] or [signal embedding_failed] signal.
+            </description>
+        </method>
+        <method name="similarity_cos">
+            <return type="float" />
+            <param index="0" name="array1" type="PackedFloat32Array" />
+            <param index="1" name="array2" type="PackedFloat32Array" />
+            <description>
+                A utility function that calculates the cosine similarity between two vector embeddings.
+            </description>
+        </method>
+    </methods>
+    <members>
+        <member name="model_path" type="String" setter="set_model_path" getter="get_model_path" default="&quot;&quot;">
+            The file path to your llama-compatible model file (e.g., [code]"res://models/model.gguf"[/code]).
+        </member>
+        <member name="seed" type="int" setter="set_seed" getter="get_seed" default="-1">
+            The seed for the random number generator. -1 means a random seed will be used.
+        </member>
+        <member name="n_predict" type="int" setter="set_n_predict" getter="get_n_predict" default="-1">
+            The maximum number of new tokens the model should generate in a single run.
+        </member>
+        <member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="0.8">
+            Controls randomness. Lower values make the output more deterministic.
+        </member>
+        <member name="top_k" type="int" setter="set_top_k" getter="get_top_k" default="40">
+            Reduces the pool of tokens to the 'k' most likely ones.
+        </member>
+        <member name="top_p" type="float" setter="set_top_p" getter="get_top_p" default="0.9">
+            Nucleus sampling. Considers the smallest set of tokens whose cumulative probability exceeds 'p'.
+        </member>
+        <member name="ignore_eos" type="bool" setter="set_ignore_eos" getter="get_ignore_eos" default="false">
+            If [code]true[/code], the model will not stop when it generates an End-of-Sequence token.
+        </member>
+        <member name="penalty_repeat" type="float" setter="set_penalty_repeat" getter="get_penalty_repeat" default="1.1">
+            Penalizes the model for repeating tokens it has recently used (1.0 = no penalty).
+        </member>
+        <member name="penalty_last_n" type="int" setter="set_penalty_last_n" getter="get_penalty_last_n" default="64">
+            The number of recent tokens to consider for the repetition penalty.
+        </member>
+        <member name="chat_template" type="String" setter="set_chat_template" getter="get_chat_template" default="&quot;&quot;">
+            A custom chat template in Jinja2 format. If empty, the model's built-in template is used.
+        </member>
+        <member name="n_gpu_layers" type="int" setter="set_n_gpu_layers" getter="get_n_gpu_layers" default="-1">
+            The number of model layers to offload to the GPU for acceleration. -1 uses the default recommended value.
+        </member>
+        <member name="n_ctx" type="int" setter="set_n_ctx" getter="get_n_ctx" default="0">
+            The context window size in tokens.
+        </member>
+        <member name="n_batch" type="int" setter="set_n_batch" getter="get_n_batch" default="512">
+            The number of tokens to process in parallel during prompt evaluation.
+        </member>
+        <member name="main_gpu" type="int" setter="set_main_gpu" getter="get_main_gpu" default="0">
+            The index of the primary GPU to use for miscellaneous computations.
+        </member>
+    </members>
+    <signals>
+        <signal name="generate_text_updated">
+            <param index="0" name="new_text" type="String" />
+            <description>
+                Emitted repeatedly during an async generation, providing new tokens as they are generated.
+            </description>
+        </signal>
+        <signal name="generate_text_finished">
+            <param index="0" name="full_text" type="String" />
+            <description>
+                Emitted once when an async generation has completed.
+            </description>
+        </signal>
+        <signal name="generate_text_error">
+            <param index="0" name="error_text" type="String" />
+            <description>
+                Emitted once when async generation has completed with an error.
+            </description>
+        </signal>
+        <signal name="embedding_computed">
+            <param index="0" name="embedding" type="PackedFloat32Array" />
+            <description>
+                Emitted when an async embedding generation is successful.
+            </description>
+        </signal>
+        <signal name="embedding_failed">
+            <param index="0" name="error_message" type="String" />
+            <description>
+                Emitted if an error occurs during async embedding generation.
+            </description>
+        </signal>
+    </signals>  
+</class>

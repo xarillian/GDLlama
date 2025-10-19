@@ -16,38 +16,45 @@ void LlamaRunner::stop_generation() {
     should_stop_generation = true;
 }
 
-void LlamaRunner::decode_with_error_handling(
+bool LlamaRunner::decode_with_error_handling(
     llama_context* ctx,
     llama_batch& batch,
-    bool free_batch_on_failure
+    bool free_batch_on_failure,
+    std::string* error_msg
 ) {
+    // @todo not a fan of this function
     if (llama_decode(ctx, batch) != 0) {
         if (free_batch_on_failure) {
             llama_batch_free(batch);
         }
-        std::string err_msg = "Llama failed to decode.";
-        GDLOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        std::string err = "Llama failed to decode.";
+        GDLOG_ERROR(err);
+        if (error_msg) *error_msg = err;
+        return false;
     }
+    return true;
 }
 
 std::string LlamaRunner::run_prediction(
     llama_model* model,
     llama_context* ctx,
     common_params& params,
-    std::function<void(std::string)> on_generate_text_updated
+    std::function<void(std::string)> on_generate_text_updated,
+    std::string* error_msg
 ){
     should_stop_generation = false;
     if (ctx == nullptr) {
         std::string err_msg = "Invalid context.";
         GDLOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        if (error_msg) *error_msg = err_msg;
+        return "";
     }
 
     if (model == nullptr) {
         std::string err_msg = "Invalid model";
         GDLOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        if (error_msg) *error_msg = err_msg;
+        return "";
     }
 
     const bool add_bos = llama_vocab_get_add_bos(llama_model_get_vocab(model));
@@ -57,7 +64,8 @@ std::string LlamaRunner::run_prediction(
     if ((int)prompt_tokens.size() > n_ctx - 4) {
         std::string err_msg = "Prompt is too long for the context size.";
         GDLOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        if (error_msg) *error_msg = err_msg;
+        return "";
     }
 
     auto * sampler_chain = llama_sampler_chain_init(llama_sampler_chain_default_params());
@@ -117,7 +125,9 @@ std::string LlamaRunner::run_prediction(
             }
             batch.pos = positions.data();
 
-            decode_with_error_handling(ctx, batch, false);
+            if (!decode_with_error_handling(ctx, batch, false, error_msg)) {
+                return "";  // Error already set in decode_with_error_handling
+            }
 
             n_past += embd.size();
         }
@@ -153,20 +163,23 @@ std::string LlamaRunner::run_prediction(
 std::vector<float> LlamaRunner::run_embedding(
     llama_model* model,
     llama_context* ctx,
-    common_params& params
+    common_params& params,
+    std::string* error_msg
 ) {
     GDLOG_DEBUG("Starting embedding generation for prompt: " + params.prompt);
 
     if (ctx == nullptr) {
         std::string err_msg = "Invalid context.";
         GDLOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        if (error_msg) *error_msg = err_msg;
+        return {};
     }
 
     if (model == nullptr) {
         std::string err_msg = "Invalid model";
         GDLOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        if (error_msg) *error_msg = err_msg;
+        return {};
     }
 
     const bool add_bos = llama_vocab_get_add_bos(llama_model_get_vocab(model));
@@ -182,7 +195,8 @@ std::vector<float> LlamaRunner::run_embedding(
     if (n_tokens > llama_n_ctx(ctx)) {
         std::string err_msg = "Prompt is too long for the context size.";
         GDLOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        if (error_msg) *error_msg = err_msg;
+        return {};
     }
 
     const int n_embd = llama_model_n_embd(model);
@@ -205,7 +219,9 @@ std::vector<float> LlamaRunner::run_embedding(
         }
         batch.n_tokens = n_tokens;
 
-        decode_with_error_handling(ctx, batch, true);
+        if (!decode_with_error_handling(ctx, batch, true, error_msg)) {
+            return {};  // Error already set in decode_with_error_handling
+        }
 
         embd_ptr = llama_get_embeddings(ctx);
 
@@ -221,7 +237,9 @@ std::vector<float> LlamaRunner::run_embedding(
         }
         batch.n_tokens = n_tokens;
 
-        decode_with_error_handling(ctx, batch, true);
+        if (!decode_with_error_handling(ctx, batch, true, error_msg)) {
+            return {};  // Error already set in decode_with_error_handling
+        }
 
         embd_ptr = llama_get_embeddings_seq(ctx, 0);
 
@@ -236,7 +254,8 @@ std::vector<float> LlamaRunner::run_embedding(
         llama_batch_free(batch);
         std::string err_msg = "Failed to get sequence embeddings.";
         GDLOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        if (error_msg) *error_msg = err_msg;
+        return {};
     }
 
     common_embd_normalize(embd_ptr, embedding.data(), n_embd, params.embd_normalize);

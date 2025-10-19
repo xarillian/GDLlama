@@ -1,6 +1,7 @@
 # ============================================================================
 # Basic Configuration
 # ============================================================================
+message("Starting CMake configuration for godot_llm")
 # Minimum of 3.14 for:
 # - `add_link_options`
 # - implicit target dirs
@@ -22,8 +23,6 @@ endif ()
 # ============================================================================
 # Platform and Compiler Settings
 # ============================================================================
-add_definitions(-DSQLITE_CORE)
-
 if (MSVC)
   # Disable MSVC fopen warning
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
@@ -45,6 +44,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
       -Wno-old-style-cast
       -Wno-implicit-float-conversion
       -Wno-unsafe-buffer-usage
+      -Wno-unused-function
       -Wno-unused-command-line-argument
       -Wno-newline-eof
       -Wno-float-equal
@@ -64,6 +64,11 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
       -Wno-global-constructors
       "$<$<CONFIG:Debug>:-fstandalone-debug>"
     )
+
+    if (DEFINED ENV{CI})
+      message(STATUS "In a CI environment, adding -Wno-character-conversion")
+      add_compile_options(-Wno-character-conversion)
+    endif()
   endif()
 endif()
 
@@ -76,9 +81,17 @@ endif()
 # ============================================================================
 
 add_subdirectory(godot-cpp)
+set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH};${godot-cpp_SOURCE_DIR}/cmake")
+include(GodotCPPModule)
+
 set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 add_subdirectory(llama.cpp)
+
+# ===========================================================================
+# Logging Configuration
+# ===========================================================================
+option(GDLLAMA_DEBUG_LOGGING "Enable verbose debug level logging" OFF)
 
 # ============================================================================
 # Target Library (libgodot_llm)
@@ -112,6 +125,23 @@ set(LIB_NAME godot_llm)
 
 add_library(${LIB_NAME} SHARED ${src_files})
 
+if (GDLLAMA_DEBUG_LOGGING)
+  message(STATUS "Enabling GDLlama debug logging")
+  target_compile_definitions(${LIB_NAME} PRIVATE GDLLAMA_ENABLE_DEBUG_LOGS)
+endif()
+
+if(APPLE)
+  set_target_properties(${LIB_NAME} PROPERTIES
+    INSTALL_RPATH "@loader_path"
+    BUILD_WITH_INSTALL_RPATH TRUE
+  )
+elseif(UNIX)
+  set_target_properties(${LIB_NAME} PROPERTIES
+    INSTALL_RPATH "$ORIGIN"
+    BUILD_WITH_INSTALL_RPATH TRUE
+  )
+endif()
+
 set_target_properties(${LIB_NAME} PROPERTIES
     OUTPUT_NAME "libgodot_llm"
     DEBUG_POSTFIX ".${SYSTEM_NAME_LOWER}.debug.${ARCH_SUFFIX}"
@@ -126,18 +156,32 @@ target_include_directories(${LIB_NAME}
   PUBLIC
     include
   PRIVATE
-    godot-cpp
-    godot-cpp/include
-    godot-cpp/gdextension/include
-    godot-cpp/gen/include 
     llama.cpp
-    llama.cpp/include
     llama.cpp/common
     llama.cpp/src
     llama.cpp/vendor
-    llama.cpp/ggml/src
-    llama.cpp/ggml/include
 )
+
+# ============================================================================
+# Documentation
+# ============================================================================
+get_target_property(GODOTCPP_TARGET godot::cpp GODOTCPP_TARGET)
+
+file(
+  GLOB_RECURSE DOC_XML
+  LIST_DIRECTORIES NO 
+  CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/plugin/doc_classes/*.xml"
+)
+
+if(DOC_XML)
+  message(STATUS "Found documentation files: ${DOC_XML}")
+  if(GODOTCPP_TARGET MATCHES "editor|template_debug")
+    target_doc_sources(${LIB_NAME} ${DOC_XML})
+    message(STATUS "Documentation embedded for target: ${GODOTCPP_TARGET}")
+  else()
+    message(STATUS "Skipping documentation (target: ${GODOTCPP_TARGET})")
+  endif()
+endif()
 
 # ============================================================================
 # Testing
@@ -209,14 +253,14 @@ if (BUILD_TESTING)
         $<TARGET_FILE_DIR:run_tests>
       COMMENT "Copying DLLs to test directory"
     )
-
-    add_custom_command(TARGET run_tests POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E create_symlink
-        ${CMAKE_SOURCE_DIR}/tests
-        ${CMAKE_BINARY_DIR}/tests
-      COMMENT "Creating symlink to tests directory"
-    )
   endif()
+
+  add_custom_command(TARGET run_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+      ${CMAKE_SOURCE_DIR}/tests
+      ${CMAKE_BINARY_DIR}/tests
+    COMMENT "Creating symlink to tests directory"
+  )
 
   add_test(NAME run_tests COMMAND run_tests)
 endif()
@@ -227,23 +271,44 @@ endif()
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/install)
 
 if (LLAMA_VULKAN OR LLAMA_METAL)
-  # GPU Build
   set(LLM_LIB_INSTALL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/install/gpu/addons/godot_llm)
+  message(STATUS "Configuring GPU build install to: ${LLM_LIB_INSTALL_DIR}")
 else()
-  # CPU Build
   set(LLM_LIB_INSTALL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/install/cpu/addons/godot_llm)
+  message(STATUS "Configuring CPU build install to: ${LLM_LIB_INSTALL_DIR}")
 endif()
 
-if (WIN32)
-  install(TARGETS ${LIB_NAME}
-    RUNTIME
-    DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
-  )
-else()
-  install(TARGETS ${LIB_NAME}
-    LIBRARY
-    DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
-  )
-endif()
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/plugin/godot_llm.gdextension" GDEXTENSION_CONTENT)
+string(REPLACE "@POSTFIX_TYPE@" "$<LOWER_CASE:$<CONFIG>>" GDEXTENSION_CONTENT "${GDEXTENSION_CONTENT}")
+file(GENERATE
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/godot_llm.gdextension"
+  CONTENT "${GDEXTENSION_CONTENT}"
+)
 
-install(FILES "godot_llm.gdextension" DESTINATION ${LLM_LIB_INSTALL_DIR})
+# Install the base gdextension
+install(TARGETS ${LIB_NAME}
+  RUNTIME DESTINATION ${LLM_LIB_INSTALL_DIR}/bin  # .dll on Windows
+  LIBRARY DESTINATION ${LLM_LIB_INSTALL_DIR}/bin  # .so/.dylib on Unix
+  ARCHIVE DESTINATION ${LLM_LIB_INSTALL_DIR}/bin  # .lib/.a
+)
+
+# Install shared library dependencies
+install(FILES
+  $<TARGET_FILE:ggml-base>
+  $<TARGET_FILE:ggml>
+  $<TARGET_FILE:ggml-cpu>
+  $<TARGET_FILE:llama>
+  DESTINATION ${LLM_LIB_INSTALL_DIR}/bin
+)
+
+# Install plugin bits
+install(
+  FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/godot_llm.gdextension"
+  "plugin/plugin.cfg"
+  "plugin/plugin.gd"
+  "plugin/icon.png"
+  DESTINATION ${LLM_LIB_INSTALL_DIR}
+)
+
+message(STATUS "Install directory configured: ${LLM_LIB_INSTALL_DIR}")

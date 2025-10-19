@@ -23,13 +23,15 @@ class LlamaRunner {
          * @param ctx A pointer to the active llama_context.
          * @param params The common_params struct for this generation task.
          * @param on_generate_text_updated Callback for streaming text chunks.
+         * @param error_msg Optional output parameter for error messages.
          * @return The complete generated text string.
          */
         virtual std::string run_prediction(
             llama_model* model,
             llama_context* ctx,
             common_params& params,
-            std::function<void(std::string)> on_generate_text_updated
+            std::function<void(std::string)> on_generate_text_updated,
+            std::string* error_msg = nullptr
         );
 
         void stop_generation();
@@ -39,12 +41,14 @@ class LlamaRunner {
          * @param model A pointer to the loaded llama_model.
          * @param ctx A pointer to the active llama_context.
          * @param params The common_params struct for this embedding task.
+         * @param error_msg Optional output parameter for error messages.
          * @return A vector of floats representing the embedding.
          */
         virtual std::vector<float> run_embedding(
             llama_model* model,
             llama_context* ctx,
-            common_params& params
+            common_params& params,
+            std::string* error_msg = nullptr
         );
 
 
@@ -53,10 +57,11 @@ class LlamaRunner {
         bool is_waiting_input;
         std::string user_input;
 
-        void decode_with_error_handling(
+        bool decode_with_error_handling(
             llama_context* ctx,
             llama_batch& batch,
-            bool free_batch_on_failure
+            bool free_batch_on_failure,
+            std::string* error_msg = nullptr
         );
 
 };
