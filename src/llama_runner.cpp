@@ -35,10 +35,51 @@ bool LlamaRunner::decode_with_error_handling(
     return true;
 }
 
+std::string apply_chat_template(
+    llama_context* ctx,
+    const std::vector<ChatMessage>& conversation_history,
+    const std::string& chat_template,
+    std::string* error_msg
+) {
+    std::vector<llama_chat_message> messages_for_api;
+    for (const auto& msg : conversation_history) {
+        messages_for_api.push_back({msg.role.c_str(), msg.content.c_str()});
+    }
+
+    const int32_t buffer_size = llama_n_ctx(ctx);
+    std::vector<char> buffer(buffer_size);
+
+    int32_t formatted_size = llama_chat_apply_template(
+        chat_template.empty() ? nullptr : chat_template.c_str(),
+        messages_for_api.data(),
+        messages_for_api.size(),
+        true, // add_assistant_prefix
+        buffer.data(),
+        buffer.size()
+    );
+    
+    if (formatted_size < 0) {
+        std::string err = "Failed to apply chat template.";
+        GDLOG_ERROR(err);
+        if (error_msg) *error_msg = err;
+        return "";
+    }
+
+    if (static_cast<int32_t>(buffer.size()) <= formatted_size) {
+        std::string err = "Formatted chat prompt exceeds the buffer size.";
+        GDLOG_ERROR(err);
+        if (error_msg) *error_msg = err;
+        return "";
+    }
+
+    return std::string(buffer.data());
+}
+
 std::string LlamaRunner::run_prediction(
     llama_model* model,
     llama_context* ctx,
     common_params& params,
+    const std::vector<ChatMessage>* conversation_history,
     std::function<void(std::string)> on_generate_text_updated,
     std::string* error_msg
 ){
@@ -55,6 +96,17 @@ std::string LlamaRunner::run_prediction(
         GDLOG_ERROR(err_msg);
         if (error_msg) *error_msg = err_msg;
         return "";
+    }
+
+    if (conversation_history != nullptr) {
+        std::string formatted_prompt = apply_chat_template(
+            ctx,
+            *conversation_history,
+            params.chat_template,
+            error_msg
+        );
+
+        params.prompt = formatted_prompt;
     }
 
     const bool add_bos = llama_vocab_get_add_bos(llama_model_get_vocab(model));
@@ -95,12 +147,12 @@ std::string LlamaRunner::run_prediction(
     const llama_pos max_pos = llama_memory_seq_pos_max(llama_get_memory(ctx), 0);
     int n_past = (max_pos == -1) ? 0 : max_pos + 1;
     const auto * vocab = llama_model_get_vocab(model);
-        
+ 
     const llama_token EOD_TOKEN = llama_vocab_eos(vocab);
 
     GDLOG_DEBUG("Starting Generation Loop.");
     GDLOG_DEBUG("n_remain: " + std::to_string(n_remain));
-    while (n_remain > 0 && !should_stop_generation) {
+    while ((params.n_predict == -1 || n_remain > 0) && !should_stop_generation) {
         if (n_past < prompt_tokens.size()) {
             embd.clear();
             int n_eval = (int)prompt_tokens.size() - n_past;
@@ -109,7 +161,7 @@ std::string LlamaRunner::run_prediction(
                 embd.push_back(prompt_tokens[n_past + i]);
             }
         }
-        
+
         if (!embd.empty()) {
             if (n_past + (int)embd.size() > n_ctx) {
                 GDLOG_WARN("Context window is full, stopping generation.");
@@ -145,7 +197,9 @@ std::string LlamaRunner::run_prediction(
             on_generate_text_updated(token_str);
             generated_text.append(token_str);
 
-            n_remain--;
+            if (params.n_predict != -1) {
+                n_remain--;
+            }
 
             embd.clear();
             embd.push_back(new_token_id);

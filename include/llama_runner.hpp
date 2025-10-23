@@ -5,6 +5,7 @@
 #include <atomic>
 #include <functional>
 #include <string>
+#include "common_types.hpp"
 
 /**
  * @class LlamaRunner
@@ -22,6 +23,7 @@ class LlamaRunner {
          * @param model A pointer to the loaded llama_model.
          * @param ctx A pointer to the active llama_context.
          * @param params The common_params struct for this generation task.
+         * @param conversation_history A pointer to the conversation history vector.
          * @param on_generate_text_updated Callback for streaming text chunks.
          * @param error_msg Optional output parameter for error messages.
          * @return The complete generated text string.
@@ -30,6 +32,7 @@ class LlamaRunner {
             llama_model* model,
             llama_context* ctx,
             common_params& params,
+            const std::vector<ChatMessage>* conversation_history,
             std::function<void(std::string)> on_generate_text_updated,
             std::string* error_msg = nullptr
         );

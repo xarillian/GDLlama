@@ -25,7 +25,7 @@ TEST_F(LlamaControllerTest, GenerateReturnsErrorWhenModelNotLoaded) {
 
     std::string error_msg;
     std::string result = controller->start_generation(
-        params, "test prompt", "", "", false, 
+        params, "test prompt", "", "", false,  // is_conversational = false
         [](const std::string& chunk) {},
         &error_msg
     );
@@ -55,7 +55,7 @@ TEST_F(LlamaControllerTest, ResetContextClearsConversationHistory) {
     
     std::string error_msg;
     std::string response1 = controller->start_generation(
-        params, "Hello!", "", "", true, // is_continuous = true
+        params, "Hello!", "", "", true, // is_conversational = true
         [](const std::string& chunk) {},
         &error_msg
     );
@@ -76,11 +76,90 @@ TEST_F(LlamaControllerTest, SuccessfulGenerationHasNoError) {
     params.n_predict = 10;
     
     std::string result = controller->start_generation(
-        params, "Say hello", "", "", false,
+        params, "Say hello", "", "", false,  // is_conversational = false
         [](const std::string& chunk) {},
         &error_msg
     );
 
     ASSERT_TRUE(error_msg.empty());
     ASSERT_FALSE(result.empty());
+}
+
+TEST_F(LlamaControllerTest, NonConversationalModeDoesNotBuildHistory) {
+    auto load_result = controller->load_model(params);
+    ASSERT_EQ(load_result, godot::OK);
+    
+    std::string error_msg;
+    params.n_predict = 10;
+    
+    std::string result_1 = controller->start_generation(
+        params, "Say hello", "", "", false,  // is_conversational = false
+        [](const std::string& chunk) {},
+        &error_msg
+    );
+    
+    ASSERT_TRUE(error_msg.empty());
+    ASSERT_TRUE(controller->get_conversation_history().empty());  // No history
+
+    std::string result_2 = controller->start_generation(
+        params, "Say goodbye", "", "", false,
+        [](const std::string& chunk) {},
+        &error_msg
+    );
+    
+    ASSERT_TRUE(error_msg.empty());
+    ASSERT_TRUE(controller->get_conversation_history().empty());  // Still no history
+}
+
+TEST_F(LlamaControllerTest, ConversationalModeBuildHistory) {
+    auto load_result = controller->load_model(params);
+    ASSERT_EQ(load_result, godot::OK);
+
+    std::string error_msg;
+    params.n_predict = 10;
+
+    std::string result_1 = controller->start_generation(
+        params, "Hello", "", "", true,  // is_conversational = true
+        [](const std::string& chunk) {},
+        &error_msg
+    );
+
+    ASSERT_TRUE(error_msg.empty());
+    ASSERT_EQ(controller->get_conversation_history().size(), 2);  // user + assistant
+    ASSERT_EQ(controller->get_conversation_history()[0].role, "user");
+    ASSERT_EQ(controller->get_conversation_history()[0].content, "Hello");
+    ASSERT_EQ(controller->get_conversation_history()[1].role, "assistant");
+
+    std::string result_2 = controller->start_generation(
+        params, "How are you?", "", "", true,
+        [](const std::string& chunk) {},
+        &error_msg
+    );
+
+    ASSERT_TRUE(error_msg.empty());
+    ASSERT_EQ(controller->get_conversation_history().size(), 4);  // 2 exchanges
+}
+
+TEST_F(LlamaControllerTest, InfinitePredictGeneratesUntilEOS) {
+    auto load_result = controller->load_model(params);
+    ASSERT_EQ(load_result, godot::OK);
+
+    std::string error_msg;
+    params.n_predict = -1;  // Infinite
+    params.n_ctx = 128;
+    params.sampling.ignore_eos = false;
+    // Adjust sampling parameters to encourage completion
+    params.sampling.temp = 1.5f;
+    params.sampling.penalty_repeat = 1.0f;
+    params.sampling.top_p = 0.95f;
+
+
+    std::string result = controller->start_generation(
+        params, "Say hello", "", "", false,
+        [](const std::string& chunk) {},
+        &error_msg
+    );
+
+    ASSERT_TRUE(error_msg.empty());
+    ASSERT_FALSE(result.empty());  // Hopefully it generated something
 }

@@ -49,7 +49,7 @@ namespace godot {
         String prompt,
         String grammar,
         String json,
-        bool is_continuous,
+        bool is_conversational,
         std::string* error_msg
     ) {
         auto on_update = [this](const std::string& text_chunk) {
@@ -66,7 +66,7 @@ namespace godot {
             s_prompt, 
             s_grammar,
             s_json,
-            is_continuous,
+            is_conversational,
             on_update,
             &internal_error
         );
@@ -123,10 +123,10 @@ namespace godot {
         return generate_text_thread->start(callable);
     }
 
-    void GDLlama::_generation_task(String prompt, String grammar, String json, bool is_continuous) {
+    void GDLlama::_generation_task(String prompt, String grammar, String json, bool is_conversational) {
         godot::MutexLock lock(*(generation_mutex.ptr()));
         std::string error_msg;
-        String result = _generate(prompt, grammar, json, is_continuous, &error_msg);
+        String result = _generate(prompt, grammar, json, is_conversational, &error_msg);
     
         if (!error_msg.empty()) {
             callable_mp(this, &GDLlama::_on_generate_text_error).call_deferred(string_std_to_gd(error_msg));

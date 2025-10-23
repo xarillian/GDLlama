@@ -4,22 +4,12 @@
 #include "llama_state.hpp"
 #include "llama_runner.hpp"
 #include "logging_utils.hpp"
+#include "common_types.hpp"
 #include <mutex>
 #include <functional>
 #include <common.h>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
-
-/**
- * @brief A C++ representation of a single chat message.
- *
- * This struct mirrors the C-style `llama_chat_message` but uses `std::string`
- * to ensure safe, automatic memory management of the role and content text.
- */
-struct ChatMessage {
-    std::string role;
-    std::string content;
-};
 
 class LlamaController {
     public:
@@ -42,7 +32,7 @@ class LlamaController {
             const std::string& prompt,
             const std::string& grammar,
             const std::string& json,
-            bool is_continuous,
+            bool is_conversational,
             std::function<void(std::string)> on_update,
             std::string* error_msg = nullptr
         );

@@ -11,7 +11,7 @@ std::string LlamaController::start_generation(
     const std::string& prompt,
     const std::string& grammar,
     const std::string& json,
-    bool is_continuous,
+    bool is_conversational,
     std::function<void(std::string)> on_update,
     std::string* error_msg
 ) {
@@ -23,47 +23,9 @@ std::string LlamaController::start_generation(
         return "";
     }
 
-    if (is_continuous) {
+    if (is_conversational) {
         conversation_history.push_back({"user", prompt});
-
-        std::vector<llama_chat_message> messages_for_api;
-        for (const auto& msg : conversation_history) {
-            messages_for_api.push_back({msg.role.c_str(), msg.content.c_str()});
-        }
-
-        const int32_t buffer_size = llama_n_ctx(llama_state->get_context());
-        std::vector<char> buffer(buffer_size);
-
-        int32_t formatted_size = llama_chat_apply_template(
-            params.chat_template.empty() ? nullptr : params.chat_template.c_str(),
-            messages_for_api.data(),
-            messages_for_api.size(),
-            true, // add_assistant_prefix
-            buffer.data(),
-            buffer.size()
-        );
-        
-        if (formatted_size < 0) {
-            conversation_history.pop_back();
-            std::string err = "Failed to apply chat template.";
-            GDLOG_ERROR(err);
-            if (error_msg) *error_msg = err;
-            return "";
-        }
-
-        if (static_cast<int32_t>(buffer.size()) <= formatted_size) {
-            conversation_history.pop_back();
-            std::string err = "Formatted chat prompt exceeds the buffer size.";
-            GDLOG_ERROR(err);
-            if (error_msg) *error_msg = err;
-            return "";
-        }
-
-        params.prompt = std::string(buffer.data());
     } else {
-        // For non-continuous (single-shot) generation, we don't apply a chat
-        // template. This mode is for raw text completion, and applying chat
-        // formatting not supplied by the user would be incorrect.
         reset_context();
         params.prompt = prompt;
     }
@@ -77,13 +39,20 @@ std::string LlamaController::start_generation(
     llama_context* ctx = llama_state->get_context();
     llama_model* model = llama_state->get_model();
 
-    std::string generated_text = llama_runner->run_prediction(model, ctx, params, on_update, error_msg);
+    std::string generated_text = llama_runner->run_prediction(
+        model, 
+        ctx, 
+        params,
+        is_conversational ? &conversation_history : nullptr,
+        on_update,
+        error_msg
+    );
 
     if (error_msg && !error_msg->empty()) {
         return "";  // Error occurred in runner
     }
 
-    if (is_continuous) {
+    if (is_conversational) {
         // We specifically add empty assistant messages to the history here.
         // These could be ignored, but it's useful to see where the model responded
         // in the conversation.
