@@ -100,7 +100,7 @@ class GDLlama : public Node {
             godot::String prompt,
             godot::String grammar,
             godot::String json,
-            bool is_continuous,
+            bool is_conversational,
             std::string* error_msg = nullptr
         );
 
@@ -120,7 +120,7 @@ class GDLlama : public Node {
             godot::String prompt,
             godot::String grammar,
             godot::String json,
-            bool is_continuous
+            bool is_conversational
         );
         void _embedding_task(String prompt);
 
