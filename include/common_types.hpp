@@ -1,4 +1,8 @@
+#ifndef COMMON_TYPES_HPP
+#define COMMON_TYPES_HPP
+
 #include <string>
+#include <vector>
 
 /**
  * @brief A C++ representation of a single chat message.
@@ -10,3 +14,5 @@ struct ChatMessage {
     std::string role;
     std::string content;
 };
+
+#endif // COMMON_TYPES_HPP
