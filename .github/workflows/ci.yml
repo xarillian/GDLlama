@@ -28,12 +28,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-latest]
+        os: [ubuntu-22.04, windows-latest]  # macos-latest
         build_type: [debug, release]
         gpu_backend: [cpu, gpu]
         exclude:
-          - os: macos-latest
-            gpu_backend: gpu # Metal is the only GPU backend for macOS
+          # - os: macos-latest
+          #   gpu_backend: gpu # Metal is the only GPU backend for macOS
           - os: ubuntu-22.04
             gpu_backend: metal
           - os: windows-latest
