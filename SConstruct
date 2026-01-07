@@ -43,6 +43,7 @@ def build_llama_with_cmake(target, source, env):
         "cmake", 
         "--build", build_dir, 
         "--config", "Release", 
+        "--target", "llama", "common",
         "-j", "16" # Parallel build
     ]
 
