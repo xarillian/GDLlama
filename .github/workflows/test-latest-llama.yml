@@ -33,7 +33,12 @@ jobs:
           -DGDLLAMA_DEBUG_LOGGING=ON
         cmake --build build -- -j4
 
-    - name: Run Tests
-      run: |
-        cd build
-        ctest --output-on-failure
+    # Disabled test running.
+    # We want this workflow to be a canary for build issues without being overly reactive.
+    # Triggering failures on build failures only is a late-advisor approach. If the build breaks,
+    # we can investigate and upgrade llama.cpp at that time without the pressure of failing tests
+    # (which may fail more frequently due to API changes, etc).
+    # - name: Run Tests
+    #   run: |
+    #     cd build
+    #     ctest --output-on-failure

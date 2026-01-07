@@ -3,6 +3,14 @@ name: Continuous Integration
 on:
   push:
     branches: [ master ]
+    paths:
+      - '**/*.cpp'
+      - '**/*.hpp'
+      - '**/CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'llama.cpp/**'
+      - 'godot-cpp/**'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches: [ master ]
   workflow_dispatch:
