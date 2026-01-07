@@ -93,11 +93,21 @@ if env["platform"] == "windows":
     env.Append(LIBS=["advapi32", "user32", "kernel32"])
 
     if use_vulkan:
-        # Link the Windows Vulkan loader
         env.Append(LIBS=["vulkan-1"])
+        vulkan_sdk = os.environ.get("VULKAN_SDK")
+        if vulkan_sdk:
+            print(f">>> [SCons] Found Vulkan SDK at: {vulkan_sdk}")
+            env.Append(LIBPATH=[os.path.join(vulkan_sdk, "Lib")])
+        else:
+            print(">>> [SCons] WARNING: VULKAN_SDK env var not found. Linking might fail.")
 else:
     # GCC/Clang Flags
     env.Append(CXXFLAGS=["-std=c++17", "-fexceptions"])
+
+    if sys.platform.startswith("linux"):
+        env.Append(CXXFLAGS=["-fopenmp"])
+        env.Append(LINKFLAGS=["-fopenmp"])
+
     env["LIBPATH"] = [
         "external/llama.cpp/build/src",
         "external/llama.cpp/build/ggml/src",
