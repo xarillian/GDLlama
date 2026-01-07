@@ -20,6 +20,8 @@ out/
 *.so
 *.dylib
 *.dll
+*.dblite
+.sconsign.dblite
 
 # Executables
 *.exe

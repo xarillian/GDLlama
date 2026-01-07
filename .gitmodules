@@ -1,8 +1,8 @@
-[submodule "godot-cpp"]
-	path = godot-cpp
+[submodule "external/godot-cpp"]
+	path = external/godot-cpp
 	url = https://github.com/godotengine/godot-cpp
 	branch = 4.4
-[submodule "llama.cpp"]
-	path = llama.cpp
+[submodule "external/llama.cpp"]
+	path = external/llama.cpp
 	url = https://github.com/ggerganov/llama.cpp.git
 	branch = master
