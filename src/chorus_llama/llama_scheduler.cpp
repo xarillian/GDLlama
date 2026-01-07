@@ -26,7 +26,7 @@ bool LlamaScheduler::load_model_from_file(const Chorus::ChorusConfig& config) {
     
     // @todo Add progress callback here for Godot UI feedback
     
-    model = llama_load_model_from_file(config.model_path.c_str(), model_params);
+    model = llama_model_load_from_file(config.model_path.c_str(), model_params);
     if (!model) {
         std::cerr << "[Chorus] Error: Failed to load model from " << config.model_path << std::endl;
         return false;
@@ -43,7 +43,7 @@ bool LlamaScheduler::init_context(const Chorus::ChorusConfig& config) {
     ctx_params.n_threads = config.thread_count;
     ctx_params.n_threads_batch = config.thread_count;
 
-    context = llama_new_context_with_model(model, ctx_params);
+    context = llama_init_from_model(model, ctx_params);
     if (!context) {
         std::cerr << "[Chorus] Error: Failed to create Llama context." << std::endl;
         return false;
@@ -91,7 +91,7 @@ void LlamaScheduler::stop() {
     llama_batch_free(*batch);
     llama_free(context);
     context = nullptr;
-    llama_free_model(model);
+    llama_model_free(model);
     model = nullptr;
 }
 

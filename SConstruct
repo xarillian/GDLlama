@@ -96,7 +96,7 @@ if env["platform"] == "windows":
         env.Append(LIBS=["vulkan-1"])
 else:
     # GCC/Clang Flags
-    env.Append(CXXFLAGS=["-std=c++17"])
+    env.Append(CXXFLAGS=["-std=c++17", "-fexceptions"])
     env["LIBPATH"] = [
         "external/llama.cpp/build/src",
         "external/llama.cpp/build/ggml/src",
@@ -133,7 +133,7 @@ sources_godot = Glob("src/godot_chorus/*.cpp")
 llama_libs = ["llama", "ggml", "ggml-cpu", "ggml-base", "common"]
 
 if env["platform"] == "windows":
-    llama_libs = [l + ".lib" for l in llama_libs]
+    llama_libs = [lib + ".lib" for lib in llama_libs]
     llama_lib_trigger = "external/llama.cpp/build/src/Release/llama.lib"
 else:
     llama_lib_trigger = "external/llama.cpp/build/src/libllama.a"
