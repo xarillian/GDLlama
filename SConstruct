@@ -86,15 +86,12 @@ if env["platform"] == "windows":
         "external/llama.cpp/build/src/Release",
         "external/llama.cpp/build/ggml/src/Release",
         "external/llama.cpp/build/common/Release",
-        "external/llama.cpp/build/ggml/src/ggml-vulkan/Release" 
     ]
 else:
     lib_paths = [
         "external/llama.cpp/build/src",
         "external/llama.cpp/build/ggml/src",
         "external/llama.cpp/build/common",
-        "external/llama.cpp/build/ggml/src/ggml-vulkan",
-        "external/llama.cpp/build/ggml/src/ggml-metal"
     ]
 
 if env["platform"] == "windows":
@@ -130,9 +127,11 @@ else:
 
     env["LIBPATH"] = lib_paths
 
-    if use_metal and env["platform"] == "macos":
-        # Link macOS Frameworks
-        env.Append(LINKFLAGS=["-framework", "Metal", "-framework", "Foundation", "-framework", "MetalKit"])
+    if sys.platform == "darwin" or env["platform"] == "macos":
+        env.Append(LINKFLAGS=["-framework", "Accelerate", "-framework", "Foundation"])
+        if use_metal:
+            env.Append(LINKFLAGS=["-framework", "Metal", "-framework", "MetalKit"])
+
 
 env.Append(CPPPATH=[
     "include",
