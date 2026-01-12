@@ -128,9 +128,13 @@ else:
     env["LIBPATH"] = lib_paths
 
     if sys.platform == "darwin" or env["platform"] == "macos":
-        env.Append(LINKFLAGS=["-framework", "Accelerate", "-framework", "Foundation"])
-        if use_metal:
-            env.Append(LINKFLAGS=["-framework", "Metal", "-framework", "MetalKit"])
+        env.Append(LINKFLAGS=[
+            "-framework", "Accelerate",
+            "-framework", "Foundation",
+            "-framework", "Metal", 
+            "-framework", "MetalKit"
+            ]
+        )
 
 
 env.Append(CPPPATH=[
