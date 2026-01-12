@@ -23,10 +23,10 @@ def build_llama_with_cmake(target, source, env):
     # --- GPU CONFIG --- #
 
     targets_to_build = ["llama", "common"]
+
     if env.get("use_vulkan", False):
         print(">>> [SCons] Enabling Vulkan Backend")
         cmake_config.append("-DLLAMA_VULKAN=ON")
-        targets_to_build.append("ggml-vulkan")
     else:
         cmake_config.append("-DLLAMA_VULKAN=OFF")
     
@@ -34,7 +34,6 @@ def build_llama_with_cmake(target, source, env):
         print(">>> [SCons] Enabling Metal Backend")
         cmake_config.append("-DLLAMA_METAL=ON")
         cmake_config.append("-DLLAMA_METAL_EMBED_LIBRARY=ON")
-        targets_to_build.append("ggml-metal")
     else:
         cmake_config.append("-DLLAMA_METAL=OFF")
 
@@ -165,12 +164,6 @@ if env["platform"] == "windows":
     llama_lib_trigger = "external/llama.cpp/build/src/Release/llama.lib"
 else:
     llama_lib_trigger = "external/llama.cpp/build/src/libllama.a"
-
-if use_vulkan:
-    if env["platform"] == "windows":
-        llama_libs.append("ggml-vulkan.lib")
-    else:
-        llama_libs.append("ggml-vulkan")
 
 if use_metal and env["platform"] == "macos":
     llama_libs.append("ggml-metal")
