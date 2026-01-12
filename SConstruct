@@ -20,16 +20,21 @@ def build_llama_with_cmake(target, source, env):
         "-DGGML_NATIVE=ON"
     ]
 
-    # GPU Support
+    # --- GPU CONFIG --- #
+
+    targets_to_build = ["llama", "common"]
     if env.get("use_vulkan", False):
         print(">>> [SCons] Enabling Vulkan Backend")
         cmake_config.append("-DLLAMA_VULKAN=ON")
+        targets_to_build.append("ggml-vulkan")
     else:
         cmake_config.append("-DLLAMA_VULKAN=OFF")
     
     if env.get("use_metal", False):
         print(">>> [SCons] Enabling Metal Backend")
         cmake_config.append("-DLLAMA_METAL=ON")
+        cmake_config.append("-DLLAMA_METAL_EMBED_LIBRARY=ON")
+        targets_to_build.append("ggml-metal")
     else:
         cmake_config.append("-DLLAMA_METAL=OFF")
 
@@ -38,14 +43,18 @@ def build_llama_with_cmake(target, source, env):
         cmake_config.append("-DCMAKE_CONFIGURATION_TYPES=Release")
     else:
         cmake_config.append("-DCMAKE_BUILD_TYPE=Release")
-        
+
+    if sys.platform == "darwin":
+        cmake_config.append("-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64")
+
+    # --- EXECUTE CMAKE COMMANDS --- #
+
     cmake_build = [
-        "cmake", 
-        "--build", build_dir, 
-        "--config", "Release", 
-        "--target", "llama", "common",
-        "-j", "16" # Parallel build
-    ]
+            "cmake", 
+            "--build", build_dir, 
+            "--config", "Release", 
+            "--target"
+    ] + targets_to_build + ["-j", "16"]
 
     try:
         print(">>> [SCons] Configuring Llama.cpp via CMake...")
@@ -74,6 +83,22 @@ env["use_vulkan"] = use_vulkan
 env["use_metal"] = use_metal
 
 if env["platform"] == "windows":
+    lib_paths = [
+        "external/llama.cpp/build/src/Release",
+        "external/llama.cpp/build/ggml/src/Release",
+        "external/llama.cpp/build/common/Release",
+        "external/llama.cpp/build/ggml/src/ggml-vulkan/Release" 
+    ]
+else:
+    lib_paths = [
+        "external/llama.cpp/build/src",
+        "external/llama.cpp/build/ggml/src",
+        "external/llama.cpp/build/common",
+        "external/llama.cpp/build/ggml/src/ggml-vulkan",
+        "external/llama.cpp/build/ggml/src/ggml-metal"
+    ]
+
+if env["platform"] == "windows":
     # Force /MD to match llama.cpp Release build
     for flag in ["/MT", "/MTd", "/MDd"]:
         if flag in env["CCFLAGS"]:
@@ -85,11 +110,7 @@ if env["platform"] == "windows":
     # /EHsc      : Enable C++ exceptions (Required by llama.cpp/json)
     # /bigobj    : Often needed for heavy template headers like json.hpp
     env.Append(CXXFLAGS=["/std:c++17", "/EHsc", "/bigobj"])
-    env["LIBPATH"] = [
-        "external/llama.cpp/build/src/Release",
-        "external/llama.cpp/build/ggml/src/Release",
-        "external/llama.cpp/build/common/Release"
-    ]
+    env["LIBPATH"] = lib_paths
     env.Append(LIBS=["advapi32", "user32", "kernel32"])
 
     if use_vulkan:
@@ -101,18 +122,14 @@ if env["platform"] == "windows":
         else:
             print(">>> [SCons] WARNING: VULKAN_SDK env var not found. Linking might fail.")
 else:
-    # GCC/Clang Flags
+    # Linux / macOS settings
     env.Append(CXXFLAGS=["-std=c++17", "-fexceptions"])
 
     if sys.platform.startswith("linux"):
         env.Append(CXXFLAGS=["-fopenmp"])
         env.Append(LINKFLAGS=["-fopenmp"])
 
-    env["LIBPATH"] = [
-        "external/llama.cpp/build/src",
-        "external/llama.cpp/build/ggml/src",
-        "external/llama.cpp/build/common"
-    ]
+    env["LIBPATH"] = lib_paths
 
     if use_metal and env["platform"] == "macos":
         # Link macOS Frameworks
@@ -156,7 +173,7 @@ if use_vulkan:
         llama_libs.append("ggml-vulkan")
 
 if use_metal and env["platform"] == "macos":
-        llama_libs.append("ggml-metal")
+    llama_libs.append("ggml-metal")
 
 cmake_target = env.Command(
     target=llama_lib_trigger,
@@ -172,12 +189,18 @@ if "test" in COMMAND_LINE_TARGETS:
     test_env.Append(CPPDEFINES=["TEST_BUILD"])
     if env["platform"] == "windows":
         test_env.Append(LINKFLAGS=["/SUBSYSTEM:CONSOLE"])
-    
+
+    test_libs = (
+        Glob("tests/*.cpp") + 
+        Glob("tests/chorus_core/*.cpp") + 
+        Glob("tests/chorus_llama/*.cpp")
+    )
+
     test_env.Append(LIBS=llama_libs)
 
     test_program = test_env.Program(
         target="bin/run_tests",
-        source=sources_core + sources_chorus_llama + ["tests/chorus_llama/test_llama_integration.cpp", "tests/chorus_core/test_core_mechanics.cpp", "tests/test_runner.cpp"],
+        source=sources_core + sources_chorus_llama + test_libs,
     )
 
     test_env.Depends(test_program, cmake_target)
@@ -192,7 +215,5 @@ else:
         target="bin/libgodot_chorus",
         source=sources_core + sources_chorus_llama + sources_godot
     )
-
     env.Depends(library, cmake_target)
-
     Default(library)
