@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import os
+import shutil
 import sys
 import subprocess
 from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, Glob, SConscript
@@ -7,6 +8,11 @@ from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, Glob, 
 def build_llama_with_cmake(target, source, env):
     source_dir = os.path.abspath("external/llama.cpp")
     build_dir = os.path.abspath("external/llama.cpp/build")
+
+    if os.path.exists(build_dir):
+        # Clean up.
+        shutil.rmtree(build_dir)
+
 
     cmake_config = [
         "cmake",
@@ -36,6 +42,9 @@ def build_llama_with_cmake(target, source, env):
         cmake_config.append("-DLLAMA_METAL_EMBED_LIBRARY=ON")
     else:
         cmake_config.append("-DLLAMA_METAL=OFF")
+        cmake_config.append("-DGGML_METAL=OFF")  # Taking a "belt and suspenders" approach with metal
+        if sys.platform == "darwin":
+            cmake_config.append("-DGGML_BLAS=OFF")
 
     # Build Type
     if sys.platform == "win32":
