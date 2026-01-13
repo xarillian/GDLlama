@@ -13,14 +13,6 @@ on:
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [ master ]
-    paths:
-      - '**/*.cpp'
-      - '**/*.hpp'
-      - '**/CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'llama.cpp/**'
-      - 'godot-cpp/**'
-      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 jobs:
@@ -28,12 +20,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest]  # macos-latest
-        build_type: [debug, release]
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+        build_type: [template_debug, template_release]
         gpu_backend: [cpu, gpu]
         exclude:
-          # - os: macos-latest
-          #   gpu_backend: gpu # Metal is the only GPU backend for macOS
+          - os: macos-latest
+            gpu_backend: gpu
+            # GitHub Actions runners usually don't have GPU access for Metal testing, but we can compile it.
           - os: ubuntu-22.04
             gpu_backend: metal
           - os: windows-latest
@@ -50,7 +43,13 @@ jobs:
         with:
           submodules: 'recursive'
       
-      - name: Setup MSVC Environment
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: pip install scons
+
+      - name: Setup MSVC (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
@@ -58,18 +57,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build
-          if [ "${{ matrix.gpu_backend }}" == "gpu" ]; then
-            sudo apt-get install -y libvulkan-dev
-          fi
+          sudo apt-get install -y build-essential libvulkan-dev
 
-      - name: Install Windows Dependencies
-        if: runner.os == 'Windows'
-        run: |
-          irm get.scoop.sh | iex
-          scoop install ninja llvm
-          Add-Content $env:GITHUB_PATH "$HOME\scoop\apps\llvm\current\bin"
-          Add-Content $env:GITHUB_PATH "$HOME\scoop\shims"
+      - name: Install macOS Dependencies
+        if: runner.os == 'macOS'
+        run: brew install llvm
 
       - name: Install Vulkan SDK (Windows)
         if: runner.os == 'Windows' && matrix.gpu_backend == 'gpu'
@@ -78,10 +70,6 @@ jobs:
           & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
           Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\${{ env.VULKAN_VERSION }}"
           Add-Content $env:GITHUB_PATH "C:\VulkanSDK\${{ env.VULKAN_VERSION }}\bin"
-
-      - name: Install macOS Dependencies
-        if: runner.os == 'macOS'
-        run: brew update
 
       - name: Cache and Download Model
         id: cache-model
@@ -98,37 +86,32 @@ jobs:
           echo "Downloading model..."
           curl -L "https://huggingface.co/unsloth/gemma-3-270m-it-GGUF/resolve/main/gemma-3-270m-it-F16.gguf" -o tests/models/gemma-3-270m-it-F16.gguf
 
-
-      - name: Configure and Build
+      - name: Build
         shell: bash
         run: |
-          os_name=""
-          if [ "${{ runner.os }}" == "Linux" ]; then os_name="linux"; fi
-          if [ "${{ runner.os }}" == "Windows" ]; then os_name="windows"; fi
-          if [ "${{ runner.os }}" == "macOS" ]; then os_name="macos"; fi
-
-          gpu_name="cpu"
+          # Determine flags
+          SCONS_ARGS="target=${{ matrix.build_type }} -j2"
+          
           if [ "${{ matrix.gpu_backend }}" == "gpu" ]; then
-            if [ "${{ runner.os }}" == "macOS" ]; then gpu_name="metal"; else gpu_name="vulkan"; fi
+            if [ "${{ runner.os }}" == "macOS" ]; then
+              SCONS_ARGS="$SCONS_ARGS use_metal=yes"
+            else
+              SCONS_ARGS="$SCONS_ARGS use_vulkan=yes"
+            fi
           fi
-
-          PRESET_NAME="${os_name}-${gpu_name}-${{ matrix.build_type }}"
-          echo "Using preset: ${PRESET_NAME}"
-
-          mkdir build
-          cd build
-
-          cmake .. --preset ${PRESET_NAME}
-
-          if [ "${{ runner.os }}" == "macOS" ]; then
-            cmake --build . --config ${{ matrix.build_type == 'debug' && 'Debug' || 'Release' }} -j $(sysctl -n hw.logicalcpu)
-          else
-            ninja -j $(nproc || echo ${NUMBER_OF_PROCESSORS})
-          fi
-
-      - name: Run Tests (on Debug builds)
-        if: matrix.build_type == 'debug'
+          
+          echo "Running SCons with: $SCONS_ARGS"
+          scons test $SCONS_ARGS
+      
+      - name: Run Tests
         shell: bash
         run: |
-          cd build
-          ctest --output-on-failure
+          # On GitHub Actions, Vulkan tests might fail if there is no software rasterizer (llvmpipe) or GPU.
+          # We might need to tolerate failure on the GPU run if the runner lacks hardware.
+          
+          if [ "${{ runner.os }}" == "Windows" ]; then
+             ./bin/run_tests.exe
+          else
+             chmod +x ./bin/run_tests
+             ./bin/run_tests
+          fi
