@@ -1,5 +1,5 @@
 # Contributing
-First off, thank you for considering contributing to GDLlama! Whether it's adding an issue, submitting a PR, to sending me an email. All is welcome!
+First off, thank you for considering contributing to GDLlama! Whether it's adding an issue, submitting a PR, or sending me an email. All is welcome!
 
 ## Reporting Bugs
 If you find a bug, please open an issue on the GitHub repository: https://github.com/xarillian/GDLlama/issues. You can use the "bug" label.
@@ -14,6 +14,26 @@ A good bug report should include:
 If you have an idea for a new feature or an improvement to an existing one, please start by opening an issue to discuss it. This allows us to align on the proposal before you put significant work into it.
 
 When proposing a feature, please consider the project's design philosophy. See [DESIGN.md](DESIGN.md)
+
+## Development Environment Setup
+### Code Style
+This project uses `clang-format` and `clang-tidy` for consistent formatting and static analysis. Both are configured via `.clang-format` and `.clang-tidy` at the project root.
+
+If you're using VSCode with the `clangd` extension, formatting and tidy warnings will appear automatically. Format-on-save is enabled via `.vscode/settings.json`.
+
+### Pre-commit Hook
+A pre-commit hook lives in `.githooks/pre-commit`. It runs `clang-format` on staged `.cpp` and `.hpp` files and re-stages any changes automatically.
+
+To activate it, run once after cloning:
+```bash
+git config core.hooksPath .githooks
+```
+
+### Compile Commands (for clangd / IDE tooling)
+After building, regenerate `compile_commands.json` so clangd has accurate include paths:
+```bash
+scons compiledb platform=linux target=template_debug
+```
 
 ## Pull Request Process
 Pull requests are welcome! Please open an issue first to discuss what you'd like to change, then follow this process:

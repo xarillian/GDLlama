@@ -1,31 +1,30 @@
 #include "chorus_llama/llama_scheduler.hpp"
-#include "chorus_llama/llama_utils.hpp"
 #include "chorus_core/chorus_common.hpp"
+#include "chorus_llama/llama_utils.hpp"
 
-#include <iostream>
 #include <algorithm>
 #include <cassert>
+#include <iostream>
 
 // --------------------------------------------------------------------------
 // LIFECYCLE
 // --------------------------------------------------------------------------
 
-LlamaScheduler::LlamaScheduler() {
-
-}
+LlamaScheduler::LlamaScheduler() {}
 
 LlamaScheduler::~LlamaScheduler() {
     stop();
 }
 
 bool LlamaScheduler::load_model_from_file(const Chorus::ChorusConfig& config) {
-    if (model) return true;
+    if (model)
+        return true;
 
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = config.use_gpu ? config.gpu_layers : 0;
-    
+
     // @todo Add progress callback here for Godot UI feedback
-    
+
     model = llama_model_load_from_file(config.model_path.c_str(), model_params);
     if (!model) {
         std::cerr << "[Chorus] Error: Failed to load model from " << config.model_path << std::endl;
@@ -36,7 +35,8 @@ bool LlamaScheduler::load_model_from_file(const Chorus::ChorusConfig& config) {
 }
 
 bool LlamaScheduler::init_context(const Chorus::ChorusConfig& config) {
-    if (context) return true;
+    if (context)
+        return true;
 
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = config.context_size;
@@ -61,14 +61,15 @@ void LlamaScheduler::init_slots(int count) {
         slots[i].tokens_generated = 0;
         slots[i].input_cursor = 0;
     }
-
 }
 
 bool LlamaScheduler::initialize(const Chorus::ChorusConfig& config) {
-    if (!load_model_from_file(config)) return false;
-    if (!init_context(config)) return false;
+    if (!load_model_from_file(config))
+        return false;
+    if (!init_context(config))
+        return false;
 
-    init_slots(4);  // @todo we need to make this configurable, e.g. config.batch_size
+    init_slots(4); // @todo we need to make this configurable, e.g. config.batch_size
 
     batch = new llama_batch(llama_batch_init(config.context_size, 0, 1));
 
@@ -79,8 +80,9 @@ bool LlamaScheduler::initialize(const Chorus::ChorusConfig& config) {
 }
 
 void LlamaScheduler::stop() {
-    if (!is_running) return;
-    
+    if (!is_running)
+        return;
+
     is_running = false;
     queue_cv.notify_all();
 
@@ -105,21 +107,22 @@ void LlamaScheduler::push_request(const Chorus::ChorusRequest& req) {
 
 int LlamaScheduler::find_free_slot() {
     for (int i = 0; i < slots.size(); ++i) {
-        if (!slots[i].is_busy) return i;
+        if (!slots[i].is_busy)
+            return i;
     }
     return -1;
 }
 
 void LlamaScheduler::release_slot(int slot_id) {
     Slot& slot = slots[slot_id];
-    
+
     if (slot.sampler) {
         // Clean up Llama Resources
         llama_sampler_free(slot.sampler);
         slot.sampler = nullptr;
     }
 
-    // We do NOT clear the KV cache here necessarily. 
+    // We do NOT clear the KV cache here necessarily.
     // @todo if the next request uses the same system prompt, we could reuse it.
 
     slot.is_busy = false;
@@ -135,7 +138,8 @@ void LlamaScheduler::ingest_new_requests() {
 
     while (!request_queue.empty()) {
         int slot_idx = find_free_slot();
-        if (slot_idx == -1) break; 
+        if (slot_idx == -1)
+            break;
 
         Chorus::ChorusRequest chorus_request = request_queue.top();
         request_queue.pop();
@@ -146,14 +150,10 @@ void LlamaScheduler::ingest_new_requests() {
         slot.tokens_generated = 0;
         slot.input_cursor = 0;
 
-        slot.current_input_tokens = Chorus::LlamaUtils::tokenize(
-            context, 
-            chorus_request.prompt,
-            true
-        );
+        slot.current_input_tokens = Chorus::LlamaUtils::tokenize(context, chorus_request.prompt, true);
 
         slot.sampler = Chorus::LlamaUtils::build_sampler(chorus_request.gen_config);
-        
+
         llama_memory_t mem = llama_get_memory(context);
         llama_memory_seq_rm(mem, slot.id, 0, -1);
     }
@@ -164,23 +164,20 @@ bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
     curr_batch.n_tokens = 0; // Reset for this tick
 
     for (auto& slot : slots) {
-        if (!slot.is_busy) continue;
+        if (!slot.is_busy)
+            continue;
 
         if (slot.input_cursor < slot.current_input_tokens.size()) {
-            
+
             size_t n_remaining = slot.current_input_tokens.size() - slot.input_cursor;
-            size_t n_chunk = std::min(n_remaining, (size_t)tokens_per_tick); 
+            size_t n_chunk = std::min(n_remaining, (size_t)tokens_per_tick);
 
             for (size_t i = 0; i < n_chunk; ++i) {
-                int32_t pos = slot.tokens_generated + i; 
+                int32_t pos = slot.tokens_generated + i;
                 bool is_last_in_sequence = (slot.input_cursor + i == slot.current_input_tokens.size() - 1);
-                
+
                 Chorus::LlamaUtils::batch_add_seq(
-                    curr_batch,
-                    slot.current_input_tokens[slot.input_cursor + i],
-                    slot.id,
-                    pos,
-                    is_last_in_sequence 
+                    curr_batch, slot.current_input_tokens[slot.input_cursor + i], slot.id, pos, is_last_in_sequence
                 );
             }
 
@@ -210,25 +207,26 @@ void LlamaScheduler::worker_loop() {
 
         if (!has_work) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;  // @todo can we do this without continue?
+            continue; // @todo can we do this without continue?
         }
 
         if (!run_inference()) {
-            continue;  // @todo can we do this without continue?
+            continue; // @todo can we do this without continue?
         }
 
         const llama_vocab* vocab = llama_model_get_vocab(model);
 
         llama_batch& curr_batch = *batch;
         for (int i = 0; i < curr_batch.n_tokens; ++i) {
-            if (!curr_batch.logits[i]) continue;
+            if (!curr_batch.logits[i])
+                continue;
 
             int seq_id = curr_batch.seq_id[i][0];
             Slot& slot = slots[seq_id];
 
             llama_token new_token_id = llama_sampler_sample(slot.sampler, context, curr_batch.pos[i]);
             llama_sampler_accept(slot.sampler, new_token_id);
-    
+
             Chorus::ChorusSignal chorus_signal;
             chorus_signal.request_id = slot.current_request.id;
             chorus_signal.type = Chorus::EventType::Token;
@@ -239,16 +237,16 @@ void LlamaScheduler::worker_loop() {
             }
 
             bool is_eos = llama_vocab_is_eog(vocab, new_token_id);
-            bool is_limit = (
-                slot.current_request.gen_config.max_tokens > 0 && 
-                slot.tokens_generated >= slot.current_request.gen_config.max_tokens
-            );
+            bool is_limit =
+                (slot.current_request.gen_config.max_tokens > 0 &&
+                 slot.tokens_generated >= slot.current_request.gen_config.max_tokens);
 
             if (is_eos || is_limit) {
                 Chorus::ChorusSignal stop_sig;
                 stop_sig.request_id = slot.current_request.id;
                 stop_sig.type = Chorus::EventType::Stop;
-                if (slot.current_request.on_event) slot.current_request.on_event(stop_sig);
+                if (slot.current_request.on_event)
+                    slot.current_request.on_event(stop_sig);
 
                 release_slot(slot.id);
             } else {

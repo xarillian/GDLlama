@@ -2,15 +2,12 @@
 
 #include "chorus_core/chorus_common.hpp"
 
-#include <queue>
-#include <vector>
-#include <mutex>
 #include <atomic>
-#include <thread>
 #include <condition_variable>
-#include <map>
-#include <memory>
-
+#include <mutex>
+#include <queue>
+#include <thread>
+#include <vector>
 
 struct llama_model;
 struct llama_context;
@@ -18,7 +15,7 @@ struct llama_sampler;
 struct llama_batch;
 
 class LlamaScheduler {
-public:
+  public:
     LlamaScheduler();
     ~LlamaScheduler();
 
@@ -26,7 +23,7 @@ public:
     void push_request(const Chorus::ChorusRequest& req);
     void stop();
 
-private:
+  private:
     bool load_model_from_file(const Chorus::ChorusConfig& config);
     bool init_context(const Chorus::ChorusConfig& config);
     void init_slots(int count);
@@ -38,15 +35,15 @@ private:
     void worker_loop();
 
     struct Slot {
-        int id = -1;  // KV Cache Sequence ID
+        int id = -1; // KV Cache Sequence ID
         bool is_busy = false;
 
         Chorus::ChorusRequest current_request;
-        int32_t tokens_generated = 0;  // n_past
+        int32_t tokens_generated = 0; // n_past
 
         // Input State
         std::vector<int32_t> current_input_tokens;
-        size_t input_cursor = 0;  // How many input tokens have we batched so far?
+        size_t input_cursor = 0; // How many input tokens have we batched so far?
 
         llama_sampler* sampler = nullptr;
     };

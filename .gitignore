@@ -1,5 +1,6 @@
 # Editor & IDE specific files
 .vscode/
+compile_commands.json
 
 # Build directories
 build/
@@ -38,3 +39,5 @@ out/
 # Project-specific ignores
 /tests/models/
 /demo/
+/old_src/
+TODO.md

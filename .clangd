@@ -1,0 +1,31 @@
+ClangTidy:
+  Add: '*'
+  Remove:
+    - bugprone-easily-swappable-parameters
+    - bugprone-exception-escape
+    - bugprone-macro-parentheses
+
+CompileFlags:
+  Remove:
+    - -fno-gnu-unique
+  Add:
+    # Project headers
+    - -Iinclude
+    - -Isrc
+
+    # godot-cpp
+    - -Iexternal/godot-cpp/include
+    - -Iexternal/godot-cpp/gen/include
+
+    # llama.cpp
+    - -Iexternal/llama.cpp/include
+    - -Iexternal/llama.cpp/common
+    - -Iexternal/llama.cpp/src
+    - -Iexternal/llama.cpp/ggml/include
+    - -Iexternal/llama.cpp/ggml/src
+    - -Iexternal/llama.cpp/vendor
+
+    # Required by godot-cpp headers
+    - -DGDEXTENSION
+
+    - -std=c++17

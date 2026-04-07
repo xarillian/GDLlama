@@ -19,6 +19,7 @@ def build_llama_with_cmake(target, source, env):
         "-S", source_dir,
         "-B", build_dir,
         "-DBUILD_SHARED_LIBS=OFF",
+        "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
         "-DLLAMA_BUILD_TESTS=OFF",
         "-DLLAMA_BUILD_EXAMPLES=OFF",
         "-DLLAMA_BUILD_SERVER=OFF",
@@ -32,9 +33,9 @@ def build_llama_with_cmake(target, source, env):
 
     if env.get("use_vulkan", False):
         print(">>> [SCons] Enabling Vulkan Backend")
-        cmake_config.append("-DLLAMA_VULKAN=ON")
+        cmake_config.append("-DGGML_VULKAN=ON")
     else:
-        cmake_config.append("-DLLAMA_VULKAN=OFF")
+        cmake_config.append("-DGGML_VULKAN=OFF")
     
     if env.get("use_metal", False):
         print(">>> [SCons] Enabling Metal Backend")
@@ -185,6 +186,22 @@ cmake_target = env.Command(
     source=[],
     action=build_llama_with_cmake
 )
+
+# ----------------------------------------------------------------------
+# COMPILE COMMANDS (for clangd / IDE tooling)
+# ----------------------------------------------------------------------
+# Run `scons compiledb` to regenerate compile_commands.json.
+if "compiledb" in COMMAND_LINE_TARGETS:
+    env.Tool("compilation_db")
+    compiledb = env.CompilationDatabase("compile_commands.json")
+    all_sources = (
+        Glob("src/chorus_core/*.cpp") +
+        Glob("src/chorus_llama/*.cpp") +
+        Glob("src/godot_chorus/*.cpp")
+    )
+    env.Object(all_sources)
+    Alias("compiledb", compiledb)
+    Default(compiledb)
 
 # ----------------------------------------------------------------------
 # BUILD TARGETS
