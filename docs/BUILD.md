@@ -1,11 +1,10 @@
 # Building the Project
 ## Prerequisites
+- SCons
 - CMake 3.14+
-- Ninja build system
-- Vulkan SDK (for GPU builds)
 - Git
 - Platform-specific tools
-    - Windows: Visual Studio with the "Desktop development with C++" workload (for `clang-cl` and linkers)
+    - Windows: Visual Studio with the "Desktop development with C++" workload (for MSVC and linkers)
     - Linux: A C++ compiler like `clang` or `gcc`
     - macOS: Xcode Command Line Tools
 - GPU-Specific SDKs
@@ -21,90 +20,36 @@ cd godot-llm
 git submodule update --init --recursive
 ```
 
-2.  Generate Godot Bindings (if building for the first time or updating Godot)
+2. Build from the project root.
 
-You need to generate the C++ bindings for Godot. This step is run from the `godot-cpp` directory.
+SCons will automatically build the Godot C++ bindings and compile llama.cpp via CMake before linking the final shared library into `bin/`.
 
-```shell
-cd godot-cpp
-```
-
-Execute the `SCons` command that matches your operating system (`windows`, `linux`, or `macos`.) and desired build type (debug or release):
+Execute the `scons` command that matches your operating system (`windows`, `linux`, or `macos`) and desired build type (`template_debug` or `template_release`):
 
 ```shell
-SCons platform=X target=template_release use_clang=yes
+scons platform=linux target=template_debug
 ```
 
-After the command finishes, return to the root directory:
-```shell
-cd ..
-```
-
-3. Configure the Build with CMake
-
-GDLlama uses CMake Presets to simplify configuration. Create a build directory and run cmake from inside it.
+For a GPU-accelerated build, pass the appropriate backend flag:
 
 ```shell
-mkdir build
-cd build
+# Linux / Windows (Vulkan)
+scons platform=linux target=template_debug use_vulkan=yes
+
+# macOS (Metal)
+scons platform=macos target=template_debug use_metal=yes
 ```
 
-**Windows**
-
-GPU (Vulkan):
-```shell
-cmake --preset windows-vulkan-release ..
-```
-
-CPU Only:
-```shell
-cmake --preset windows-cpu-release ..
-```
-
-**Linux**
-
-GPU (Vulkan):
-```shell
-cmake --preset linux-vulkan-release ..
-```
-
-CPU Only:
-```shell
-cmake --preset linux-cpu-release ..
-```
-
-**macOS**
-
-GPU (Metal):
-```shell
-cmake --preset macos-metal-release ..
-```
-
-CPU Only:
-```shell
-cmake --preset macos-cpu-release ..
-```
-
-4. Compile and Install
-
-Once CMake has configured the project, compile and install it using Ninja.
-
-```shell
-ninja
-ninja install
-```
-
-This will place the final files in the install directory at the root of the project.
-
-5. Add to Your Godot Project
-
-The compiled addon is now ready to be used in a Godot project. The `ninja install` command creates an `install` directory in the product root. The addon is located inside, organized by backend:
-    - CPU builds: `install/cpu/addons/godot_llm`
-    - GPU builds: `install/gpu/addons/godot_llm`
-
-Copy the `godot_llm` folder from the appropriate path into the `addons` folder of your Godot project.
+Note: The first build may take a while, as `llama.cpp` is compiled from scratch. Subsequent builds are incremental.
 
 ## Running Tests
-If you configure the project using a debug preset (e.g. `linux-vulkan-debug`), the test suite will be enabled.
 
-After running `ninja`, you can execute the tests from the build directory using `ctest` or `ninja test`.
+```shell
+scons platform=linux target=template_debug test
+```
+
+This produces `bin/run_tests`, which you can execute directly.
+
+## Add to Your Godot Project
+
+Copy the compiled shared library from `bin/` along with `plugin/godot_llm.gdextension` into your Godot project's `addons/godot_llm/` directory.
