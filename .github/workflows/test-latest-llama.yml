@@ -16,22 +16,23 @@ jobs:
       with:
         submodules: 'recursive'
 
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+    - run: pip install scons
+
+    - name: Install Dependencies
+      run: sudo apt-get update && sudo apt-get install -y build-essential
+
     - name: Update llama.cpp to latest
       run: |
-        cd llama.cpp
+        cd external/llama.cpp
         git fetch
         git reset --hard origin/master
 
-    - name: Configure and Build
-      run: |
-        cmake -S . -B build -GNinja \
-          -DLLAMA_NATIVE=OFF \
-          -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-          -DLLAMA_VULKAN=ON \
-          -DCMAKE_BUILD_TYPE=Debug \
-          -DBUILD_TESTING=ON \
-          -DGDLLAMA_DEBUG_LOGGING=ON
-        cmake --build build -- -j4
+    - name: Build
+      run: scons test -j4
 
     # Disabled test running.
     # We want this workflow to be a canary for build issues without being overly reactive.
@@ -39,6 +40,4 @@ jobs:
     # we can investigate and upgrade llama.cpp at that time without the pressure of failing tests
     # (which may fail more frequently due to API changes, etc).
     # - name: Run Tests
-    #   run: |
-    #     cd build
-    #     ctest --output-on-failure
+    #   run: ./bin/run_tests
