@@ -49,6 +49,15 @@ That's a quick overview, but with those three methods and those three signals yo
 - [Usage Examples](docs/EXAMPLES.md) or a [Basic Example](docs/API_REFERENCE.md#example-godot-usage): Getting started, common use-cases.
 - [LLM Legal](docs/AI_LEGAL.md): A curated list of legal resources for generative content in games.
 
+# License
+
+This project is dual-licensed:
+
+- **GPL v3** — free for open-source projects and non-commercial personal use. See [LICENSE](LICENSE).
+- **Commercial License** — required for proprietary games, studios, and closed-source projects. Contact [austinwheinrich@gmail.com](mailto:austinwheinrich@gmail.com) to obtain one.
+
+In short: clone and use it freely if your project is open-source. If you're shipping a commercial game, grab a commercial license.
+
 # Contributions
 PRs are welcome! This is my first big open source contribution and I am more than happy to share with the community. Check out [Contributing.md](docs/CONTRIBUTING.md) for more information.
 
