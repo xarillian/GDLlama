@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <iostream>
 
 // --------------------------------------------------------------------------
 // LIFECYCLE
@@ -27,7 +26,7 @@ bool LlamaScheduler::load_model_from_file(const Chorus::ChorusConfig& config) {
 
     model = llama_model_load_from_file(config.model_path.c_str(), model_params);
     if (!model) {
-        std::cerr << "[Chorus] Error: Failed to load model from " << config.model_path << std::endl;
+        Chorus::chorus_log(_log, Chorus::LogLevel::Error, "Failed to load model from " + config.model_path);
         return false;
     }
 
@@ -46,7 +45,7 @@ bool LlamaScheduler::init_context(const Chorus::ChorusConfig& config) {
 
     context = llama_init_from_model(model, ctx_params);
     if (!context) {
-        std::cerr << "[Chorus] Error: Failed to create Llama context." << std::endl;
+        Chorus::chorus_log(_log, Chorus::LogLevel::Error, "Failed to create Llama context.");
         return false;
     }
 
@@ -72,6 +71,7 @@ bool LlamaScheduler::initialize(const Chorus::ChorusConfig& config) {
 
     init_slots(config.num_slots);
     _tokens_per_tick = config.tokens_per_tick;
+    _log = config.log_callback;
 
     batch = new llama_batch(llama_batch_init(config.context_size, 0, 1));
 
@@ -193,7 +193,7 @@ bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
 
 bool LlamaScheduler::run_inference() {
     if (llama_decode(context, *batch) != 0) {
-        std::cerr << "[Chorus] Critical Error: llama_decode failed." << std::endl;
+        Chorus::chorus_log(_log, Chorus::LogLevel::Fatal, "llama_decode failed.");
         return false;
     }
     return true;

@@ -37,16 +37,30 @@ See `CLAUDE.md` for architecture overview.
 
 ## High Priority (core correctness)
 
-- [ ] Wire slot count to `ChorusConfig` — `init_slots(4)` is hardcoded in `llama_scheduler.cpp:71`
+- [x] Wire slot count to `ChorusConfig` — `init_slots(4)` is hardcoded in `llama_scheduler.cpp:71`
   - Add `num_slots` field to `ChorusConfig` with a sensible default
   - Protect `slots` vector access with a mutex if count becomes dynamic
   - Relates to "Max batch size handling" in Further Work
-- [ ] Fix tokenizer buffer size assumption in `llama_utils.hpp:51`
+- [x] Fix tokenizer buffer size assumption in `llama_utils.hpp:51`
   - Currently allocates `text.length() + 2` tokens (can silently overflow)
   - Should use a proper resize loop or llama.cpp's recommended pattern
-- [ ] Structured error reporting — currently just strings in `ChorusSignal.text`
-  - Add error codes or an error enum so callers can distinguish fatal vs. recoverable
-- [ ] `tokens_per_tick` hardcoded at 512 in `llama_scheduler.cpp`
+- [x] Structured error reporting — foundation
+  - `ChorusError` enum in `chorus_common.hpp` (broad categories: ModelLoad, ContextInit, Decode, Tokenize, InvalidRequest, EngineNotReady, Unknown)
+  - `error_code` field added to `ChorusSignal`
+  - `chorus_log.hpp` — `LogLevel` enum, `LogCallback` type, `chorus_log()` free function with stderr fallback
+  - `LogCallback` on `ChorusConfig`, stored by `LlamaEngine` + `LlamaScheduler`
+  - All `std::cerr` calls in core replaced with `chorus_log()`
+  - Godot layer wires callback to `push_error`/`push_warning`/`print`
+  - `generation_error` signal now carries `error_code` int alongside message
+- [ ] Structured error reporting — remaining work
+  - Set `error_code` on `ChorusSignal` at every error site in `LlamaScheduler::worker_loop` (currently only `EngineNotReady` in `submit_request`)
+  - Add `ChorusError` to `LlamaScheduler::initialize` return path (currently returns bare `bool` — consider `std::optional<ChorusError>` or an out-param)
+  - Surface decode failures to the originating request's `on_event` (right now `run_inference` fails silently per-request — all active slots should get an error signal)
+  - Expose `ChorusError` enum values to GDScript so users can `match` on them (bind as Godot `ENUM` or document int mapping)
+  - Add `chorus_log` calls for non-error events: model loaded, worker started/stopped, slot assigned (LogLevel::Info / Debug)
+  - Wire logging in the Godot binding layer too — replace `UtilityFunctions::push_error/push_warning` calls in `godot_chorus.cpp` validation (e.g. `generate()` missing prompt) with `chorus_log` so they also flow through the callback
+  - Unit tests: verify error codes propagate correctly through mock engine → signal → caller
+- [x] `tokens_per_tick` hardcoded at 512 in `llama_scheduler.cpp`
   - Same class of problem as the slot count — should be configurable via `ChorusConfig`
 
 ---

@@ -21,5 +21,6 @@ class LlamaEngine : public InferenceEngine {
   private:
     std::unique_ptr<LlamaScheduler> scheduler;
     bool _initialized = false;
+    Chorus::LogCallback _log;
 };
 } // namespace Chorus

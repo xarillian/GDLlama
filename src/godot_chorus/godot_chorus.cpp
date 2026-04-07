@@ -37,6 +37,24 @@ bool GodotChorus::load_model() {
         UtilityFunctions::push_error("[Chorus] model_path is not set.");
         return false;
     }
+
+    _chorus_config.log_callback = [](Chorus::LogLevel level, const std::string& msg) {
+        String godot_msg = String("[Chorus] ") + String(msg.c_str());
+        switch (level) {
+        case Chorus::LogLevel::Debug:
+        case Chorus::LogLevel::Info:
+            UtilityFunctions::print(godot_msg);
+            break;
+        case Chorus::LogLevel::Warn:
+            UtilityFunctions::push_warning(godot_msg);
+            break;
+        case Chorus::LogLevel::Error:
+        case Chorus::LogLevel::Fatal:
+            UtilityFunctions::push_error(godot_msg);
+            break;
+        }
+    };
+
     return _engine.initialize(_chorus_config);
 }
 
@@ -141,7 +159,7 @@ void GodotChorus::_drain_signals() {
         }
         case Chorus::EventType::Error: {
             String msg(sig.text.c_str());
-            emit_signal("generation_error", rid, msg);
+            emit_signal("generation_error", rid, (int)sig.error_code, msg);
             emit_signal("generate_text_error", msg); // @deprecated compat
             _text_accumulator.erase(rid);
             _request_streaming.erase(rid);
@@ -515,7 +533,10 @@ void GodotChorus::_bind_methods() {
         "generation_complete", PropertyInfo(Variant::INT, "request_id"), PropertyInfo(Variant::STRING, "full_text")
     ));
     ADD_SIGNAL(MethodInfo(
-        "generation_error", PropertyInfo(Variant::INT, "request_id"), PropertyInfo(Variant::STRING, "message")
+        "generation_error",
+        PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::INT, "error_code"),
+        PropertyInfo(Variant::STRING, "message")
     ));
 
     // --- Signals (deprecated compat) ---

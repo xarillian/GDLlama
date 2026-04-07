@@ -3,8 +3,22 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
+
+#include "chorus_log.hpp"
 
 namespace Chorus {
+
+enum class ChorusError {
+    None,           // No error
+    ModelLoad,      // Failed to load model file
+    ContextInit,    // Failed to create inference context
+    Decode,         // Inference decode step failed
+    Tokenize,       // Tokenization failed
+    InvalidRequest, // Bad input from caller (missing prompt, bad config, etc.)
+    EngineNotReady, // Operation attempted before engine is initialized
+    Unknown,        // Catch-all for unexpected failures
+};
 
 struct ChorusConfig {
     std::string model_path;
@@ -14,6 +28,8 @@ struct ChorusConfig {
     int32_t gpu_layers = 99;       // use all layers on GPU by default
     int32_t num_slots = 1;         // matches llama.cpp's n_seq_max default; increase for concurrent requests
     int32_t tokens_per_tick = 512; // large enough for throughput, small enough not to stall a game tick
+
+    LogCallback log_callback; // Optional; falls back to stderr if not set
 };
 
 struct GenerationConfig {
@@ -39,6 +55,7 @@ enum class RequestType { Generate, Embedding };
 struct ChorusSignal {
     int64_t request_id;
     EventType type;
+    ChorusError error_code = ChorusError::None;
 
     std::string text;
     std::vector<float> embedding;

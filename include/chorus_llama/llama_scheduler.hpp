@@ -64,6 +64,7 @@ class LlamaScheduler {
     std::thread worker_thread;
 
     int32_t _tokens_per_tick = 512;
+    Chorus::LogCallback _log;
 
     struct llama_batch* batch = nullptr;
 };
