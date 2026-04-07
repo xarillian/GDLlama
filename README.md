@@ -1,4 +1,4 @@
-# GDLlama
+# Chorus LLM
 > Isn't it cool to utilize large language model (LLM) to generate contents for your game?
 - @Adriankhl, original creator of GDLlama
 
