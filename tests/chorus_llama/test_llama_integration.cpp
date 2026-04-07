@@ -1,11 +1,11 @@
-#include "../../include/chorus_llama/llama_engine.hpp"
 #include "../../include/chorus_core/chorus_common.hpp"
+#include "../../include/chorus_llama/llama_engine.hpp"
 #include "../test_utils.hpp"
 
-#include <iostream>
-#include <thread>
 #include <atomic>
 #include <chrono>
+#include <iostream>
+#include <thread>
 
 const std::string MODEL_PATH = "tests/models/gemma-3-270m-it-F16.gguf";
 
@@ -32,7 +32,7 @@ void test_simple_generation() {
     Chorus::ChorusConfig config;
     config.model_path = MODEL_PATH;
     config.use_gpu = false;
-    
+
     if (!engine.initialize(config)) {
         std::cerr << RED << "[SKIP] Could not load model. Check path." << RESET << "\n";
         return;
@@ -51,11 +51,9 @@ void test_simple_generation() {
         if (sig.type == Chorus::EventType::Token) {
             std::cout << sig.text << std::flush; // Print tokens as they arrive!
             full_response += sig.text;
-        } 
-        else if (sig.type == Chorus::EventType::Stop) {
+        } else if (sig.type == Chorus::EventType::Stop) {
             done = true;
-        }
-        else if (sig.type == Chorus::EventType::Error) {
+        } else if (sig.type == Chorus::EventType::Error) {
             std::cerr << "\n[ERROR] " << sig.text << "\n";
             done = true;
         }
@@ -63,7 +61,7 @@ void test_simple_generation() {
 
     std::cout << "  [INFO] Sending Prompt: 'Hello, Chorus!'\n";
     std::cout << "  [GENERATION] > ";
-    
+
     engine.submit_request(chorus_request);
 
     // Wait loop with timeout (e.g., 10 seconds)
@@ -85,7 +83,7 @@ void test_simple_generation() {
 }
 
 int run_llama_integration_tests() {
-    std::cout << "\n--- LLAMA INTEGRATION SUITE ---\n"; 
+    std::cout << "\n--- LLAMA INTEGRATION SUITE ---\n";
 
     FILE* f = fopen(MODEL_PATH.c_str(), "rb");
     if (!f) {
@@ -99,7 +97,8 @@ int run_llama_integration_tests() {
 
     std::cout << "\n======================================\n";
     if (g_tests_failed > 0) {
-        std::cout << RED << "SUMMARY: " << g_tests_failed << " FAILED, " << g_tests_passed << " PASSED." << RESET << "\n";
+        std::cout << RED << "SUMMARY: " << g_tests_failed << " FAILED, " << g_tests_passed << " PASSED." << RESET
+                  << "\n";
         return 1;
     } else {
         std::cout << GREEN << "SUMMARY: ALL TESTS PASSED." << RESET << "\n";

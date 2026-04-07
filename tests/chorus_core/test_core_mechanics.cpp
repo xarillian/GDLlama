@@ -3,12 +3,13 @@
 
 // A "Dummy" LLM backend -- thank you Gemini!
 class MockInferenceEngine : public Chorus::InferenceEngine {
-public:
+  public:
     bool initialized = false;
     std::vector<int64_t> received_ids;
 
     bool initialize(const Chorus::ChorusConfig& config) override {
-        if (config.model_path.empty()) return false;
+        if (config.model_path.empty())
+            return false;
         initialized = true;
         return true;
     }
@@ -66,7 +67,7 @@ void test_initialization() {
     // Happy Path
     MockInferenceEngine engine;
     Chorus::ChorusConfig config;
-    
+
     config.model_path = "mock_model.bin";
     ASSERT_TRUE(engine.initialize(config) == true);
     ASSERT_TRUE(engine.is_initialized() == true);
@@ -79,7 +80,7 @@ void test_initialization_failure() {
     MockInferenceEngine engine;
     Chorus::ChorusConfig config;
     config.model_path = ""; // Empty path should fail
-    
+
     ASSERT_TRUE(engine.initialize(config) == false);
     ASSERT_TRUE(engine.is_initialized() == false);
 }
@@ -96,7 +97,7 @@ void test_request_submission() {
     Chorus::ChorusRequest req;
     req.id = 12345;
     req.prompt = "Hello World";
-    
+
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (sig.type == Chorus::EventType::Token) {
             content += sig.text;
@@ -116,7 +117,7 @@ void test_request_submission() {
 }
 
 int run_core_mechanics_tests() {
-    std::cout << "\n--- CORE MECHANICS TEST SUITE ---\n"; 
+    std::cout << "\n--- CORE MECHANICS TEST SUITE ---\n";
 
     run_test("Initialization_HappyPath", test_initialization);
     run_test("Initialization_FailurePath", test_initialization_failure);
@@ -124,7 +125,8 @@ int run_core_mechanics_tests() {
 
     std::cout << "\n======================================\n";
     if (g_tests_failed > 0) {
-        std::cout << RED << "SUMMARY: " << g_tests_failed << " FAILED, " << g_tests_passed << " PASSED." << RESET << "\n";
+        std::cout << RED << "SUMMARY: " << g_tests_failed << " FAILED, " << g_tests_passed << " PASSED." << RESET
+                  << "\n";
         return 1;
     } else {
         std::cout << GREEN << "SUMMARY: ALL TESTS PASSED." << RESET << "\n";

@@ -1,9 +1,6 @@
+#include <functional>
 #include <iostream>
 #include <string>
-#include <vector>
-#include <functional>
-#include <thread>
-#include <chrono>
 
 // --- GTest-Lite Macros ---
 #define RED "\033[31m"
@@ -13,18 +10,19 @@
 inline int g_tests_passed = 0;
 inline int g_tests_failed = 0;
 
-#define ASSERT_TRUE(condition) \
-    if (!(condition)) { \
-        std::cerr << RED << "[FAILED] " << #condition << " at " << __FILE__ << ":" << __LINE__ << RESET << std::endl; \
-        g_tests_failed++; \
-        return; \
+#define ASSERT_TRUE(condition)                                                                                         \
+    if (!(condition)) {                                                                                                \
+        std::cerr << RED << "[FAILED] " << #condition << " at " << __FILE__ << ":" << __LINE__ << RESET << std::endl;  \
+        g_tests_failed++;                                                                                              \
+        return;                                                                                                        \
     }
 
-#define ASSERT_EQ(val1, val2) \
-    if ((val1) != (val2)) { \
-        std::cerr << RED << "[FAILED] Expected " << val1 << " == " << val2 << " at " << __FILE__ << ":" << __LINE__ << RESET << std::endl; \
-        g_tests_failed++; \
-        return; \
+#define ASSERT_EQ(val1, val2)                                                                                          \
+    if ((val1) != (val2)) {                                                                                            \
+        std::cerr << RED << "[FAILED] Expected " << val1 << " == " << val2 << " at " << __FILE__ << ":" << __LINE__    \
+                  << RESET << std::endl;                                                                               \
+        g_tests_failed++;                                                                                              \
+        return;                                                                                                        \
     }
 
 // A helper to run test functions and print their status
