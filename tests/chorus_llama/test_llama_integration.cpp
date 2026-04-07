@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <mutex>
 #include <thread>
 
 const std::string MODEL_PATH = "tests/models/gemma-3-270m-it-F16.gguf";
@@ -82,6 +83,51 @@ void test_simple_generation() {
     }
 }
 
+void test_concurrent_requests_complete_with_multiple_slots() {
+    Chorus::LlamaEngine engine;
+    Chorus::ChorusConfig config;
+    config.model_path = MODEL_PATH;
+    config.use_gpu = false;
+    config.num_slots = 2;
+
+    ASSERT_TRUE(engine.initialize(config));
+
+    std::atomic<int> completed_count{0};
+    std::string responses[2];
+    std::mutex responses_mutex;
+
+    for (int slot_index = 0; slot_index < 2; ++slot_index) {
+        Chorus::ChorusRequest request;
+        request.id = slot_index;
+        request.prompt = "<start_of_turn>user\nHello!<end_of_turn>\n<start_of_turn>model\n";
+        request.gen_config.max_tokens = 10;
+        request.on_event = [&, slot_index](const Chorus::ChorusSignal& sig) {
+            if (sig.type == Chorus::EventType::Token) {
+                std::lock_guard<std::mutex> lock(responses_mutex);
+                responses[slot_index] += sig.text;
+            } else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error) {
+                completed_count++;
+            }
+        };
+        engine.submit_request(request);
+    }
+
+    int timeout_ms = 30000;
+    while (completed_count < 2 && timeout_ms > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        timeout_ms -= 100;
+    }
+
+    if (timeout_ms <= 0) {
+        std::cerr << RED << "[FAILED] Timed out waiting for concurrent generation." << RESET << "\n";
+        g_tests_failed++;
+        return;
+    }
+
+    ASSERT_TRUE(!responses[0].empty());
+    ASSERT_TRUE(!responses[1].empty());
+}
+
 int run_llama_integration_tests() {
     std::cout << "\n--- LLAMA INTEGRATION SUITE ---\n";
 
@@ -94,6 +140,9 @@ int run_llama_integration_tests() {
 
     run_test("Llama_Model_Load", test_model_loading);
     run_test("Llama_Generation_Stream", test_simple_generation);
+    run_test(
+        "Llama_ConcurrentRequestsCompleteWithMultipleSlots", test_concurrent_requests_complete_with_multiple_slots
+    );
 
     std::cout << "\n======================================\n";
     if (g_tests_failed > 0) {

@@ -63,5 +63,7 @@ class LlamaScheduler {
     std::atomic<bool> is_running{false};
     std::thread worker_thread;
 
+    int32_t _tokens_per_tick = 512;
+
     struct llama_batch* batch = nullptr;
 };

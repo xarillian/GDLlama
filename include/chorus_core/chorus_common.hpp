@@ -7,11 +7,14 @@
 namespace Chorus {
 
 struct ChorusConfig {
+    //@todo all these need explainer comments for defaults
     std::string model_path;
     int32_t context_size = 2048;
     int32_t thread_count = 4;
     bool use_gpu = true;
     int32_t gpu_layers = 99; // Use all layers on GPU by default
+    int32_t num_slots = 1;   // matches llama.cpp default (n_seq_max = 1); increase for concurrent requests
+    int32_t tokens_per_tick = 512;
 };
 
 struct GenerationConfig {

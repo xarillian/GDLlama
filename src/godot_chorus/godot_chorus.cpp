@@ -225,6 +225,20 @@ int32_t GodotChorus::get_gpu_layers() const {
     return _chorus_config.gpu_layers;
 }
 
+void GodotChorus::set_num_slots(int32_t count) {
+    _chorus_config.num_slots = count;
+}
+int32_t GodotChorus::get_num_slots() const {
+    return _chorus_config.num_slots;
+}
+
+void GodotChorus::set_tokens_per_tick(int32_t count) {
+    _chorus_config.tokens_per_tick = count;
+}
+int32_t GodotChorus::get_tokens_per_tick() const {
+    return _chorus_config.tokens_per_tick;
+}
+
 // ===========================================================================
 // model management
 // @deprecated
@@ -549,6 +563,20 @@ void GodotChorus::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_gpu_layers"), &GodotChorus::get_gpu_layers);
     ADD_PROPERTY(
         PropertyInfo(Variant::INT, "gpu_layers", PROPERTY_HINT_RANGE, "0,999,1"), "set_gpu_layers", "get_gpu_layers"
+    );
+
+    ClassDB::bind_method(D_METHOD("set_num_slots", "count"), &GodotChorus::set_num_slots);
+    ClassDB::bind_method(D_METHOD("get_num_slots"), &GodotChorus::get_num_slots);
+    ADD_PROPERTY(
+        PropertyInfo(Variant::INT, "num_slots", PROPERTY_HINT_RANGE, "1,32,1"), "set_num_slots", "get_num_slots"
+    );
+
+    ClassDB::bind_method(D_METHOD("set_tokens_per_tick", "count"), &GodotChorus::set_tokens_per_tick);
+    ClassDB::bind_method(D_METHOD("get_tokens_per_tick"), &GodotChorus::get_tokens_per_tick);
+    ADD_PROPERTY(
+        PropertyInfo(Variant::INT, "tokens_per_tick", PROPERTY_HINT_RANGE, "1,4096,1"),
+        "set_tokens_per_tick",
+        "get_tokens_per_tick"
     );
 
     // --- Deprecated methods ---

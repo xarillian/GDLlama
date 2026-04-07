@@ -40,6 +40,7 @@ bool LlamaScheduler::init_context(const Chorus::ChorusConfig& config) {
 
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = config.context_size;
+    ctx_params.n_seq_max = config.num_slots;
     ctx_params.n_threads = config.thread_count;
     ctx_params.n_threads_batch = config.thread_count;
 
@@ -69,7 +70,8 @@ bool LlamaScheduler::initialize(const Chorus::ChorusConfig& config) {
     if (!init_context(config))
         return false;
 
-    init_slots(4); // @todo we need to make this configurable, e.g. config.batch_size
+    init_slots(config.num_slots);
+    _tokens_per_tick = config.tokens_per_tick;
 
     batch = new llama_batch(llama_batch_init(config.context_size, 0, 1));
 
@@ -198,12 +200,10 @@ bool LlamaScheduler::run_inference() {
 }
 
 void LlamaScheduler::worker_loop() {
-    int32_t tokens_per_tick = 512;
-
     while (is_running) {
         ingest_new_requests();
 
-        bool has_work = prepare_next_batch(tokens_per_tick);
+        bool has_work = prepare_next_batch(_tokens_per_tick);
 
         if (!has_work) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));

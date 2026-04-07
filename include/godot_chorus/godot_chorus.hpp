@@ -67,6 +67,12 @@ class GodotChorus : public Node {
     void set_gpu_layers(int32_t layers);
     int32_t get_gpu_layers() const;
 
+    void set_num_slots(int32_t count);
+    int32_t get_num_slots() const;
+
+    void set_tokens_per_tick(int32_t count);
+    int32_t get_tokens_per_tick() const;
+
     // --- Deprecated: GDLlama backward compat ---
     // All methods below emit a deprecation warning. Some features (embeddings,
     // chat context, sync blocking) are not yet implemented in the new architecture.

@@ -97,12 +97,16 @@ if env["platform"] == "windows":
         "external/llama.cpp/build/ggml/src/Release",
         "external/llama.cpp/build/common/Release",
     ]
+    if use_vulkan:
+        lib_paths.append("external/llama.cpp/build/ggml/src/ggml-vulkan/Release")
 else:
     lib_paths = [
         "external/llama.cpp/build/src",
         "external/llama.cpp/build/ggml/src",
         "external/llama.cpp/build/common",
     ]
+    if use_vulkan:
+        lib_paths.append("external/llama.cpp/build/ggml/src/ggml-vulkan")
 
 if env["platform"] == "windows":
     # Force /MD to match llama.cpp Release build
@@ -137,11 +141,14 @@ else:
 
     env["LIBPATH"] = lib_paths
 
+    if use_vulkan and sys.platform.startswith("linux"):
+        env.Append(LIBS=["vulkan"])
+
     if sys.platform == "darwin" or env["platform"] == "macos":
         env.Append(LINKFLAGS=[
             "-framework", "Accelerate",
             "-framework", "Foundation",
-            "-framework", "Metal", 
+            "-framework", "Metal",
             "-framework", "MetalKit"
             ]
         )
@@ -186,6 +193,9 @@ else:
 
 if use_metal and env["platform"] == "macos":
     llama_libs.append("ggml-metal")
+
+if use_vulkan:
+    llama_libs.append("ggml-vulkan")
 
 cmake_target = env.Command(
     target=llama_lib_trigger,

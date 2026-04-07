@@ -1,5 +1,6 @@
 #include "../include/chorus_core/inference_engine.hpp"
 #include "../test_utils.hpp"
+#include <thread>
 
 // A "Dummy" LLM backend -- thank you Gemini!
 class MockInferenceEngine : public Chorus::InferenceEngine {
