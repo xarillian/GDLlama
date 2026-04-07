@@ -11,6 +11,7 @@ out/
 
 # Compiled objects and libraries
 *.o
+*.os
 *.obj
 *.lo
 *.slo

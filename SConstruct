@@ -163,9 +163,15 @@ env.Append(CPPPATH=[
 # ----------------------------------------------------------------------
 # SOURCE DEFINITIONS
 # ----------------------------------------------------------------------
-sources_core = Glob("src/chorus_core/*.cpp")
-sources_chorus_llama = Glob("src/chorus_llama/*.cpp")
-sources_godot = Glob("src/godot_chorus/*.cpp")
+# VariantDir redirects intermediate build artifacts (.os/.o) into bin/obj/
+# so they don't clutter the source tree. duplicate=0 keeps sources in place.
+VariantDir("bin/obj/chorus_core",  "src/chorus_core",  duplicate=0)
+VariantDir("bin/obj/chorus_llama", "src/chorus_llama", duplicate=0)
+VariantDir("bin/obj/godot_chorus", "src/godot_chorus", duplicate=0)
+
+sources_core         = Glob("bin/obj/chorus_core/*.cpp")
+sources_chorus_llama = Glob("bin/obj/chorus_llama/*.cpp")
+sources_godot        = Glob("bin/obj/godot_chorus/*.cpp")
 
 # ----------------------------------------------------------------------
 # CMAKE TARGET DEFINITION
@@ -195,9 +201,9 @@ if "compiledb" in COMMAND_LINE_TARGETS:
     env.Tool("compilation_db")
     compiledb = env.CompilationDatabase("compile_commands.json")
     all_sources = (
-        Glob("src/chorus_core/*.cpp") +
-        Glob("src/chorus_llama/*.cpp") +
-        Glob("src/godot_chorus/*.cpp")
+        Glob("bin/obj/chorus_core/*.cpp") +
+        Glob("bin/obj/chorus_llama/*.cpp") +
+        Glob("bin/obj/godot_chorus/*.cpp")
     )
     env.Object(all_sources)
     Alias("compiledb", compiledb)
