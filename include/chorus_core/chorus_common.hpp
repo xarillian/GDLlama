@@ -7,23 +7,22 @@
 namespace Chorus {
 
 struct ChorusConfig {
-    //@todo all these need explainer comments for defaults
     std::string model_path;
-    int32_t context_size = 2048;
-    int32_t thread_count = 4;
-    bool use_gpu = true;
-    int32_t gpu_layers = 99; // Use all layers on GPU by default
-    int32_t num_slots = 1;   // matches llama.cpp default (n_seq_max = 1); increase for concurrent requests
-    int32_t tokens_per_tick = 512;
+    int32_t context_size = 2048;   // llama.cpp's original default
+    int32_t thread_count = 4;      // conservative enough to avoid over-subscribing most machines out of the box
+    bool use_gpu = true;           // GPU is almost always faster; safer to opt-out than opt-in
+    int32_t gpu_layers = 99;       // use all layers on GPU by default
+    int32_t num_slots = 1;         // matches llama.cpp's n_seq_max default; increase for concurrent requests
+    int32_t tokens_per_tick = 512; // large enough for throughput, small enough not to stall a game tick
 };
 
 struct GenerationConfig {
-    int32_t max_tokens = 128; // -1 for infinite
-    float temperature = 0.8f;
-    int32_t top_k = 40;
-    float top_p = 0.95f;
-    float repeat_penalty = 1.1f;
-    uint32_t seed = 1337; // -1 for random
+    int32_t max_tokens = 128;    // -1 for infinite
+    float temperature = 0.8f;    // less boring than 1.0, hopefully customized often by users
+    int32_t top_k = 40;          // llama.cpp default
+    float top_p = 0.95f;         // llama.cpp default
+    float repeat_penalty = 1.1f; // light penalty to discourage loops without distorting the distribution much
+    uint32_t seed = 1337;        // -1 for random
 
     std::string grammar; // GBNF grammar string for constrained output
 };
