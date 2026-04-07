@@ -14,5 +14,7 @@
 - The interface should be kept simple, yet powerful.
 - An opinionated API is a core part of this: Methods like `generate_chat` and `generate_text` are pretty clear entry points. They really only flip a switch, but it simplifies the user's decision-making process.
 
+- ummmm should ensure that most stuff lives outside the engine layers, e.g. away from Godot, Unity, Unreal, etc.
+
 ## Roadmap
 @TODO -> tho this could probably be better done in github?

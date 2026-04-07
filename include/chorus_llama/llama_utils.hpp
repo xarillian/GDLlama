@@ -21,20 +21,21 @@ inline std::vector<llama_token> tokenize(llama_context* ctx, const std::string& 
     const llama_model* model = llama_get_model(ctx);
     const llama_vocab* vocab = llama_model_get_vocab(model);
 
-    int n_tokens_max = text.length() + 2;
-    std::vector<llama_token> result(n_tokens_max);
+    std::vector<llama_token> result(text.length() + 2);
 
     int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), result.data(), result.size(), add_special, false);
 
     if (n_tokens < 0) {
-        // Buffer was too small. In a real app, verify and resize.
-        // For now, we assume text.length() + 2 is sufficient for standard text.
-        // @todo we should not just assume this!
-        result.resize(0);
-    } else {
-        result.resize(n_tokens);
+        // llama.cpp returns -(required_size) on overflow; resize and retry.
+        result.resize(-n_tokens);
+        n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), result.data(), result.size(), add_special, false);
     }
 
+    if (n_tokens < 0) {
+        return {};
+    }
+
+    result.resize(n_tokens);
     return result;
 }
 
