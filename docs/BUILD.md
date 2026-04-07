@@ -16,7 +16,7 @@
 1. Clone the repository and initialize its submodules.
 ```shell
 git clone https://github.com/xarillian/GDLlama.git
-cd godot-llm
+cd chorus-llm
 git submodule update --init --recursive
 ```
 
@@ -52,4 +52,4 @@ This produces `bin/run_tests`, which you can execute directly.
 
 ## Add to Your Godot Project
 
-Copy the compiled shared library from `bin/` along with `plugin/godot_llm.gdextension` into your Godot project's `addons/godot_llm/` directory.
+Copy the compiled shared library from `bin/` along with `plugin/chorus.gdextension` into your Godot project's `addons/chorus/` directory.
