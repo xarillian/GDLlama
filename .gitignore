@@ -1,6 +1,7 @@
-# Editor & IDE specific files
+# Editor & IDE specific files + Linter stuff
 .vscode/
 compile_commands.json
+/.cache
 
 # Build directories
 build/
