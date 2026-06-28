@@ -2,13 +2,15 @@
 
 #include "chorus_common.hpp"
 
+#include <optional>
+
 namespace Chorus {
 
 class InferenceEngine {
   public:
     virtual ~InferenceEngine() = default;
 
-    virtual bool initialize(const Chorus::ChorusConfig& config) = 0;
+    virtual std::optional<ChorusError> initialize(const Chorus::ChorusConfig& config) = 0;
     virtual bool is_initialized() const = 0;
 
     virtual void submit_request(const Chorus::ChorusRequest& chorus_request) = 0;

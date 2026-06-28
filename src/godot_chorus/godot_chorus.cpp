@@ -8,6 +8,50 @@
 
 using namespace godot;
 
+static const char* chorus_error_name(Chorus::ChorusError e) {
+    switch (e) {
+    case Chorus::ChorusError::None:
+        return "None";
+    case Chorus::ChorusError::ModelLoad:
+        return "ModelLoad";
+    case Chorus::ChorusError::ContextInit:
+        return "ContextInit";
+    case Chorus::ChorusError::Decode:
+        return "Decode";
+    case Chorus::ChorusError::Tokenize:
+        return "Tokenize";
+    case Chorus::ChorusError::InvalidRequest:
+        return "InvalidRequest";
+    case Chorus::ChorusError::EngineNotReady:
+        return "EngineNotReady";
+    case Chorus::ChorusError::Unknown:
+        return "Unknown";
+    }
+    return "Unknown";
+}
+
+int GodotChorus::to_godot(Chorus::ChorusError e) {
+    switch (e) {
+    case Chorus::ChorusError::None:
+        return ERR_NONE;
+    case Chorus::ChorusError::ModelLoad:
+        return ERR_MODEL_LOAD;
+    case Chorus::ChorusError::ContextInit:
+        return ERR_CONTEXT_INIT;
+    case Chorus::ChorusError::Decode:
+        return ERR_DECODE;
+    case Chorus::ChorusError::Tokenize:
+        return ERR_TOKENIZE;
+    case Chorus::ChorusError::InvalidRequest:
+        return ERR_INVALID_REQUEST;
+    case Chorus::ChorusError::EngineNotReady:
+        return ERR_ENGINE_NOT_READY;
+    case Chorus::ChorusError::Unknown:
+        return ERR_UNKNOWN;
+    }
+    return ERR_UNKNOWN;
+}
+
 // ===========================================================================
 // Lifecycle
 // ===========================================================================
@@ -55,7 +99,12 @@ bool GodotChorus::load_model() {
         }
     };
 
-    return _engine.initialize(_chorus_config);
+    auto err = _engine.initialize(_chorus_config);
+    if (err.has_value()) {
+        UtilityFunctions::push_error(String("[Chorus] Model load failed: ") + chorus_error_name(err.value()));
+        return false;
+    }
+    return true;
 }
 
 void GodotChorus::stop_all() {
@@ -159,7 +208,7 @@ void GodotChorus::_drain_signals() {
         }
         case Chorus::EventType::Error: {
             String msg(sig.text.c_str());
-            emit_signal("generation_error", rid, (int)sig.error_code, msg);
+            emit_signal("generation_error", rid, to_godot(sig.error_code), msg);
             emit_signal("generate_text_error", msg); // @deprecated compat
             _text_accumulator.erase(rid);
             _request_streaming.erase(rid);
@@ -546,6 +595,16 @@ void GodotChorus::_bind_methods() {
     ADD_SIGNAL(MethodInfo("generate_text_error", PropertyInfo(Variant::STRING, "error_text")));
     ADD_SIGNAL(MethodInfo("embedding_computed", PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "embedding")));
     ADD_SIGNAL(MethodInfo("embedding_failed", PropertyInfo(Variant::STRING, "error_message")));
+
+    // --- ErrorCode enum ---
+    BIND_ENUM_CONSTANT(ERR_NONE);
+    BIND_ENUM_CONSTANT(ERR_MODEL_LOAD);
+    BIND_ENUM_CONSTANT(ERR_CONTEXT_INIT);
+    BIND_ENUM_CONSTANT(ERR_DECODE);
+    BIND_ENUM_CONSTANT(ERR_TOKENIZE);
+    BIND_ENUM_CONSTANT(ERR_INVALID_REQUEST);
+    BIND_ENUM_CONSTANT(ERR_ENGINE_NOT_READY);
+    BIND_ENUM_CONSTANT(ERR_UNKNOWN);
 
     // --- Core methods ---
     ClassDB::bind_method(D_METHOD("load_model"), &GodotChorus::load_model);

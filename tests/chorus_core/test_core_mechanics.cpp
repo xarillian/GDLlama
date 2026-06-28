@@ -1,6 +1,7 @@
 #include "../include/chorus_core/chorus_log.hpp"
 #include "../include/chorus_core/inference_engine.hpp"
 #include "../test_utils.hpp"
+#include <optional>
 #include <thread>
 
 // A "Dummy" LLM backend -- thank you Gemini!
@@ -8,12 +9,13 @@ class MockInferenceEngine : public Chorus::InferenceEngine {
   public:
     bool initialized = false;
     std::vector<int64_t> received_ids;
+    Chorus::ChorusError fail_with = Chorus::ChorusError::None;
 
-    bool initialize(const Chorus::ChorusConfig& config) override {
+    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config) override {
         if (config.model_path.empty())
-            return false;
+            return Chorus::ChorusError::InvalidRequest;
         initialized = true;
-        return true;
+        return std::nullopt;
     }
 
     void submit_request(const Chorus::ChorusRequest& req) override {
@@ -25,6 +27,19 @@ class MockInferenceEngine : public Chorus::InferenceEngine {
                 sig.type = Chorus::EventType::Error;
                 sig.error_code = Chorus::ChorusError::EngineNotReady;
                 sig.text = "Engine not initialized";
+                req.on_event(sig);
+            }
+            return;
+        }
+
+        // 2. Check fail-mode
+        if (fail_with != Chorus::ChorusError::None) {
+            if (req.on_event) {
+                Chorus::ChorusSignal sig;
+                sig.request_id = req.id;
+                sig.type = Chorus::EventType::Error;
+                sig.error_code = fail_with;
+                sig.text = "Mock failure";
                 req.on_event(sig);
             }
             return;
@@ -66,26 +81,27 @@ class MockInferenceEngine : public Chorus::InferenceEngine {
     bool is_initialized() const override { return initialized; }
 };
 
-void test_initialization() {
-    // Happy Path
+void test_initialize_returns_nullopt_on_success() {
     MockInferenceEngine engine;
     Chorus::ChorusConfig config;
-
     config.model_path = "mock_model.bin";
-    ASSERT_TRUE(engine.initialize(config) == true);
-    ASSERT_TRUE(engine.is_initialized() == true);
+
+    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(engine.is_initialized());
 
     engine.stop();
-    ASSERT_TRUE(engine.is_initialized() == false);
+    ASSERT_TRUE(!engine.is_initialized());
 }
 
-void test_initialization_failure() {
+void test_initialize_returns_InvalidRequest_on_empty_model_path() {
     MockInferenceEngine engine;
     Chorus::ChorusConfig config;
-    config.model_path = ""; // Empty path should fail
+    config.model_path = "";
 
-    ASSERT_TRUE(engine.initialize(config) == false);
-    ASSERT_TRUE(engine.is_initialized() == false);
+    auto err = engine.initialize(config);
+    ASSERT_TRUE(err.has_value());
+    ASSERT_TRUE(err.value() == Chorus::ChorusError::InvalidRequest);
+    ASSERT_TRUE(!engine.is_initialized());
 }
 
 void test_request_submission() {
@@ -210,6 +226,28 @@ void test_LogCallback_on_ChorusConfig_is_invoked_by_chorus_log() {
     ASSERT_EQ(log_entries[1].second, "something failed");
 }
 
+void test_submit_in_fail_mode_propagates_chosen_error_code_to_caller() {
+    MockInferenceEngine engine;
+    Chorus::ChorusConfig config;
+    config.model_path = "mock.bin";
+    engine.initialize(config);
+    engine.fail_with = Chorus::ChorusError::Decode;
+
+    Chorus::ChorusError received = Chorus::ChorusError::None;
+
+    Chorus::ChorusRequest req;
+    req.id = 7;
+    req.prompt = "Hello";
+    req.on_event = [&](const Chorus::ChorusSignal& sig) {
+        if (sig.is_error())
+            received = sig.error_code;
+    };
+
+    engine.submit_request(req);
+
+    ASSERT_TRUE(received == Chorus::ChorusError::Decode);
+}
+
 // ---------------------------------------------------------------------------
 // Suite entry point
 // ---------------------------------------------------------------------------
@@ -217,8 +255,11 @@ void test_LogCallback_on_ChorusConfig_is_invoked_by_chorus_log() {
 int run_core_mechanics_tests() {
     std::cout << "\n--- CORE MECHANICS TEST SUITE ---\n";
 
-    run_test("Initialization_HappyPath", test_initialization);
-    run_test("Initialization_FailurePath", test_initialization_failure);
+    run_test("Initialize_returns_nullopt_on_success", test_initialize_returns_nullopt_on_success);
+    run_test(
+        "Initialize_returns_InvalidRequest_on_empty_model_path",
+        test_initialize_returns_InvalidRequest_on_empty_model_path
+    );
     run_test("Request_Lifecycle_Submission", test_request_submission);
 
     run_test(
@@ -229,6 +270,10 @@ int run_core_mechanics_tests() {
     run_test(
         "ChorusSignal_preserves_error_code_and_request_id_after_assignment",
         test_ChorusSignal_preserves_error_code_and_request_id_after_assignment
+    );
+    run_test(
+        "Submit_in_fail_mode_propagates_chosen_error_code_to_caller",
+        test_submit_in_fail_mode_propagates_chosen_error_code_to_caller
     );
 
     run_test(

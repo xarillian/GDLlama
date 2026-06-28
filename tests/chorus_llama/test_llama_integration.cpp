@@ -19,9 +19,8 @@ void test_model_loading() {
     config.use_gpu = false;
 
     std::cout << "  [INFO] Loading model: " << MODEL_PATH << std::endl;
-    bool success = engine.initialize(config);
 
-    ASSERT_TRUE(success);
+    ASSERT_TRUE(!engine.initialize(config).has_value());
     ASSERT_TRUE(engine.is_initialized());
 
     engine.stop();
@@ -34,7 +33,7 @@ void test_simple_generation() {
     config.model_path = MODEL_PATH;
     config.use_gpu = false;
 
-    if (!engine.initialize(config)) {
+    if (engine.initialize(config).has_value()) {
         std::cerr << RED << "[SKIP] Could not load model. Check path." << RESET << "\n";
         return;
     }
@@ -90,7 +89,7 @@ void test_concurrent_requests_complete_with_multiple_slots() {
     config.use_gpu = false;
     config.num_slots = 2;
 
-    ASSERT_TRUE(engine.initialize(config));
+    ASSERT_TRUE(!engine.initialize(config).has_value());
 
     std::atomic<int> completed_count{0};
     std::string responses[2];
@@ -128,6 +127,90 @@ void test_concurrent_requests_complete_with_multiple_slots() {
     ASSERT_TRUE(!responses[1].empty());
 }
 
+void test_max_tokens_counts_generated_not_prompt_tokens() {
+    Chorus::LlamaEngine engine;
+    Chorus::ChorusConfig config;
+    config.model_path = MODEL_PATH;
+    config.use_gpu = false;
+    config.context_size = 1024;
+
+    if (engine.initialize(config).has_value()) {
+        std::cerr << RED << "[SKIP] Could not load model." << RESET << "\n";
+        return;
+    }
+
+    std::string long_prompt = "<start_of_turn>user\n";
+    for (int i = 0; i < 40; ++i)
+        long_prompt += "Tell me a long and detailed story about dragons and castles. ";
+    long_prompt += "<end_of_turn>\n<start_of_turn>model\n";
+
+    Chorus::ChorusRequest req;
+    req.id = 1;
+    req.prompt = long_prompt;
+    req.gen_config.max_tokens = 8;
+
+    std::atomic<int> token_count{0};
+    std::atomic<bool> done{false};
+    req.on_event = [&](const Chorus::ChorusSignal& sig) {
+        if (sig.type == Chorus::EventType::Token)
+            token_count++;
+        else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
+            done = true;
+    };
+
+    engine.submit_request(req);
+
+    int timeout_ms = 15000;
+    while (!done && timeout_ms > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        timeout_ms -= 100;
+    }
+
+    ASSERT_TRUE(done);
+    ASSERT_TRUE(token_count > 1);
+    ASSERT_TRUE(token_count <= 8);
+}
+
+void test_engine_reinitializes_and_generates_after_stop() {
+    Chorus::LlamaEngine engine;
+    Chorus::ChorusConfig config;
+    config.model_path = MODEL_PATH;
+    config.use_gpu = false;
+
+    ASSERT_TRUE(!engine.initialize(config).has_value());
+    engine.stop();
+    ASSERT_TRUE(!engine.is_initialized());
+
+    // Re-init must rebuild cleanly (robust stop() freed everything) and still generate.
+    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(engine.is_initialized());
+
+    Chorus::ChorusRequest req;
+    req.id = 1;
+    req.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
+    req.gen_config.max_tokens = 5;
+
+    std::atomic<int> tokens{0};
+    std::atomic<bool> done{false};
+    req.on_event = [&](const Chorus::ChorusSignal& sig) {
+        if (sig.type == Chorus::EventType::Token)
+            tokens++;
+        else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
+            done = true;
+    };
+    engine.submit_request(req);
+
+    int timeout_ms = 15000;
+    while (!done && timeout_ms > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        timeout_ms -= 100;
+    }
+
+    ASSERT_TRUE(done);
+    ASSERT_TRUE(tokens > 0);
+    engine.stop();
+}
+
 int run_llama_integration_tests() {
     std::cout << "\n--- LLAMA INTEGRATION SUITE ---\n";
 
@@ -143,6 +226,8 @@ int run_llama_integration_tests() {
     run_test(
         "Llama_ConcurrentRequestsCompleteWithMultipleSlots", test_concurrent_requests_complete_with_multiple_slots
     );
+    run_test("Max_tokens_counts_generated_not_prompt_tokens", test_max_tokens_counts_generated_not_prompt_tokens);
+    run_test("Engine_reinitializes_and_generates_after_stop", test_engine_reinitializes_and_generates_after_stop);
 
     std::cout << "\n======================================\n";
     if (g_tests_failed > 0) {

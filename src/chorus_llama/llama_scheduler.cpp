@@ -22,7 +22,8 @@ bool LlamaScheduler::load_model_from_file(const Chorus::ChorusConfig& config) {
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = config.use_gpu ? config.gpu_layers : 0;
 
-    // @todo Add progress callback here for Godot UI feedback
+    // @todo Add a host-agnostic progress callback here (via ChorusConfig, like log_callback);
+    //       the binding layer wires it to whatever UI the host uses. Core must not know the host.
 
     model = llama_model_load_from_file(config.model_path.c_str(), model_params);
     if (!model) {
@@ -58,16 +59,17 @@ void LlamaScheduler::init_slots(int count) {
     for (int i = 0; i < count; ++i) {
         slots[i].id = i;
         slots[i].is_busy = false;
-        slots[i].tokens_generated = 0;
+        slots[i].n_past = 0;
+        slots[i].n_decoded = 0;
         slots[i].input_cursor = 0;
     }
 }
 
-bool LlamaScheduler::initialize(const Chorus::ChorusConfig& config) {
+std::optional<Chorus::ChorusError> LlamaScheduler::initialize(const Chorus::ChorusConfig& config) {
     if (!load_model_from_file(config))
-        return false;
+        return Chorus::ChorusError::ModelLoad;
     if (!init_context(config))
-        return false;
+        return Chorus::ChorusError::ContextInit;
 
     init_slots(config.num_slots);
     _tokens_per_tick = config.tokens_per_tick;
@@ -78,13 +80,10 @@ bool LlamaScheduler::initialize(const Chorus::ChorusConfig& config) {
     is_running = true;
     worker_thread = std::thread(&LlamaScheduler::worker_loop, this);
 
-    return true;
+    return std::nullopt;
 }
 
 void LlamaScheduler::stop() {
-    if (!is_running)
-        return;
-
     is_running = false;
     queue_cv.notify_all();
 
@@ -92,11 +91,23 @@ void LlamaScheduler::stop() {
         worker_thread.join();
     }
 
-    llama_batch_free(*batch);
-    llama_free(context);
-    context = nullptr;
-    llama_model_free(model);
-    model = nullptr;
+    if (batch) {
+        llama_batch_free(*batch);
+        delete batch;
+        batch = nullptr;
+    }
+    if (context) {
+        llama_free(context);
+        context = nullptr;
+    }
+    if (model) {
+        llama_model_free(model);
+        model = nullptr;
+    }
+}
+
+bool LlamaScheduler::is_healthy() const {
+    return is_running.load();
 }
 
 void LlamaScheduler::push_request(const Chorus::ChorusRequest& req) {
@@ -124,11 +135,31 @@ void LlamaScheduler::release_slot(int slot_id) {
         slot.sampler = nullptr;
     }
 
-    // We do NOT clear the KV cache here necessarily.
-    // @todo if the next request uses the same system prompt, we could reuse it.
+    // Reclaim this sequence's KV cache so freed capacity is available to other slots.
+    if (context) {
+        llama_memory_t mem = llama_get_memory(context);
+        llama_memory_seq_rm(mem, slot.id, 0, -1);
+    }
 
     slot.is_busy = false;
     slot.current_input_tokens.clear();
+}
+
+void LlamaScheduler::fail_busy_slots(Chorus::ChorusError code) {
+    for (auto& slot : slots) {
+        if (!slot.is_busy)
+            continue;
+
+        if (slot.current_request.on_event) {
+            Chorus::ChorusSignal sig;
+            sig.request_id = slot.current_request.id;
+            sig.type = Chorus::EventType::Error;
+            sig.error_code = code;
+            sig.text = "Inference decode failed.";
+            slot.current_request.on_event(sig);
+        }
+        release_slot(slot.id);
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -146,18 +177,28 @@ void LlamaScheduler::ingest_new_requests() {
         Chorus::ChorusRequest chorus_request = request_queue.top();
         request_queue.pop();
 
+        std::vector<int32_t> tokens = Chorus::LlamaUtils::tokenize(context, chorus_request.prompt, true);
+        if (tokens.empty()) {
+            Chorus::chorus_log(_log, Chorus::LogLevel::Error, "Tokenization produced no tokens; dropping request.");
+            if (chorus_request.on_event) {
+                Chorus::ChorusSignal sig;
+                sig.request_id = chorus_request.id;
+                sig.type = Chorus::EventType::Error;
+                sig.error_code = Chorus::ChorusError::Tokenize;
+                sig.text = "Tokenization failed (empty result).";
+                chorus_request.on_event(sig);
+            }
+            continue; // slot stays free
+        }
+
         Slot& slot = slots[slot_idx];
         slot.is_busy = true;
         slot.current_request = chorus_request;
-        slot.tokens_generated = 0;
+        slot.n_past = 0;
+        slot.n_decoded = 0;
         slot.input_cursor = 0;
-
-        slot.current_input_tokens = Chorus::LlamaUtils::tokenize(context, chorus_request.prompt, true);
-
+        slot.current_input_tokens = std::move(tokens);
         slot.sampler = Chorus::LlamaUtils::build_sampler(chorus_request.gen_config);
-
-        llama_memory_t mem = llama_get_memory(context);
-        llama_memory_seq_rm(mem, slot.id, 0, -1);
     }
 }
 
@@ -175,7 +216,7 @@ bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
             size_t n_chunk = std::min(n_remaining, (size_t)tokens_per_tick);
 
             for (size_t i = 0; i < n_chunk; ++i) {
-                int32_t pos = slot.tokens_generated + i;
+                int32_t pos = slot.n_past + i;
                 bool is_last_in_sequence = (slot.input_cursor + i == slot.current_input_tokens.size() - 1);
 
                 Chorus::LlamaUtils::batch_add_seq(
@@ -183,7 +224,7 @@ bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
                 );
             }
 
-            slot.tokens_generated += n_chunk;
+            slot.n_past += n_chunk;
             slot.input_cursor += n_chunk;
         }
     }
@@ -191,12 +232,12 @@ bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
     return curr_batch.n_tokens > 0;
 }
 
-bool LlamaScheduler::run_inference() {
-    if (llama_decode(context, *batch) != 0) {
-        Chorus::chorus_log(_log, Chorus::LogLevel::Fatal, "llama_decode failed.");
-        return false;
+int LlamaScheduler::run_inference() {
+    int rc = llama_decode(context, *batch);
+    if (rc != 0) {
+        Chorus::chorus_log(_log, Chorus::LogLevel::Error, "llama_decode failed with code " + std::to_string(rc) + ".");
     }
-    return true;
+    return rc;
 }
 
 void LlamaScheduler::worker_loop() {
@@ -210,8 +251,14 @@ void LlamaScheduler::worker_loop() {
             continue; // @todo can we do this without continue?
         }
 
-        if (!run_inference()) {
-            continue; // @todo can we do this without continue?
+        int decode_rc = run_inference();
+        if (decode_rc != 0) {
+            fail_busy_slots(Chorus::ChorusError::Decode);
+            if (decode_rc < 0) {
+                Chorus::chorus_log(_log, Chorus::LogLevel::Fatal, "Fatal decode error; stopping engine.");
+                is_running = false;
+            }
+            continue;
         }
 
         const llama_vocab* vocab = llama_model_get_vocab(model);
@@ -224,8 +271,9 @@ void LlamaScheduler::worker_loop() {
             int seq_id = curr_batch.seq_id[i][0];
             Slot& slot = slots[seq_id];
 
-            llama_token new_token_id = llama_sampler_sample(slot.sampler, context, curr_batch.pos[i]);
+            llama_token new_token_id = llama_sampler_sample(slot.sampler, context, i);
             llama_sampler_accept(slot.sampler, new_token_id);
+            slot.n_decoded++;
 
             Chorus::ChorusSignal chorus_signal;
             chorus_signal.request_id = slot.current_request.id;
@@ -239,7 +287,7 @@ void LlamaScheduler::worker_loop() {
             bool is_eos = llama_vocab_is_eog(vocab, new_token_id);
             bool is_limit =
                 (slot.current_request.gen_config.max_tokens > 0 &&
-                 slot.tokens_generated >= slot.current_request.gen_config.max_tokens);
+                 slot.n_decoded >= slot.current_request.gen_config.max_tokens);
 
             if (is_eos || is_limit) {
                 Chorus::ChorusSignal stop_sig;
@@ -251,7 +299,6 @@ void LlamaScheduler::worker_loop() {
                 release_slot(slot.id);
             } else {
                 slot.current_input_tokens.push_back(new_token_id);
-                slot.tokens_generated++;
             }
         }
     }

@@ -23,6 +23,19 @@ class GodotChorus : public Node {
     void _notification(int p_what);
 
   public:
+    enum ErrorCode {
+        ERR_NONE,
+        ERR_MODEL_LOAD,
+        ERR_CONTEXT_INIT,
+        ERR_DECODE,
+        ERR_TOKENIZE,
+        ERR_INVALID_REQUEST,
+        ERR_ENGINE_NOT_READY,
+        ERR_UNKNOWN,
+    };
+
+    static int to_godot(Chorus::ChorusError e);
+
     GodotChorus();
     ~GodotChorus();
 
@@ -157,3 +170,5 @@ class GodotChorus : public Node {
     void _queue_signal(const Chorus::ChorusSignal& signal);
     void _drain_signals();
 };
+
+VARIANT_ENUM_CAST(GodotChorus::ErrorCode);

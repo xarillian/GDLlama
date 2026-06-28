@@ -1,7 +1,11 @@
-# Editor & IDE specific files + Linter stuff
-.vscode/
-compile_commands.json
-/.cache
+# Workflow Ignores
+/demo/
+/old_src/
+/.docs/
+TODO.md
+
+# Test Models
+/tests/models/
 
 # Build directories
 build/
@@ -9,6 +13,12 @@ bin/
 build_release/
 install/
 out/
+
+# Editor & IDE specific files + Linter stuff
+.vscode/
+compile_commands.json
+/.cache
+
 
 # Compiled objects and libraries
 *.o
@@ -37,9 +47,3 @@ out/
 *.pch
 *.mod
 *.smod
-
-# Project-specific ignores
-/tests/models/
-/demo/
-/old_src/
-TODO.md

@@ -88,6 +88,20 @@ env = SConscript("external/godot-cpp/SConstruct")
 use_vulkan = ARGUMENTS.get("use_vulkan", "no") == "yes"
 use_metal = ARGUMENTS.get("use_metal", "no") == "yes"
 
+# Auto-detect the GPU backend the prebuilt llama.cpp was actually compiled with, so the
+# link libs always match — regardless of the command-line flag. (A prebuilt Vulkan llama
+# linked without ggml-vulkan fails: `undefined reference to ggml_backend_vk_reg`.) An
+# explicit use_vulkan=yes / use_metal=yes still forces the backend on for a fresh build.
+def _llama_built_with(flag, build_dir="external/llama.cpp/build"):
+    cache = os.path.join(build_dir, "CMakeCache.txt")
+    if not os.path.exists(cache):
+        return False
+    with open(cache) as f:
+        return (flag + ":BOOL=ON") in f.read()
+
+use_vulkan = use_vulkan or _llama_built_with("GGML_VULKAN")
+use_metal = use_metal or _llama_built_with("GGML_METAL")
+
 env["use_vulkan"] = use_vulkan
 env["use_metal"] = use_metal
 

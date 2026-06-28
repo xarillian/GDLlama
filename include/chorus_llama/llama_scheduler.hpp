@@ -5,6 +5,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <thread>
 #include <vector>
@@ -19,9 +20,10 @@ class LlamaScheduler {
     LlamaScheduler();
     ~LlamaScheduler();
 
-    bool initialize(const Chorus::ChorusConfig& config);
+    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config);
     void push_request(const Chorus::ChorusRequest& req);
     void stop();
+    bool is_healthy() const;
 
   private:
     bool load_model_from_file(const Chorus::ChorusConfig& config);
@@ -30,7 +32,8 @@ class LlamaScheduler {
 
     void ingest_new_requests();
     bool prepare_next_batch(int32_t tokens_per_tick);
-    bool run_inference();
+    int run_inference();
+    void fail_busy_slots(Chorus::ChorusError code);
 
     void worker_loop();
 
@@ -39,7 +42,8 @@ class LlamaScheduler {
         bool is_busy = false;
 
         Chorus::ChorusRequest current_request;
-        int32_t tokens_generated = 0; // n_past
+        int32_t n_past = 0;    // KV cache position; advanced only in prepare_next_batch
+        int32_t n_decoded = 0; // generated (sampled) tokens; advanced only in worker_loop
 
         // Input State
         std::vector<int32_t> current_input_tokens;
