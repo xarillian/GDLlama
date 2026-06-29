@@ -11,6 +11,8 @@
 const std::string MODEL_PATH = "tests/models/gemma-3-270m-it-F16.gguf";
 
 void test_model_loading() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config;
 
@@ -28,24 +30,25 @@ void test_model_loading() {
 }
 
 void test_simple_generation() {
-    Chorus::LlamaEngine engine;
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
     Chorus::ChorusConfig config;
     config.model_path = MODEL_PATH;
     config.use_gpu = false;
 
-    if (engine.initialize(config).has_value()) {
-        std::cerr << RED << "[SKIP] Could not load model. Check path." << RESET << "\n";
-        return;
-    }
+    std::atomic<bool> done{false};
+    std::string full_response = "";
+
+    // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
+    Chorus::LlamaEngine engine;
+
+    ASSERT_TRUE(!engine.initialize(config).has_value());
 
     Chorus::ChorusRequest chorus_request;
     chorus_request.id = 1;
     chorus_request.prompt = "<start_of_turn>user\nHello!<end_of_turn>\n<start_of_turn>model\n";
     chorus_request.gen_config.max_tokens = 20;
     chorus_request.gen_config.temperature = 0.7f;
-
-    std::atomic<bool> done{false};
-    std::string full_response = "";
 
     chorus_request.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (sig.type == Chorus::EventType::Token) {
@@ -83,17 +86,21 @@ void test_simple_generation() {
 }
 
 void test_concurrent_requests_complete_with_multiple_slots() {
-    Chorus::LlamaEngine engine;
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
     Chorus::ChorusConfig config;
     config.model_path = MODEL_PATH;
     config.use_gpu = false;
     config.num_slots = 2;
 
-    ASSERT_TRUE(!engine.initialize(config).has_value());
-
     std::atomic<int> completed_count{0};
     std::string responses[2];
     std::mutex responses_mutex;
+
+    // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
+    Chorus::LlamaEngine engine;
+
+    ASSERT_TRUE(!engine.initialize(config).has_value());
 
     for (int slot_index = 0; slot_index < 2; ++slot_index) {
         Chorus::ChorusRequest request;
@@ -128,16 +135,20 @@ void test_concurrent_requests_complete_with_multiple_slots() {
 }
 
 void test_max_tokens_counts_generated_not_prompt_tokens() {
-    Chorus::LlamaEngine engine;
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
     Chorus::ChorusConfig config;
     config.model_path = MODEL_PATH;
     config.use_gpu = false;
     config.context_size = 1024;
 
-    if (engine.initialize(config).has_value()) {
-        std::cerr << RED << "[SKIP] Could not load model." << RESET << "\n";
-        return;
-    }
+    std::atomic<int> token_count{0};
+    std::atomic<bool> done{false};
+
+    // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
+    Chorus::LlamaEngine engine;
+
+    ASSERT_TRUE(!engine.initialize(config).has_value());
 
     std::string long_prompt = "<start_of_turn>user\n";
     for (int i = 0; i < 40; ++i)
@@ -148,9 +159,6 @@ void test_max_tokens_counts_generated_not_prompt_tokens() {
     req.id = 1;
     req.prompt = long_prompt;
     req.gen_config.max_tokens = 8;
-
-    std::atomic<int> token_count{0};
-    std::atomic<bool> done{false};
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (sig.type == Chorus::EventType::Token)
             token_count++;
@@ -172,10 +180,17 @@ void test_max_tokens_counts_generated_not_prompt_tokens() {
 }
 
 void test_engine_reinitializes_and_generates_after_stop() {
-    Chorus::LlamaEngine engine;
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
     Chorus::ChorusConfig config;
     config.model_path = MODEL_PATH;
     config.use_gpu = false;
+
+    std::atomic<int> tokens{0};
+    std::atomic<bool> done{false};
+
+    // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
+    Chorus::LlamaEngine engine;
 
     ASSERT_TRUE(!engine.initialize(config).has_value());
     engine.stop();
@@ -189,9 +204,6 @@ void test_engine_reinitializes_and_generates_after_stop() {
     req.id = 1;
     req.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
     req.gen_config.max_tokens = 5;
-
-    std::atomic<int> tokens{0};
-    std::atomic<bool> done{false};
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (sig.type == Chorus::EventType::Token)
             tokens++;
@@ -213,13 +225,6 @@ void test_engine_reinitializes_and_generates_after_stop() {
 
 int run_llama_integration_tests() {
     std::cout << "\n--- LLAMA INTEGRATION SUITE ---\n";
-
-    FILE* f = fopen(MODEL_PATH.c_str(), "rb");
-    if (!f) {
-        std::cout << RED << "[ERROR] Test model not found at: " << MODEL_PATH << RESET << "\n";
-        return 1;
-    }
-    fclose(f);
 
     run_test("Llama_Model_Load", test_model_loading);
     run_test("Llama_Generation_Stream", test_simple_generation);

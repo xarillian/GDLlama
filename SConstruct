@@ -130,10 +130,10 @@ if env["platform"] == "windows":
     
     env.Append(CCFLAGS=["/MD"])
 
-    # /std:c++17 : Enable C++17 features
+    # /std:c++20 : Enable C++20 features (our code; vendored deps stay at C++17)
     # /EHsc      : Enable C++ exceptions (Required by llama.cpp/json)
     # /bigobj    : Often needed for heavy template headers like json.hpp
-    env.Append(CXXFLAGS=["/std:c++17", "/EHsc", "/bigobj"])
+    env.Append(CXXFLAGS=["/std:c++20", "/EHsc", "/bigobj"])
     env["LIBPATH"] = lib_paths
     env.Append(LIBS=["advapi32", "user32", "kernel32"])
 
@@ -147,7 +147,7 @@ if env["platform"] == "windows":
             print(">>> [SCons] WARNING: VULKAN_SDK env var not found. Linking might fail.")
 else:
     # Linux / macOS settings
-    env.Append(CXXFLAGS=["-std=c++17", "-fexceptions"])
+    env.Append(CXXFLAGS=["-std=c++20", "-fexceptions"])
 
     if sys.platform.startswith("linux"):
         env.Append(CXXFLAGS=["-fopenmp"])

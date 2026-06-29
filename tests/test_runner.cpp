@@ -1,19 +1,25 @@
+#include <cstdlib>
 #include <iostream>
+
+#include "test_utils.hpp"
 
 int run_core_mechanics_tests();
 int run_llama_integration_tests();
+int run_llama_scheduler_tests();
 int run_llama_utils_tests();
 
-extern int g_tests_passed;
-extern int g_tests_failed;
-
 int main(int argc, char** argv) {
+    g_run_model_tests = !model_tests_disabled_by_env(std::getenv("CHORUS_SKIP_MODEL_TESTS"));
+    if (argc > 1)
+        g_test_filter = argv[1];
+
     std::cout << "======================================\n";
     std::cout << "      CHORUS UNIFIED TEST SUITE       \n";
     std::cout << "======================================\n";
 
     run_core_mechanics_tests();
     run_llama_integration_tests();
+    run_llama_scheduler_tests();
     run_llama_utils_tests();
 
     std::cout << "\n======================================\n";

@@ -3,7 +3,6 @@
 
 #include "llama.h"
 
-#include <cstdio>
 #include <iostream>
 #include <string>
 
@@ -44,6 +43,8 @@ struct LlamaContextFixture {
 // ---------------------------------------------------------------------------
 
 void test_tokenize_resizes_and_retries_on_overflow() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
     LlamaContextFixture fixture;
     ASSERT_TRUE(fixture.load());
 
@@ -55,6 +56,8 @@ void test_tokenize_resizes_and_retries_on_overflow() {
 }
 
 void test_tokenize_returns_tokens_for_normal_ascii_input() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
     LlamaContextFixture fixture;
     ASSERT_TRUE(fixture.load());
 
@@ -65,6 +68,8 @@ void test_tokenize_returns_tokens_for_normal_ascii_input() {
 }
 
 void test_tokenize_returns_special_tokens_for_empty_string_with_special_tokens_enabled() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
     LlamaContextFixture fixture;
     ASSERT_TRUE(fixture.load());
 
@@ -75,6 +80,8 @@ void test_tokenize_returns_special_tokens_for_empty_string_with_special_tokens_e
 }
 
 void test_tokenize_returns_empty_for_empty_string_with_special_tokens_disabled() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
     LlamaContextFixture fixture;
     ASSERT_TRUE(fixture.load());
 
@@ -90,13 +97,6 @@ void test_tokenize_returns_empty_for_empty_string_with_special_tokens_disabled()
 
 int run_llama_utils_tests() {
     std::cout << "\n--- LLAMA UTILS SUITE ---\n";
-
-    FILE* model_file = fopen(UTILS_MODEL_PATH.c_str(), "rb");
-    if (!model_file) {
-        std::cout << RED << "[SKIP] Test model not found." << RESET << "\n";
-        return 0;
-    }
-    fclose(model_file);
 
     run_test("Tokenize_ResizesAndRetriesOnOverflow", test_tokenize_resizes_and_retries_on_overflow);
     run_test("Tokenize_ReturnsTokensForNormalAsciiInput", test_tokenize_returns_tokens_for_normal_ascii_input);

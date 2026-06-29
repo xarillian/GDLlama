@@ -248,6 +248,50 @@ void test_submit_in_fail_mode_propagates_chosen_error_code_to_caller() {
     ASSERT_TRUE(received == Chorus::ChorusError::Decode);
 }
 
+void test_submit_in_fail_mode_propagates_Tokenize_error_code() {
+    MockInferenceEngine engine;
+    Chorus::ChorusConfig config;
+    config.model_path = "mock.bin";
+    engine.initialize(config);
+    engine.fail_with = Chorus::ChorusError::Tokenize;
+
+    Chorus::ChorusError received = Chorus::ChorusError::None;
+    bool got_error_event = false;
+
+    Chorus::ChorusRequest req;
+    req.id = 9;
+    req.prompt = "Hello";
+    req.on_event = [&](const Chorus::ChorusSignal& sig) {
+        if (sig.is_error()) {
+            received = sig.error_code;
+            got_error_event = true;
+        }
+    };
+
+    engine.submit_request(req);
+
+    ASSERT_TRUE(got_error_event);
+    ASSERT_TRUE(received == Chorus::ChorusError::Tokenize);
+}
+
+void test_model_tests_disabled_by_env_only_for_explicit_1() {
+    ASSERT_TRUE(!model_tests_disabled_by_env(nullptr)); // unset  -> enabled
+    ASSERT_TRUE(!model_tests_disabled_by_env("0"));     // "0"    -> enabled
+    ASSERT_TRUE(!model_tests_disabled_by_env(""));      // empty  -> enabled
+    ASSERT_TRUE(model_tests_disabled_by_env("1"));      // "1"    -> disabled
+}
+
+void test_name_filter_matches_substring_and_empty_runs_all() {
+    g_test_filter = "";
+    ASSERT_TRUE(test_name_matches("AnythingAtAll"));
+
+    g_test_filter = "Decode";
+    ASSERT_TRUE(test_name_matches("Transient_Decode_failure"));
+    ASSERT_TRUE(!test_name_matches("Priority_ordering"));
+
+    g_test_filter = ""; // restore so later tests are unaffected
+}
+
 // ---------------------------------------------------------------------------
 // Suite entry point
 // ---------------------------------------------------------------------------
@@ -275,6 +319,9 @@ int run_core_mechanics_tests() {
         "Submit_in_fail_mode_propagates_chosen_error_code_to_caller",
         test_submit_in_fail_mode_propagates_chosen_error_code_to_caller
     );
+    run_test(
+        "Submit_in_fail_mode_propagates_Tokenize_error_code", test_submit_in_fail_mode_propagates_Tokenize_error_code
+    );
 
     run_test(
         "chorus_log_forwards_level_and_message_to_callback", test_chorus_log_forwards_level_and_message_to_callback
@@ -287,6 +334,8 @@ int run_core_mechanics_tests() {
         "LogCallback_on_ChorusConfig_is_invoked_by_chorus_log",
         test_LogCallback_on_ChorusConfig_is_invoked_by_chorus_log
     );
+    run_test("Model_tests_disabled_by_env_only_for_explicit_1", test_model_tests_disabled_by_env_only_for_explicit_1);
+    run_test("Name_filter_matches_substring_and_empty_runs_all", test_name_filter_matches_substring_and_empty_runs_all);
 
     std::cout << "\n======================================\n";
     if (g_tests_failed > 0) {
