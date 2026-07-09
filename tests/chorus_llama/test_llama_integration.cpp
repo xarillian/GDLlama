@@ -79,10 +79,11 @@ void test_simple_generation() {
     if (timeout_ms <= 0) {
         std::cerr << RED << "[FAILED] Timed out waiting for generation." << RESET << "\n";
         g_tests_failed++;
-    } else {
-        ASSERT_TRUE(full_response.length() > 0);
-        std::cout << "  [INFO] Received " << full_response.length() << " characters.\n";
+        return;
     }
+
+    ASSERT_TRUE(full_response.length() > 0);
+    std::cout << "  [INFO] Received " << full_response.length() << " characters.\n";
 }
 
 void test_concurrent_requests_complete_with_multiple_slots() {
