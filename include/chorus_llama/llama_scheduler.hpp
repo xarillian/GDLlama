@@ -68,6 +68,7 @@ class LlamaScheduler {
     std::thread worker_thread;
 
     int32_t _tokens_per_tick = 512;
+    int32_t _batch_capacity = 0; // token capacity of `batch`; prepare_next_batch must never exceed it
     Chorus::LogCallback _log;
 
     struct llama_batch* batch = nullptr;

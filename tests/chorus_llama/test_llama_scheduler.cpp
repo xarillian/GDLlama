@@ -194,12 +194,85 @@ void test_slot_reusable_after_request_completes() {
     engine.stop();
 }
 
+void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
+    Chorus::ChorusConfig config;
+    config.model_path = MODEL_PATH;
+    config.use_gpu = false;
+    config.context_size = 64;    // batch capacity == context_size
+    config.tokens_per_tick = 64; // per-slot demand; 4 slots * 64 = 256 tokens offered to a 64-token batch
+    config.num_slots = 4;
+
+    // Long prompts keep every slot in prefill for many ticks, so multiple slots
+    // contribute to the same batch regardless of ingest timing.
+    std::string long_prompt;
+    for (int i = 0; i < 40; ++i)
+        long_prompt += "The quick brown fox jumps over the lazy dog. ";
+
+    std::atomic<int> terminal_signals{0};
+    std::atomic<bool> small_done{false};
+    std::atomic<int> small_tokens{0};
+
+    // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
+    Chorus::LlamaEngine engine;
+
+    ASSERT_TRUE(!engine.initialize(config).has_value());
+
+    for (int64_t id = 1; id <= 4; ++id) {
+        Chorus::ChorusRequest req;
+        req.id = id;
+        req.prompt = long_prompt;
+        req.gen_config.max_tokens = 4;
+        req.on_event = [&](const Chorus::ChorusSignal& sig) {
+            if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
+                terminal_signals++;
+        };
+        engine.submit_request(req);
+    }
+
+    int timeout_ms = 15000;
+    while (terminal_signals < 4 && timeout_ms > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        timeout_ms -= 50;
+    }
+    // Overcommitting the batch must resolve through the defined error path
+    // (KV exhaustion -> Decode error), never a batch-buffer overrun.
+    ASSERT_EQ(terminal_signals.load(), 4);
+
+    // Engine must keep running: a fresh small request still completes.
+    Chorus::ChorusRequest small;
+    small.id = 5;
+    small.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
+    small.gen_config.max_tokens = 4;
+    small.on_event = [&](const Chorus::ChorusSignal& sig) {
+        if (sig.type == Chorus::EventType::Token)
+            small_tokens++;
+        else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
+            small_done = true;
+    };
+    engine.submit_request(small);
+
+    timeout_ms = 15000;
+    while (!small_done && timeout_ms > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        timeout_ms -= 50;
+    }
+    ASSERT_TRUE(small_done);
+    ASSERT_TRUE(small_tokens > 0);
+
+    engine.stop();
+}
+
 int run_llama_scheduler_tests() {
     std::cout << "\n--- LLAMA SCHEDULER SUITE ---\n";
 
     run_test("Transient_decode_failure_recovers", test_transient_decode_failure_recovers);
     run_test("Higher_priority_request_served_first", test_higher_priority_request_served_first);
     run_test("Slot_reusable_after_request_completes", test_slot_reusable_after_request_completes);
+    run_test(
+        "Batch_demand_beyond_capacity_is_clamped_not_overrun", test_batch_demand_beyond_capacity_is_clamped_not_overrun
+    );
 
     std::cout << "\n======================================\n";
     if (g_tests_failed > 0) {

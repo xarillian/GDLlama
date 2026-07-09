@@ -29,7 +29,8 @@ def build_llama_with_cmake(target, source, env):
 
     # --- GPU CONFIG --- #
 
-    targets_to_build = ["llama", "common"]
+    # llama.cpp b9934 renamed the `common` target to `llama-common` (+ `llama-common-base`).
+    targets_to_build = ["llama", "llama-common"]
 
     if env.get("use_vulkan", False):
         print(">>> [SCons] Enabling Vulkan Backend")
@@ -197,7 +198,8 @@ sources_godot        = Glob("bin/obj/godot_chorus/*.cpp")
 # ----------------------------------------------------------------------
 # CMAKE TARGET DEFINITION
 # ----------------------------------------------------------------------
-llama_libs = ["llama", "ggml", "ggml-cpu", "ggml-base", "common"]
+# Static link order: llama-common pulls from llama-common-base and llama, so it comes first.
+llama_libs = ["llama-common", "llama-common-base", "llama", "ggml", "ggml-cpu", "ggml-base"]
 
 if env["platform"] == "windows":
     llama_libs = [lib + ".lib" for lib in llama_libs]

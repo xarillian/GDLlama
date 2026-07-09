@@ -73,7 +73,17 @@ std::optional<Chorus::ChorusError> LlamaScheduler::initialize(const Chorus::Chor
 
     init_slots(config.num_slots);
     _tokens_per_tick = config.tokens_per_tick;
+    _batch_capacity = config.context_size;
     _log = config.log_callback;
+
+    if (static_cast<int64_t>(config.num_slots) * config.tokens_per_tick > config.context_size) {
+        Chorus::chorus_log(
+            _log,
+            Chorus::LogLevel::Warn,
+            "num_slots * tokens_per_tick exceeds context_size; per-tick batch demand will be clamped to the batch "
+            "capacity (context_size)."
+        );
+    }
 
     batch = new llama_batch(llama_batch_init(config.context_size, 0, 1));
 
@@ -210,10 +220,15 @@ bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
         if (!slot.is_busy)
             continue;
 
+        // The batch buffers hold _batch_capacity entries; overrunning them is heap corruption.
+        size_t capacity_left = (size_t)_batch_capacity - curr_batch.n_tokens;
+        if (capacity_left == 0)
+            break;
+
         if (slot.input_cursor < slot.current_input_tokens.size()) {
 
             size_t n_remaining = slot.current_input_tokens.size() - slot.input_cursor;
-            size_t n_chunk = std::min(n_remaining, (size_t)tokens_per_tick);
+            size_t n_chunk = std::min({n_remaining, (size_t)tokens_per_tick, capacity_left});
 
             for (size_t i = 0; i < n_chunk; ++i) {
                 int32_t pos = slot.n_past + i;
