@@ -1,8 +1,9 @@
 # Workflow Ignores
 /demo/
 /old_src/
-/.docs/
 TODO.md
+AGENTS.md
+CLAUDE.md
 
 # Test Models
 /tests/models/
