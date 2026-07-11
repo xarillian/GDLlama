@@ -1,5 +1,5 @@
-#include "../test_utils.hpp"
-#include "../../include/chorus_llama/llama_utils.hpp"
+#include "test_utils.hpp"
+#include "chorus/engines/llama/llama_utils.hpp"
 
 #include "llama.h"
 

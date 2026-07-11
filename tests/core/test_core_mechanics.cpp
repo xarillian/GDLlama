@@ -1,6 +1,6 @@
-#include "../include/chorus_core/chorus_log.hpp"
-#include "../include/chorus_core/inference_engine.hpp"
-#include "../test_utils.hpp"
+#include "test_utils.hpp"
+#include "chorus/core/inference_engine.hpp"
+#include "chorus/core/log.hpp"
 #include <optional>
 #include <thread>
 

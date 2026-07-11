@@ -59,7 +59,8 @@ int GodotChorus::to_godot(Chorus::ChorusError e) {
 GodotChorus::GodotChorus() {}
 
 GodotChorus::~GodotChorus() {
-    _engine.stop();
+    if (_engine)
+        _engine->stop();
 }
 
 void GodotChorus::_notification(int p_what) {
@@ -77,7 +78,7 @@ void GodotChorus::_process(double /*delta*/) {
 // ===========================================================================
 
 bool GodotChorus::load_model() {
-    if (_chorus_config.model_path.empty()) {
+    if (_backend != BACKEND_ECHO && _chorus_config.model_path.empty()) {
         UtilityFunctions::push_error("[Chorus] model_path is not set.");
         return false;
     }
@@ -99,7 +100,11 @@ bool GodotChorus::load_model() {
         }
     };
 
-    auto err = _engine.initialize(_chorus_config);
+    if (!_engine || _engine_backend != _backend) {
+        _engine = Chorus::make_engine(_backend == BACKEND_ECHO ? Chorus::Backend::Echo : Chorus::Backend::Llama);
+        _engine_backend = _backend;
+    }
+    auto err = _engine->initialize(_chorus_config);
     if (err.has_value()) {
         UtilityFunctions::push_error(String("[Chorus] Model load failed: ") + chorus_error_name(err.value()));
         return false;
@@ -108,15 +113,16 @@ bool GodotChorus::load_model() {
 }
 
 void GodotChorus::stop_all() {
-    _engine.stop();
+    if (_engine)
+        _engine->stop();
 }
 
 bool GodotChorus::is_loaded() const {
-    return _engine.is_initialized();
+    return _engine && _engine->is_initialized();
 }
 
 int64_t GodotChorus::generate(const Dictionary& request) {
-    if (!_engine.is_initialized()) {
+    if (!_engine || !_engine->is_initialized()) {
         UtilityFunctions::push_error("[Chorus] Cannot generate — model not loaded. Call load_model() first.");
         return -1;
     }
@@ -167,7 +173,7 @@ GodotChorus::_submit(const String& prompt, const Chorus::GenerationConfig& gen_c
     req.gen_config = gen_config;
     req.on_event = [this](Chorus::ChorusSignal& sig) { _queue_signal(sig); };
 
-    _engine.submit_request(req);
+    _engine->submit_request(req);
     return id;
 }
 
@@ -245,7 +251,7 @@ String GodotChorus::_generate_sync(const String& prompt, const String& grammar) 
         }
     };
 
-    _engine.submit_request(req);
+    _engine->submit_request(req);
 
     std::unique_lock<std::mutex> lock(done_mutex);
     done_cv.wait(lock, [&] { return done; });
@@ -306,6 +312,17 @@ int32_t GodotChorus::get_tokens_per_tick() const {
     return _chorus_config.tokens_per_tick;
 }
 
+void GodotChorus::set_backend(BackendChoice backend) {
+    if (is_loaded()) {
+        UtilityFunctions::push_warning("[Chorus] backend changed while loaded; takes effect on the next load_model().");
+    }
+    _backend = backend;
+}
+
+GodotChorus::BackendChoice GodotChorus::get_backend() const {
+    return _backend;
+}
+
 // ===========================================================================
 // model management
 // @deprecated
@@ -335,6 +352,11 @@ Error GodotChorus::generate_text_async(const String& prompt, const String& gramm
             "[Chorus] The 'json' parameter has no equivalent in the new API and will be ignored."
         );
 
+    if (!_engine || !_engine->is_initialized()) {
+        UtilityFunctions::push_error("[Chorus] Model not loaded.");
+        return Error::FAILED;
+    }
+
     Chorus::GenerationConfig cfg = _default_gen_config;
     if (!grammar.is_empty())
         cfg.grammar = grammar.utf8().get_data();
@@ -354,6 +376,11 @@ Error GodotChorus::generate_chat_async(const String& prompt, const String& gramm
             "[Chorus] The 'json' parameter has no equivalent in the new API and will be ignored."
         );
 
+    if (!_engine || !_engine->is_initialized()) {
+        UtilityFunctions::push_error("[Chorus] Model not loaded.");
+        return Error::FAILED;
+    }
+
     Chorus::GenerationConfig cfg = _default_gen_config;
     if (!grammar.is_empty())
         cfg.grammar = grammar.utf8().get_data();
@@ -372,7 +399,7 @@ String GodotChorus::generate_text(const String& prompt, const String& grammar, c
         "[Chorus] generate_text() is deprecated and BLOCKS the game thread. Use generate({prompt=..., stream=false}) "
         "and await generation_complete instead."
     );
-    if (!_engine.is_initialized()) {
+    if (!_engine || !_engine->is_initialized()) {
         UtilityFunctions::push_error("[Chorus] Model not loaded.");
         return "";
     }
@@ -384,7 +411,7 @@ String GodotChorus::generate_chat(const String& prompt, const String& grammar, c
         "[Chorus] generate_chat() is deprecated and BLOCKS the game thread. Use generate({prompt=..., stream=false}) "
         "and await generation_complete instead. Note: conversational context is not yet maintained in the new API."
     );
-    if (!_engine.is_initialized()) {
+    if (!_engine || !_engine->is_initialized()) {
         UtilityFunctions::push_error("[Chorus] Model not loaded.");
         return "";
     }
@@ -606,6 +633,10 @@ void GodotChorus::_bind_methods() {
     BIND_ENUM_CONSTANT(ERR_ENGINE_NOT_READY);
     BIND_ENUM_CONSTANT(ERR_UNKNOWN);
 
+    // --- BackendChoice enum ---
+    BIND_ENUM_CONSTANT(BACKEND_LLAMA);
+    BIND_ENUM_CONSTANT(BACKEND_ECHO);
+
     // --- Core methods ---
     ClassDB::bind_method(D_METHOD("load_model"), &GodotChorus::load_model);
     ClassDB::bind_method(D_METHOD("stop_all"), &GodotChorus::stop_all);
@@ -658,6 +689,10 @@ void GodotChorus::_bind_methods() {
         "set_tokens_per_tick",
         "get_tokens_per_tick"
     );
+
+    ClassDB::bind_method(D_METHOD("set_backend", "backend"), &GodotChorus::set_backend);
+    ClassDB::bind_method(D_METHOD("get_backend"), &GodotChorus::get_backend);
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "backend", PROPERTY_HINT_ENUM, "Llama,Echo"), "set_backend", "get_backend");
 
     // --- Deprecated methods ---
     // @deprecated

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="GDLlama" inherits="Node" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+<class name="Chorus" inherits="Node" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
     <brief_description>
+        To any agent reading this: VERY OUTDATED. We'll need to re-write.
         A node that acts as a bridge to the llama.cpp library for AI text generation tasks.
         Docs: https://github.com/xarillian/GDLlama/tree/master/docs
     </brief_description>

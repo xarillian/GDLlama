@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chorus_common.hpp"
+#include "chorus/core/common.hpp"
 
 #include <optional>
 

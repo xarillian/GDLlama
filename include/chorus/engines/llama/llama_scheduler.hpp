@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chorus_core/chorus_common.hpp"
+#include "chorus/core/common.hpp"
 
 #include <atomic>
 #include <condition_variable>

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "chorus_core/chorus_common.hpp"
-#include "chorus_core/inference_engine.hpp"
+#include "chorus/core/common.hpp"
+#include "chorus/core/inference_engine.hpp"
 
 #include <memory>
 #include <optional>
@@ -12,7 +12,7 @@ namespace Chorus {
 class LlamaEngine : public InferenceEngine {
   public:
     LlamaEngine();
-    ~LlamaEngine();
+    ~LlamaEngine() override;
 
     std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config) override;
     void submit_request(const Chorus::ChorusRequest& chorus_request) override;

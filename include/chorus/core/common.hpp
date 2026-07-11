@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "chorus_log.hpp"
+#include "chorus/core/log.hpp"
 
 namespace Chorus {
 

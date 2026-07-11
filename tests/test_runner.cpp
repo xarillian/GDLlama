@@ -4,6 +4,8 @@
 #include "test_utils.hpp"
 
 int run_core_mechanics_tests();
+int run_echo_engine_tests();
+int run_engine_factory_tests();
 int run_llama_integration_tests();
 int run_llama_scheduler_tests();
 int run_llama_utils_tests();
@@ -18,6 +20,8 @@ int main(int argc, char** argv) {
     std::cout << "======================================\n";
 
     run_core_mechanics_tests();
+    run_echo_engine_tests();
+    run_engine_factory_tests();
     run_llama_integration_tests();
     run_llama_scheduler_tests();
     run_llama_utils_tests();

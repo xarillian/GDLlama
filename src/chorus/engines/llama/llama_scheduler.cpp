@@ -1,6 +1,6 @@
-#include "chorus_llama/llama_scheduler.hpp"
-#include "chorus_core/chorus_common.hpp"
-#include "chorus_llama/llama_utils.hpp"
+#include "chorus/engines/llama/llama_scheduler.hpp"
+#include "chorus/core/common.hpp"
+#include "chorus/engines/llama/llama_utils.hpp"
 
 #include <algorithm>
 #include <cassert>

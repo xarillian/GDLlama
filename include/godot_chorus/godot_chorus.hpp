@@ -10,8 +10,10 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 
-#include "chorus_core/chorus_common.hpp"
-#include "chorus_llama/llama_engine.hpp"
+#include "chorus/core/common.hpp"
+#include "chorus/engine_factory.hpp"
+
+#include <memory>
 
 using namespace godot;
 
@@ -33,6 +35,14 @@ class GodotChorus : public Node {
         ERR_ENGINE_NOT_READY,
         ERR_UNKNOWN,
     };
+
+    enum BackendChoice {
+        BACKEND_LLAMA, // mirrors Chorus::Backend::Llama
+        BACKEND_ECHO,  // mirrors Chorus::Backend::Echo
+    };
+
+    void set_backend(BackendChoice backend);
+    BackendChoice get_backend() const;
 
     static int to_godot(Chorus::ChorusError e);
 
@@ -146,7 +156,9 @@ class GodotChorus : public Node {
     int32_t get_main_gpu() const;
 
   private:
-    Chorus::LlamaEngine _engine;
+    std::unique_ptr<Chorus::InferenceEngine> _engine;
+    BackendChoice _backend = BACKEND_LLAMA;
+    BackendChoice _engine_backend = BACKEND_LLAMA; // backend the live _engine was constructed with
     Chorus::ChorusConfig _chorus_config;
 
     // Default generation config
@@ -172,3 +184,4 @@ class GodotChorus : public Node {
 };
 
 VARIANT_ENUM_CAST(GodotChorus::ErrorCode);
+VARIANT_ENUM_CAST(GodotChorus::BackendChoice);

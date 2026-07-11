@@ -187,13 +187,28 @@ env.Append(CPPPATH=[
 # ----------------------------------------------------------------------
 # VariantDir redirects intermediate build artifacts (.os/.o) into bin/obj/
 # so they don't clutter the source tree. duplicate=0 keeps sources in place.
-VariantDir("bin/obj/chorus_core",  "src/chorus_core",  duplicate=0)
-VariantDir("bin/obj/chorus_llama", "src/chorus_llama", duplicate=0)
+VariantDir("bin/obj/chorus",       "src/chorus",       duplicate=0)
 VariantDir("bin/obj/godot_chorus", "src/godot_chorus", duplicate=0)
+VariantDir("bin/obj/tests",        "tests",            duplicate=0)
 
-sources_core         = Glob("bin/obj/chorus_core/*.cpp")
-sources_chorus_llama = Glob("bin/obj/chorus_llama/*.cpp")
-sources_godot        = Glob("bin/obj/godot_chorus/*.cpp")
+sources_factory = Glob("bin/obj/chorus/*.cpp")
+sources_echo    = Glob("bin/obj/chorus/engines/echo/*.cpp")
+sources_llama   = Glob("bin/obj/chorus/engines/llama/*.cpp")
+sources_godot   = Glob("bin/obj/godot_chorus/*.cpp")
+sources_tests   = (
+    Glob("bin/obj/tests/*.cpp") +
+    Glob("bin/obj/tests/core/*.cpp") +
+    Glob("bin/obj/tests/engines/echo/*.cpp") +
+    Glob("bin/obj/tests/engines/llama/*.cpp")
+)
+
+# Tests compile under their own env. Built by one helper so the compiledb section
+# below mirrors the exact flags the real test build uses (clangd needs them too).
+def make_test_env(base_env):
+    test_env = base_env.Clone()
+    test_env.Append(CPPDEFINES=["TEST_BUILD"])
+    test_env.Append(CPPPATH=["tests"])
+    return test_env
 
 # ----------------------------------------------------------------------
 # CMAKE TARGET DEFINITION
@@ -226,12 +241,8 @@ cmake_target = env.Command(
 if "compiledb" in COMMAND_LINE_TARGETS:
     env.Tool("compilation_db")
     compiledb = env.CompilationDatabase("compile_commands.json")
-    all_sources = (
-        Glob("bin/obj/chorus_core/*.cpp") +
-        Glob("bin/obj/chorus_llama/*.cpp") +
-        Glob("bin/obj/godot_chorus/*.cpp")
-    )
-    env.Object(all_sources)
+    env.Object(sources_factory + sources_echo + sources_llama + sources_godot)
+    make_test_env(env).Object(sources_tests)
     Alias("compiledb", compiledb)
     Default(compiledb)
 
@@ -239,22 +250,15 @@ if "compiledb" in COMMAND_LINE_TARGETS:
 # BUILD TARGETS
 # ----------------------------------------------------------------------
 if "test" in COMMAND_LINE_TARGETS:
-    test_env = env.Clone()
-    test_env.Append(CPPDEFINES=["TEST_BUILD"])
+    test_env = make_test_env(env)
     if env["platform"] == "windows":
         test_env.Append(LINKFLAGS=["/SUBSYSTEM:CONSOLE"])
-
-    test_libs = (
-        Glob("tests/*.cpp") + 
-        Glob("tests/chorus_core/*.cpp") + 
-        Glob("tests/chorus_llama/*.cpp")
-    )
 
     test_env.Append(LIBS=llama_libs)
 
     test_program = test_env.Program(
         target="bin/run_tests",
-        source=sources_core + sources_chorus_llama + test_libs,
+        source=sources_echo + sources_llama + sources_factory + sources_tests,
     )
 
     test_env.Depends(test_program, cmake_target)
@@ -267,7 +271,7 @@ else:
     
     library = env.SharedLibrary(
         target="bin/libgodot_chorus",
-        source=sources_core + sources_chorus_llama + sources_godot
+        source=sources_echo + sources_llama + sources_factory + sources_godot
     )
     env.Depends(library, cmake_target)
     Default(library)
