@@ -192,14 +192,16 @@ VariantDir("bin/obj/godot_chorus", "src/godot_chorus", duplicate=0)
 VariantDir("bin/obj/tests",        "tests",            duplicate=0)
 
 sources_factory = Glob("bin/obj/chorus/*.cpp")
-sources_echo    = Glob("bin/obj/chorus/engines/echo/*.cpp")
-sources_llama   = Glob("bin/obj/chorus/engines/llama/*.cpp")
+sources_runtime = Glob("bin/obj/chorus/runtime/*.cpp")
+sources_echo    = Glob("bin/obj/chorus/backends/echo/*.cpp")
+sources_llama   = Glob("bin/obj/chorus/backends/llama/*.cpp")
 sources_godot   = Glob("bin/obj/godot_chorus/*.cpp")
 sources_tests   = (
     Glob("bin/obj/tests/*.cpp") +
     Glob("bin/obj/tests/core/*.cpp") +
-    Glob("bin/obj/tests/engines/echo/*.cpp") +
-    Glob("bin/obj/tests/engines/llama/*.cpp")
+    Glob("bin/obj/tests/backends/echo/*.cpp") +
+    Glob("bin/obj/tests/backends/llama/*.cpp") +
+    Glob("bin/obj/tests/runtime/*.cpp")
 )
 
 # Tests compile under their own env. Built by one helper so the compiledb section
@@ -241,7 +243,7 @@ cmake_target = env.Command(
 if "compiledb" in COMMAND_LINE_TARGETS:
     env.Tool("compilation_db")
     compiledb = env.CompilationDatabase("compile_commands.json")
-    env.Object(sources_factory + sources_echo + sources_llama + sources_godot)
+    env.Object(sources_factory + sources_runtime + sources_echo + sources_llama + sources_godot)
     make_test_env(env).Object(sources_tests)
     Alias("compiledb", compiledb)
     Default(compiledb)
@@ -258,7 +260,7 @@ if "test" in COMMAND_LINE_TARGETS:
 
     test_program = test_env.Program(
         target="bin/run_tests",
-        source=sources_echo + sources_llama + sources_factory + sources_tests,
+        source=sources_echo + sources_llama + sources_factory + sources_runtime + sources_tests,
     )
 
     test_env.Depends(test_program, cmake_target)
@@ -268,10 +270,10 @@ if "test" in COMMAND_LINE_TARGETS:
 else:
     # --- LIBRARY BUILD (DEFAULT) ---
     env.Append(LIBS=llama_libs)
-    
+
     library = env.SharedLibrary(
         target="bin/libgodot_chorus",
-        source=sources_echo + sources_llama + sources_factory + sources_godot
+        source=sources_echo + sources_llama + sources_factory + sources_runtime + sources_godot
     )
     env.Depends(library, cmake_target)
     Default(library)

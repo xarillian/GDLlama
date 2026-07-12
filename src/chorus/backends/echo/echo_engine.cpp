@@ -1,4 +1,4 @@
-#include "chorus/engines/echo/echo_engine.hpp"
+#include "chorus/backends/echo/echo_engine.hpp"
 
 namespace Chorus {
 EchoEngine::EchoEngine() {}

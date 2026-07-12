@@ -1,7 +1,7 @@
 #include "chorus/engine_factory.hpp"
 
-#include "chorus/engines/echo/echo_engine.hpp"
-#include "chorus/engines/llama/llama_engine.hpp"
+#include "chorus/backends/echo/echo_engine.hpp"
+#include "chorus/backends/llama/llama_engine.hpp"
 
 namespace Chorus {
 std::unique_ptr<InferenceEngine> make_engine(Backend backend) {

@@ -1,6 +1,6 @@
 #include "test_utils.hpp"
 #include "chorus/core/common.hpp"
-#include "chorus/engines/llama/llama_engine.hpp"
+#include "chorus/backends/llama/llama_engine.hpp"
 
 #include <atomic>
 #include <chrono>

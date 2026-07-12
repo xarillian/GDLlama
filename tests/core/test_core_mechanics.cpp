@@ -1,88 +1,11 @@
-#include "test_utils.hpp"
 #include "chorus/core/inference_engine.hpp"
 #include "chorus/core/log.hpp"
+#include "sync_mock_engine.hpp"
+#include "test_utils.hpp"
 #include <optional>
-#include <thread>
-
-// A "Dummy" LLM backend -- thank you Gemini!
-class MockInferenceEngine : public Chorus::InferenceEngine {
-  public:
-    bool initialized = false;
-    std::vector<int64_t> received_ids;
-    Chorus::ChorusError fail_with = Chorus::ChorusError::None;
-
-    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config) override {
-        if (config.model_path.empty())
-            return Chorus::ChorusError::InvalidRequest;
-        initialized = true;
-        return std::nullopt;
-    }
-
-    void submit_request(const Chorus::ChorusRequest& req) override {
-        // 1. Check Initialization
-        if (!initialized) {
-            if (req.on_event) {
-                Chorus::ChorusSignal sig;
-                sig.request_id = req.id;
-                sig.type = Chorus::EventType::Error;
-                sig.error_code = Chorus::ChorusError::EngineNotReady;
-                sig.text = "Engine not initialized";
-                req.on_event(sig);
-            }
-            return;
-        }
-
-        // 2. Check fail-mode
-        if (fail_with != Chorus::ChorusError::None) {
-            if (req.on_event) {
-                Chorus::ChorusSignal sig;
-                sig.request_id = req.id;
-                sig.type = Chorus::EventType::Error;
-                sig.error_code = fail_with;
-                sig.text = "Mock failure";
-                req.on_event(sig);
-            }
-            return;
-        }
-
-        received_ids.push_back(req.id);
-
-        // 2. Fire Async Events
-        std::thread([req]() {
-            // Emulate Token 1
-            if (req.on_event) {
-                Chorus::ChorusSignal sig;
-                sig.request_id = req.id;
-                sig.type = Chorus::EventType::Token;
-                sig.text = "Test";
-                req.on_event(sig);
-            }
-
-            // Emulate Token 2
-            if (req.on_event) {
-                Chorus::ChorusSignal sig;
-                sig.request_id = req.id;
-                sig.type = Chorus::EventType::Token;
-                sig.text = "Token";
-                req.on_event(sig);
-            }
-
-            // Emulate Stop
-            if (req.on_event) {
-                Chorus::ChorusSignal sig;
-                sig.request_id = req.id;
-                sig.type = Chorus::EventType::Stop;
-                req.on_event(sig);
-            }
-        }).detach();
-    }
-
-    void stop() override { initialized = false; }
-    bool is_initialized() const override { return initialized; }
-};
 
 void test_initialize_returns_nullopt_on_success() {
-    MockInferenceEngine engine;
+    SyncMockEngine engine;
     Chorus::ChorusConfig config;
     config.model_path = "mock_model.bin";
 
@@ -94,9 +17,10 @@ void test_initialize_returns_nullopt_on_success() {
 }
 
 void test_initialize_returns_InvalidRequest_on_empty_model_path() {
-    MockInferenceEngine engine;
+    SyncMockEngine engine;
     Chorus::ChorusConfig config;
     config.model_path = "";
+    engine.fail_initialize_with = Chorus::ChorusError::InvalidRequest;
 
     auto err = engine.initialize(config);
     ASSERT_TRUE(err.has_value());
@@ -105,10 +29,11 @@ void test_initialize_returns_InvalidRequest_on_empty_model_path() {
 }
 
 void test_request_submission() {
-    MockInferenceEngine engine;
+    SyncMockEngine engine;
     Chorus::ChorusConfig config;
     config.model_path = "mock.bin";
     engine.initialize(config);
+    engine.tokens = {"Test", "Token"};
 
     bool completed = false;
     std::string content = "";
@@ -127,12 +52,10 @@ void test_request_submission() {
 
     engine.submit_request(req);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
     ASSERT_TRUE(completed);
     ASSERT_EQ(content, "TestToken");
-    ASSERT_EQ(engine.received_ids.size(), 1);
-    ASSERT_EQ(engine.received_ids[0], 12345);
+    ASSERT_EQ(engine.submitted_ids.size(), 1);
+    ASSERT_EQ(engine.submitted_ids[0], 12345);
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +63,8 @@ void test_request_submission() {
 // ---------------------------------------------------------------------------
 
 void test_submit_to_uninitialized_engine_signals_EngineNotReady_error_code() {
-    MockInferenceEngine engine;
+    SyncMockEngine engine;
+    engine.fail_submit_with = Chorus::ChorusError::EngineNotReady;
 
     Chorus::ChorusError received_code = Chorus::ChorusError::None;
     std::string received_text;
@@ -227,11 +151,11 @@ void test_LogCallback_on_ChorusConfig_is_invoked_by_chorus_log() {
 }
 
 void test_submit_in_fail_mode_propagates_chosen_error_code_to_caller() {
-    MockInferenceEngine engine;
+    SyncMockEngine engine;
     Chorus::ChorusConfig config;
     config.model_path = "mock.bin";
     engine.initialize(config);
-    engine.fail_with = Chorus::ChorusError::Decode;
+    engine.fail_submit_with = Chorus::ChorusError::Decode;
 
     Chorus::ChorusError received = Chorus::ChorusError::None;
 
@@ -249,11 +173,11 @@ void test_submit_in_fail_mode_propagates_chosen_error_code_to_caller() {
 }
 
 void test_submit_in_fail_mode_propagates_Tokenize_error_code() {
-    MockInferenceEngine engine;
+    SyncMockEngine engine;
     Chorus::ChorusConfig config;
     config.model_path = "mock.bin";
     engine.initialize(config);
-    engine.fail_with = Chorus::ChorusError::Tokenize;
+    engine.fail_submit_with = Chorus::ChorusError::Tokenize;
 
     Chorus::ChorusError received = Chorus::ChorusError::None;
     bool got_error_event = false;

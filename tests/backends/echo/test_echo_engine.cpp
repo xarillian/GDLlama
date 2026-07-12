@@ -1,5 +1,5 @@
 #include "chorus/core/common.hpp"
-#include "chorus/engines/echo/echo_engine.hpp"
+#include "chorus/backends/echo/echo_engine.hpp"
 #include "test_utils.hpp"
 
 #include <chrono>

@@ -17,6 +17,7 @@ enum class ChorusError {
     Tokenize,       // Tokenization failed
     InvalidRequest, // Bad input from caller (missing prompt, bad config, etc.)
     EngineNotReady, // Operation attempted before engine is initialized
+    Cancelled,      // Request terminated by stop_all()/engine replacement before completion
     Unknown,        // Catch-all for unexpected failures
 };
 

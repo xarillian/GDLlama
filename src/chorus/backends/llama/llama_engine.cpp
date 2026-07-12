@@ -1,6 +1,6 @@
-#include "chorus/engines/llama/llama_engine.hpp"
+#include "chorus/backends/llama/llama_engine.hpp"
 #include "chorus/core/common.hpp"
-#include "chorus/engines/llama/llama_scheduler.hpp"
+#include "chorus/backends/llama/llama_scheduler.hpp"
 
 namespace Chorus {
 LlamaEngine::LlamaEngine() {
