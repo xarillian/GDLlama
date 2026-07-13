@@ -1,5 +1,6 @@
 #pragma once
 
+#include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 
 #include <optional>
@@ -27,6 +28,23 @@ class InferenceEngine {
     virtual void submit_request(const Chorus::ChorusRequest& chorus_request) = 0;
 
     virtual void stop() = 0;
+
+    // --- 3c capability contract (all three are host-thread-only, like
+    // initialize/stop: they read state those methods mutate; they are never
+    // called from engine workers) ---
+
+    // Pre-init: the backend envelope. Post-init: the effective intersection
+    // of backend, model, and load configuration.
+    virtual EngineCapabilities capabilities() const = 0;
+
+    // Populated after successful initialization; never reports ModelFormat::Auto.
+    virtual std::optional<LoadedModelInfo> loaded_model_info() const = 0;
+
+    // Lightweight, side-effect-free synchronous check: readiness, request
+    // type, constraint format, and named options. Never rejects a request
+    // for carrying a session id. Acceptance does not guarantee execution
+    // cannot fail later.
+    virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
 };
 
 } // namespace Chorus

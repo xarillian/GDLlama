@@ -25,6 +25,10 @@ class GodotChorus : public godot::Node {
         ERR_INVALID_REQUEST,
         ERR_ENGINE_NOT_READY,
         ERR_CANCELLED,
+        ERR_UNSUPPORTED_MODEL_FORMAT,
+        ERR_UNSUPPORTED_FEATURE,
+        ERR_UNSUPPORTED_OPTION,
+        ERR_SESSION_BUSY,
         ERR_UNKNOWN,
     };
 
@@ -52,9 +56,17 @@ class GodotChorus : public godot::Node {
     //   temperature: float
     //   top_k: int
     //   top_p: float
-    //   repeat_penalty: float
     //   seed: int
-    //   grammar: String      (GBNF)  <- @todo wire into sampler (#4)
+    //   session: String      (stable continuity lane, e.g. "npc_42/dialogue"; one live request per
+    //                          session; empty/omitted = stateless. A same-frame resubmit after
+    //                          stop_all()/load_model() is SessionBusy until poll() drains the Cancelled
+    //                          terminal; deliberate, to preserve per-session event ordering.)
+    //   backend_options: Dictionary
+    //                        (namespaced, e.g. {"llama": {"repeat_penalty": 1.1}}; unknown options
+    //                          are rejected, never ignored)
+    //   repeat_penalty: float (convenience for backend_options["llama"]["repeat_penalty"]; applied
+    //                          after backend_options, so it wins if both are given)
+    //   grammar: String      (GBNF)  <- rejected until sampler wiring lands (#4)
     // Returns the request ID (>= 0) on success, or -1 on failure.
     int64_t generate(const godot::Dictionary& request);
 
@@ -84,7 +96,15 @@ class GodotChorus : public godot::Node {
 
   private:
     Chorus::ChorusRuntime _runtime;
-    Chorus::ChorusConfig _chorus_config;
+
+    godot::String _model_path;
+    int32_t _context_size = 2048;
+    int32_t _thread_count = 4;
+    bool _use_gpu = true;
+    int32_t _gpu_layers = 99;
+    int32_t _num_slots = 1;
+    int32_t _tokens_per_tick = 512;
+
     BackendChoice _backend = BACKEND_LLAMA;
 };
 

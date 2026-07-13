@@ -15,7 +15,12 @@ std::optional<ChorusError> EchoEngine::initialize(const ChorusConfig& config) {
         return std::nullopt;
     }
 
-    // No model file needed; model_path is ignored by design.
+    // No model asset is needed; any ModelSpec is accepted and unread by design.
+    if (!config.backend_options.empty()) {
+        chorus_log(_log, LogLevel::Error, "EchoEngine accepts no backend options.");
+        return ChorusError::UnsupportedOption;
+    }
+
     _running = true;
     _worker = std::thread(&EchoEngine::worker_loop, this);
     _initialized = true;
@@ -63,6 +68,41 @@ void EchoEngine::stop() {
 
 bool EchoEngine::is_initialized() const {
     return _initialized;
+}
+
+EngineCapabilities EchoEngine::capabilities() const {
+    EngineCapabilities caps;
+    caps.backend_id = "echo";
+    caps.input_modalities = {Modality::Text};
+    caps.output_modalities = {Modality::Text};
+    caps.scheduling = SchedulingAuthority::BackendManaged;
+    caps.streaming = true;
+    // Everything else stays false/empty: Echo honors no generation options
+    // until #4 teaches it max_tokens and cancellation.
+    return caps;
+}
+
+std::optional<LoadedModelInfo> EchoEngine::loaded_model_info() const {
+    return std::nullopt; // model-free by design
+}
+
+std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest& request) const {
+    if (!_initialized)
+        return RequestRejection{ChorusError::EngineNotReady, "EchoEngine is not initialized."};
+    if (request.type == RequestType::Embedding)
+        return RequestRejection{ChorusError::UnsupportedFeature, "EchoEngine does not produce embeddings."};
+    if (request.gen_config.common.constraint)
+        return RequestRejection{ChorusError::UnsupportedFeature, "EchoEngine supports no output constraints."};
+    const auto& c = request.gen_config.common;
+    if (c.max_tokens || c.temperature || c.top_k || c.top_p || c.seed || c.frequency_penalty || c.presence_penalty ||
+        !c.stop.empty())
+        return RequestRejection{
+            ChorusError::UnsupportedOption,
+            "EchoEngine honors no generation options; unset them or use another backend."
+        };
+    if (!request.gen_config.backend_options.empty())
+        return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine accepts no backend options."};
+    return std::nullopt;
 }
 
 void EchoEngine::worker_loop() {

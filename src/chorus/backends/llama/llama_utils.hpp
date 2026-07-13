@@ -1,6 +1,7 @@
 #pragma once
 
 #include "chorus/core/common.hpp"
+#include "chorus/core/options.hpp"
 #include "llama.h"
 
 #include <string>
@@ -53,29 +54,50 @@ inline std::string token_to_piece(llama_context* ctx, llama_token token) {
     return std::string(buf, n);
 }
 
-inline llama_sampler* build_sampler(const Chorus::GenerationConfig& gen_config) {
+// Unset portable fields resolve to llama.cpp's own defaults (verified against
+// the pinned revision, b9934). This is the one place those numbers live.
+struct ResolvedSampling {
+    int32_t max_tokens = -1; // upstream n_predict default: until EOS/context
+    float temperature = 0.80f;
+    int32_t top_k = 40;
+    float top_p = 0.95f;
+    uint32_t seed = LLAMA_DEFAULT_SEED; // sentinel: random
+    float repeat_penalty = 1.0f;        // upstream default: disabled
+};
+
+inline ResolvedSampling resolve_sampling(const Chorus::GenerationConfig& config) {
+    ResolvedSampling r;
+    const auto& c = config.common;
+    if (c.max_tokens)
+        r.max_tokens = *c.max_tokens;
+    if (c.temperature)
+        r.temperature = *c.temperature;
+    if (c.top_k)
+        r.top_k = *c.top_k;
+    if (c.top_p)
+        r.top_p = *c.top_p;
+    if (c.seed)
+        r.seed = static_cast<uint32_t>(*c.seed); // llama.cpp seeds are 32-bit
+    auto ns = config.backend_options.find("llama");
+    if (ns != config.backend_options.end()) {
+        if (const auto* llama_opts = std::get_if<Chorus::OptionMap>(&ns->second)) {
+            auto rp = llama_opts->find("repeat_penalty");
+            if (rp != llama_opts->end())
+                if (const auto* v = std::get_if<double>(&rp->second))
+                    r.repeat_penalty = static_cast<float>(*v);
+        }
+    }
+    return r;
+}
+
+inline llama_sampler* build_sampler(const ResolvedSampling& s) {
     llama_sampler_chain_params params = llama_sampler_chain_default_params();
     llama_sampler* chain = llama_sampler_chain_init(params);
-
-    // Penalties
-    llama_sampler_chain_add(
-        chain,
-        llama_sampler_init_penalties(
-            -1, // last_n
-            gen_config.repeat_penalty,
-            0.0f, // freq_penalty
-            0.0f  // present_penalty
-        )
-    );
-
-    // Sampling strategies
-    llama_sampler_chain_add(chain, llama_sampler_init_top_k(gen_config.top_k));
-    llama_sampler_chain_add(chain, llama_sampler_init_top_p(gen_config.top_p, 1));
-    llama_sampler_chain_add(chain, llama_sampler_init_temp(gen_config.temperature));
-
-    // RNG
-    llama_sampler_chain_add(chain, llama_sampler_init_dist(gen_config.seed));
-
+    llama_sampler_chain_add(chain, llama_sampler_init_penalties(-1, s.repeat_penalty, 0.0f, 0.0f));
+    llama_sampler_chain_add(chain, llama_sampler_init_top_k(s.top_k));
+    llama_sampler_chain_add(chain, llama_sampler_init_top_p(s.top_p, 1));
+    llama_sampler_chain_add(chain, llama_sampler_init_temp(s.temperature));
+    llama_sampler_chain_add(chain, llama_sampler_init_dist(s.seed));
     return chain;
 }
 } // namespace LlamaUtils

@@ -8,9 +8,9 @@
 #include <string>
 #include <vector>
 
-static Chorus::ChorusConfig make_config(const std::string& path = "mock.bin") {
+static Chorus::ChorusConfig make_config(const std::string& model_id = "mock.bin") {
     Chorus::ChorusConfig config;
-    config.model_path = path;
+    config.model.model_id = model_id;
     return config;
 }
 
@@ -323,9 +323,9 @@ void test_two_consecutive_loads_apply_each_config() {
     Chorus::ChorusRuntime runtime;
     std::string path_a, path_b;
     auto e1 = std::make_unique<SyncMockEngine>();
-    e1->seen_model_path = &path_a;
+    e1->seen_model_id = &path_a;
     auto e2 = std::make_unique<SyncMockEngine>();
-    e2->seen_model_path = &path_b;
+    e2->seen_model_id = &path_b;
 
     auto err_a = runtime.load_engine(std::move(e1), make_config("a.gguf"));
     ASSERT_TRUE(!err_a.has_value());

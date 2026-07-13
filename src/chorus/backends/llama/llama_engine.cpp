@@ -1,8 +1,18 @@
 #include "chorus/backends/llama/llama_engine.hpp"
-#include "chorus/core/common.hpp"
 #include "chorus/backends/llama/llama_scheduler.hpp"
+#include "chorus/core/common.hpp"
+
+#include <algorithm>
+#include <iterator>
+#include <variant>
 
 namespace Chorus {
+
+namespace {
+constexpr const char* kLlamaPortableOptions[] = {"max_tokens", "temperature", "top_k", "top_p", "seed"};
+constexpr const char* kLlamaBackendGenOptions[] = {"repeat_penalty"};
+} // namespace
+
 LlamaEngine::LlamaEngine() {
     // constructor can be empty -- `initialize` does the work
 }
@@ -23,9 +33,9 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config) {
         stop(); // resets scheduler + _initialized; safe now that stop() is robust
     }
 
-    if (config.model_path.empty()) {
-        chorus_log(_log, LogLevel::Error, "Model path is empty.");
-        return ChorusError::InvalidRequest;
+    if (config.model.format != ModelFormat::Gguf && config.model.format != ModelFormat::Auto) {
+        chorus_log(_log, LogLevel::Error, "LlamaEngine loads GGUF only.");
+        return ChorusError::UnsupportedModelFormat;
     }
 
     try {
@@ -74,5 +84,65 @@ void LlamaEngine::stop() {
 
 bool LlamaEngine::is_initialized() const {
     return _initialized;
+}
+
+EngineCapabilities LlamaEngine::capabilities() const {
+    EngineCapabilities caps;
+    caps.backend_id = "llama";
+    caps.model_formats = {ModelFormat::Gguf};
+    caps.input_modalities = {Modality::Text};
+    caps.output_modalities = {Modality::Text};
+    // constraint_formats stays empty until #4 wires the grammar sampler:
+    // claiming Gbnf before it constrains would violate the conformance rule.
+    caps.scheduling = SchedulingAuthority::ChorusManaged;
+    caps.streaming = true;
+    // cancellation arrives with #4, native_sessions with #9, prompt_rendering
+    // with #5, embeddings with #6.
+    caps.portable_generation_options.assign(std::begin(kLlamaPortableOptions), std::end(kLlamaPortableOptions));
+    caps.backend_generation_options.assign(std::begin(kLlamaBackendGenOptions), std::end(kLlamaBackendGenOptions));
+    return caps;
+}
+
+std::optional<LoadedModelInfo> LlamaEngine::loaded_model_info() const {
+    if (!scheduler)
+        return std::nullopt;
+    return scheduler->model_info();
+}
+
+std::optional<RequestRejection> LlamaEngine::validate_request(const ChorusRequest& request) const {
+    if (!_initialized || !scheduler || !scheduler->is_healthy())
+        return RequestRejection{ChorusError::EngineNotReady, "LlamaEngine is not initialized."};
+    if (request.type == RequestType::Embedding)
+        return RequestRejection{ChorusError::UnsupportedFeature, "Embeddings arrive with workstream #6."};
+    const auto& c = request.gen_config.common;
+    if (c.constraint)
+        return RequestRejection{
+            ChorusError::UnsupportedFeature, "Structured output (grammar/schema) arrives with workstream #4."
+        };
+    if (c.frequency_penalty || c.presence_penalty)
+        return RequestRejection{
+            ChorusError::UnsupportedOption, "frequency/presence penalties arrive with workstream #4."
+        };
+    if (!c.stop.empty())
+        return RequestRejection{ChorusError::UnsupportedOption, "Stop sequences arrive with workstream #4."};
+    for (const auto& [ns, value] : request.gen_config.backend_options) {
+        if (ns != "llama")
+            return RequestRejection{ChorusError::UnsupportedOption, "Unknown option namespace '" + ns + "'"};
+        const auto* opts = std::get_if<OptionMap>(&value);
+        if (!opts)
+            return RequestRejection{ChorusError::UnsupportedOption, "'llama' options must be a map."};
+        for (const auto& [key, v] : *opts) {
+            const bool known = std::find_if(
+                                   std::begin(kLlamaBackendGenOptions),
+                                   std::end(kLlamaBackendGenOptions),
+                                   [&](const char* k) { return key == k; }
+                               ) != std::end(kLlamaBackendGenOptions);
+            if (!known || !std::holds_alternative<double>(v))
+                return RequestRejection{
+                    ChorusError::UnsupportedOption, "Unknown or mistyped llama generation option '" + key + "'"
+                };
+        }
+    }
+    return std::nullopt;
 }
 } // namespace Chorus

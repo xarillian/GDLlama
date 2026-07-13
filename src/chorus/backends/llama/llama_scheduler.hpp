@@ -1,13 +1,17 @@
 #pragma once
 
+#include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <mutex>
 #include <optional>
 #include <queue>
+#include <string>
 #include <thread>
+#include <variant>
 #include <vector>
 
 struct llama_model;
@@ -25,9 +29,25 @@ class LlamaScheduler {
     void stop();
     bool is_healthy() const;
 
+    const std::optional<Chorus::LoadedModelInfo>& model_info() const { return _model_info; }
+
   private:
-    bool load_model_from_file(const Chorus::ChorusConfig& config);
-    bool init_context(const Chorus::ChorusConfig& config);
+    struct LoadConfig {
+        std::string weights_path;
+        int32_t context_size = 2048;
+        int32_t thread_count = 4;
+        bool use_gpu = true;
+        int32_t gpu_layers = 99;
+        int32_t num_slots = 1;
+        int32_t tokens_per_tick = 512;
+    };
+    // Parses config.model + config.backend_options["llama"]. Unknown keys, wrong
+    // value types, missing weights asset, or non-empty model.backend_options
+    // return an error: options are never silently dropped.
+    static std::variant<LoadConfig, Chorus::RequestRejection> parse_load_config(const Chorus::ChorusConfig& config);
+
+    bool load_model_from_file(const LoadConfig& config);
+    bool init_context(const LoadConfig& config);
     void init_slots(int count);
 
     void ingest_new_requests();
@@ -42,8 +62,9 @@ class LlamaScheduler {
         bool is_busy = false;
 
         Chorus::ChorusRequest current_request;
-        int32_t n_past = 0;    // KV cache position; advanced only in prepare_next_batch
-        int32_t n_decoded = 0; // generated (sampled) tokens; advanced only in worker_loop
+        int32_t n_past = 0;      // KV cache position; advanced only in prepare_next_batch
+        int32_t n_decoded = 0;   // generated (sampled) tokens; advanced only in worker_loop
+        int32_t max_tokens = -1; // resolved at ingest; -1 means unbounded (until EOS/context)
 
         // Input State
         std::vector<int32_t> current_input_tokens;
@@ -70,6 +91,7 @@ class LlamaScheduler {
     int32_t _tokens_per_tick = 512;
     int32_t _batch_capacity = 0; // token capacity of `batch`; prepare_next_batch must never exceed it
     Chorus::LogCallback _log;
+    std::optional<Chorus::LoadedModelInfo> _model_info;
 
     struct llama_batch* batch = nullptr;
 };

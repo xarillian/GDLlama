@@ -28,6 +28,14 @@ static const char* chorus_error_name(Chorus::ChorusError e) {
         return "EngineNotReady";
     case Chorus::ChorusError::Cancelled:
         return "Cancelled";
+    case Chorus::ChorusError::UnsupportedModelFormat:
+        return "UnsupportedModelFormat";
+    case Chorus::ChorusError::UnsupportedFeature:
+        return "UnsupportedFeature";
+    case Chorus::ChorusError::UnsupportedOption:
+        return "UnsupportedOption";
+    case Chorus::ChorusError::SessionBusy:
+        return "SessionBusy";
     case Chorus::ChorusError::Unknown:
         return "Unknown";
     }
@@ -52,6 +60,14 @@ int GodotChorus::to_godot(Chorus::ChorusError e) {
         return ERR_ENGINE_NOT_READY;
     case Chorus::ChorusError::Cancelled:
         return ERR_CANCELLED;
+    case Chorus::ChorusError::UnsupportedModelFormat:
+        return ERR_UNSUPPORTED_MODEL_FORMAT;
+    case Chorus::ChorusError::UnsupportedFeature:
+        return ERR_UNSUPPORTED_FEATURE;
+    case Chorus::ChorusError::UnsupportedOption:
+        return ERR_UNSUPPORTED_OPTION;
+    case Chorus::ChorusError::SessionBusy:
+        return ERR_SESSION_BUSY;
     case Chorus::ChorusError::Unknown:
         return ERR_UNKNOWN;
     }
@@ -70,15 +86,18 @@ void GodotChorus::_notification(int p_what) {
 
 void GodotChorus::_process(double /*delta*/) {
     for (const auto& event : _runtime.poll()) {
+        const String session = event.session_id ? String(event.session_id->c_str()) : String();
         switch (event.kind) {
         case Chorus::RuntimeEvent::Kind::Token:
-            emit_signal("token_generated", event.request_id, String(event.text.c_str()));
+            emit_signal("token_generated", event.request_id, session, String(event.text.c_str()));
             break;
         case Chorus::RuntimeEvent::Kind::Complete:
-            emit_signal("generation_complete", event.request_id, String(event.text.c_str()));
+            emit_signal("generation_complete", event.request_id, session, String(event.text.c_str()));
             break;
         case Chorus::RuntimeEvent::Kind::Error:
-            emit_signal("generation_error", event.request_id, to_godot(event.error), String(event.text.c_str()));
+            emit_signal(
+                "generation_error", event.request_id, session, to_godot(event.error), String(event.text.c_str())
+            );
             break;
         }
     }
@@ -88,13 +107,52 @@ void GodotChorus::_process(double /*delta*/) {
 // Core API
 // ===========================================================================
 
+static std::optional<Chorus::OptionValue> variant_to_option_value(const Variant& v) {
+    switch (v.get_type()) {
+    case Variant::BOOL:
+        return Chorus::OptionValue{(bool)v};
+    case Variant::INT:
+        return Chorus::OptionValue{(int64_t)v};
+    case Variant::FLOAT:
+        return Chorus::OptionValue{(double)v};
+    case Variant::STRING:
+        return Chorus::OptionValue{std::string(((String)v).utf8().get_data())};
+    case Variant::ARRAY: {
+        Chorus::OptionList list;
+        Array arr = v;
+        for (int i = 0; i < arr.size(); ++i) {
+            auto item = variant_to_option_value(arr[i]);
+            if (!item)
+                return std::nullopt;
+            list.push_back(std::move(*item));
+        }
+        return Chorus::OptionValue{std::move(list)};
+    }
+    case Variant::DICTIONARY: {
+        Chorus::OptionMap map;
+        Dictionary dict = v;
+        Array keys = dict.keys();
+        for (int i = 0; i < keys.size(); ++i) {
+            auto item = variant_to_option_value(dict[keys[i]]);
+            if (!item)
+                return std::nullopt;
+            map[std::string(((String)keys[i]).utf8().get_data())] = std::move(*item);
+        }
+        return Chorus::OptionValue{std::move(map)};
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
 bool GodotChorus::load_model() {
-    if (_backend != BACKEND_ECHO && _chorus_config.model_path.empty()) {
+    if (_backend != BACKEND_ECHO && _model_path.is_empty()) {
         UtilityFunctions::push_error("[Chorus] model_path is not set.");
         return false;
     }
 
-    _chorus_config.log_callback = [](Chorus::LogLevel level, const std::string& msg) {
+    Chorus::ChorusConfig config;
+    config.log_callback = [](Chorus::LogLevel level, const std::string& msg) {
         String godot_msg = String("[Chorus] ") + String(msg.c_str());
         switch (level) {
         case Chorus::LogLevel::Debug:
@@ -110,9 +168,23 @@ bool GodotChorus::load_model() {
             break;
         }
     };
+    if (_backend != BACKEND_ECHO) {
+        config.model.model_id = _model_path.get_file().get_basename().utf8().get_data();
+        config.model.format = Chorus::ModelFormat::Gguf;
+        config.model.assets.push_back({"weights", _model_path.utf8().get_data(), std::nullopt, std::nullopt});
+        config.backend_options["llama"] = Chorus::OptionMap{
+            {"context_size", int64_t{_context_size}},
+            {"thread_count", int64_t{_thread_count}},
+            {"use_gpu", _use_gpu},
+            {"gpu_layers", int64_t{_gpu_layers}},
+            {"num_slots", int64_t{_num_slots}},
+            {"tokens_per_tick", int64_t{_tokens_per_tick}},
+        };
+    }
+    // Echo: empty ModelSpec, no options (it rejects any it is given).
 
     auto engine = Chorus::make_engine(_backend == BACKEND_ECHO ? Chorus::Backend::Echo : Chorus::Backend::Llama);
-    auto err = _runtime.load_engine(std::move(engine), _chorus_config);
+    auto err = _runtime.load_engine(std::move(engine), config);
     if (err.has_value()) {
         UtilityFunctions::push_error(String("[Chorus] Model load failed: ") + chorus_error_name(err.value()));
         return false;
@@ -140,23 +212,50 @@ int64_t GodotChorus::generate(const Dictionary& request) {
     gen_request.priority = request.has("priority") ? (int)(int64_t)request["priority"] : 0;
 
     if (request.has("max_tokens"))
-        gen_request.config.max_tokens = (int32_t)(int64_t)request["max_tokens"];
+        gen_request.config.common.max_tokens = (int32_t)(int64_t)request["max_tokens"];
     if (request.has("temperature"))
-        gen_request.config.temperature = (float)request["temperature"];
+        gen_request.config.common.temperature = (float)request["temperature"];
     if (request.has("top_k"))
-        gen_request.config.top_k = (int32_t)(int64_t)request["top_k"];
+        gen_request.config.common.top_k = (int32_t)(int64_t)request["top_k"];
     if (request.has("top_p"))
-        gen_request.config.top_p = (float)request["top_p"];
-    if (request.has("repeat_penalty"))
-        gen_request.config.repeat_penalty = (float)request["repeat_penalty"];
+        gen_request.config.common.top_p = (float)request["top_p"];
     if (request.has("seed"))
-        gen_request.config.seed = (uint32_t)(int64_t)request["seed"];
-    if (request.has("grammar"))
-        gen_request.config.grammar = ((String)request["grammar"]).utf8().get_data();
+        gen_request.config.common.seed = (uint64_t)(int64_t)request["seed"];
+
+    if (request.has("session"))
+        gen_request.session_id = std::string(((String)request["session"]).utf8().get_data());
+
+    if (request.has("backend_options")) {
+        auto converted = variant_to_option_value(request["backend_options"]);
+        if (!converted || !std::holds_alternative<Chorus::OptionMap>(*converted)) {
+            UtilityFunctions::push_error(
+                "[Chorus] generate(): backend_options must be a Dictionary of "
+                "bool/int/float/String/Array/Dictionary values."
+            );
+            return -1;
+        }
+        gen_request.config.backend_options = std::get<Chorus::OptionMap>(*converted);
+    }
+
+    if (request.has("repeat_penalty")) {
+        auto& llama_opts = gen_request.config.backend_options["llama"];
+        if (!std::holds_alternative<Chorus::OptionMap>(llama_opts))
+            llama_opts = Chorus::OptionMap{};
+        std::get<Chorus::OptionMap>(llama_opts)["repeat_penalty"] = (double)(float)request["repeat_penalty"];
+    }
+
+    if (request.has("grammar")) {
+        Chorus::OutputConstraint constraint;
+        constraint.format = Chorus::ConstraintFormat::Gbnf;
+        constraint.source = ((String)request["grammar"]).utf8().get_data();
+        gen_request.config.common.constraint = constraint;
+    }
 
     auto result = _runtime.submit(gen_request);
     if (!result.ok()) {
         String message = String("[Chorus] generate() rejected: ") + chorus_error_name(result.error);
+        if (!result.message.empty())
+            message += String(" - ") + String(result.message.c_str());
         if (result.error == Chorus::ChorusError::EngineNotReady)
             message += ". Call load_model() first.";
         UtilityFunctions::push_error(message);
@@ -170,52 +269,52 @@ int64_t GodotChorus::generate(const Dictionary& request) {
 // ===========================================================================
 
 void GodotChorus::set_model_path(const String& path) {
-    _chorus_config.model_path = path.utf8().get_data();
+    _model_path = path;
 }
 String GodotChorus::get_model_path() const {
-    return String(_chorus_config.model_path.c_str());
+    return _model_path;
 }
 
 void GodotChorus::set_context_size(int32_t size) {
-    _chorus_config.context_size = size;
+    _context_size = size;
 }
 int32_t GodotChorus::get_context_size() const {
-    return _chorus_config.context_size;
+    return _context_size;
 }
 
 void GodotChorus::set_thread_count(int32_t count) {
-    _chorus_config.thread_count = count;
+    _thread_count = count;
 }
 int32_t GodotChorus::get_thread_count() const {
-    return _chorus_config.thread_count;
+    return _thread_count;
 }
 
 void GodotChorus::set_use_gpu(bool use) {
-    _chorus_config.use_gpu = use;
+    _use_gpu = use;
 }
 bool GodotChorus::get_use_gpu() const {
-    return _chorus_config.use_gpu;
+    return _use_gpu;
 }
 
 void GodotChorus::set_gpu_layers(int32_t layers) {
-    _chorus_config.gpu_layers = layers;
+    _gpu_layers = layers;
 }
 int32_t GodotChorus::get_gpu_layers() const {
-    return _chorus_config.gpu_layers;
+    return _gpu_layers;
 }
 
 void GodotChorus::set_num_slots(int32_t count) {
-    _chorus_config.num_slots = count;
+    _num_slots = count;
 }
 int32_t GodotChorus::get_num_slots() const {
-    return _chorus_config.num_slots;
+    return _num_slots;
 }
 
 void GodotChorus::set_tokens_per_tick(int32_t count) {
-    _chorus_config.tokens_per_tick = count;
+    _tokens_per_tick = count;
 }
 int32_t GodotChorus::get_tokens_per_tick() const {
-    return _chorus_config.tokens_per_tick;
+    return _tokens_per_tick;
 }
 
 void GodotChorus::set_backend(BackendChoice backend) {
@@ -255,15 +354,22 @@ float GodotChorus::similarity_cos(PackedFloat32Array array1, PackedFloat32Array 
 
 void GodotChorus::_bind_methods() {
     // --- Signals ---
-    ADD_SIGNAL(
-        MethodInfo("token_generated", PropertyInfo(Variant::INT, "request_id"), PropertyInfo(Variant::STRING, "token"))
-    );
     ADD_SIGNAL(MethodInfo(
-        "generation_complete", PropertyInfo(Variant::INT, "request_id"), PropertyInfo(Variant::STRING, "full_text")
+        "token_generated",
+        PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::STRING, "session"),
+        PropertyInfo(Variant::STRING, "token")
+    ));
+    ADD_SIGNAL(MethodInfo(
+        "generation_complete",
+        PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::STRING, "session"),
+        PropertyInfo(Variant::STRING, "full_text")
     ));
     ADD_SIGNAL(MethodInfo(
         "generation_error",
         PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::STRING, "session"),
         PropertyInfo(Variant::INT, "error_code"),
         PropertyInfo(Variant::STRING, "message")
     ));
@@ -277,6 +383,10 @@ void GodotChorus::_bind_methods() {
     BIND_ENUM_CONSTANT(ERR_INVALID_REQUEST);
     BIND_ENUM_CONSTANT(ERR_ENGINE_NOT_READY);
     BIND_ENUM_CONSTANT(ERR_CANCELLED);
+    BIND_ENUM_CONSTANT(ERR_UNSUPPORTED_MODEL_FORMAT);
+    BIND_ENUM_CONSTANT(ERR_UNSUPPORTED_FEATURE);
+    BIND_ENUM_CONSTANT(ERR_UNSUPPORTED_OPTION);
+    BIND_ENUM_CONSTANT(ERR_SESSION_BUSY);
     BIND_ENUM_CONSTANT(ERR_UNKNOWN);
 
     // --- BackendChoice enum ---

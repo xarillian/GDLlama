@@ -35,22 +35,39 @@ bool ChorusRuntime::is_loaded() const {
 SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
     assert_host_thread();
     if (!is_loaded())
-        return SubmitResult{-1, ChorusError::EngineNotReady};
+        return SubmitResult{-1, ChorusError::EngineNotReady, "No engine is loaded."};
+    if (request.session_id && request.session_id->empty())
+        return SubmitResult{
+            -1,
+            ChorusError::InvalidRequest,
+            "session_id must be non-empty when present; omit it for stateless requests."
+        };
+    if (request.session_id && _active_sessions.count(*request.session_id))
+        return SubmitResult{
+            -1, ChorusError::SessionBusy, "Session '" + *request.session_id + "' already has a live request."
+        };
 
     const int64_t id = _next_request_id.fetch_add(1);
-    // State exists before the engine sees the request: engines may invoke
-    // on_event inline during submit_request.
-    _request_streaming[id] = request.stream;
-
     ChorusRequest engine_request;
     engine_request.id = id;
+    engine_request.session_id = request.session_id;
     engine_request.priority = request.priority;
     engine_request.prompt = request.prompt;
     engine_request.gen_config = request.config;
     engine_request.on_event = [this](ChorusSignal& sig) { enqueue_signal(sig); };
 
+    if (auto rejection = _engine->validate_request(engine_request))
+        return SubmitResult{-1, rejection->error, rejection->message};
+
+    // Live state exists before the engine sees the request: engines may invoke
+    // on_event inline during submit_request.
+    _request_streaming[id] = request.stream;
+    if (request.session_id) {
+        _request_sessions[id] = *request.session_id;
+        _active_sessions.insert(*request.session_id);
+    }
     _engine->submit_request(engine_request);
-    return SubmitResult{id, ChorusError::None};
+    return SubmitResult{id, ChorusError::None, ""};
 }
 
 std::vector<RuntimeEvent> ChorusRuntime::poll() {
@@ -68,21 +85,36 @@ std::vector<RuntimeEvent> ChorusRuntime::poll() {
         if (streaming_it == _request_streaming.end())
             continue; // no live state: late token, duplicate terminal, or unknown id
 
+        auto session_it = _request_sessions.find(id);
+        std::optional<SessionId> session;
+        if (session_it != _request_sessions.end())
+            session = session_it->second;
+
         switch (sig.type) {
         case EventType::Token:
             _accumulator[id] += sig.text;
             if (streaming_it->second)
-                events.push_back({id, RuntimeEvent::Kind::Token, sig.text, ChorusError::None});
+                events.push_back({id, session, RuntimeEvent::Kind::Token, sig.text, ChorusError::None});
             break;
         case EventType::Stop:
-            events.push_back({id, RuntimeEvent::Kind::Complete, std::move(_accumulator[id]), ChorusError::None});
+            events.push_back(
+                {id, session, RuntimeEvent::Kind::Complete, std::move(_accumulator[id]), ChorusError::None}
+            );
             _accumulator.erase(id);
             _request_streaming.erase(id);
+            if (session_it != _request_sessions.end()) {
+                _active_sessions.erase(session_it->second);
+                _request_sessions.erase(session_it);
+            }
             break;
         case EventType::Error:
-            events.push_back({id, RuntimeEvent::Kind::Error, sig.text, sig.error_code});
+            events.push_back({id, session, RuntimeEvent::Kind::Error, sig.text, sig.error_code});
             _accumulator.erase(id);
             _request_streaming.erase(id);
+            if (session_it != _request_sessions.end()) {
+                _active_sessions.erase(session_it->second);
+                _request_sessions.erase(session_it);
+            }
             break;
         default:
             break; // EventType::Embedding et al.: not consumed pre-#6

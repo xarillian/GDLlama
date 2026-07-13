@@ -2,46 +2,68 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "chorus/core/log.hpp"
+#include "chorus/core/model_spec.hpp"
+#include "chorus/core/options.hpp"
 
 namespace Chorus {
 
 enum class ChorusError {
-    None,           // No error
-    ModelLoad,      // Failed to load model file
-    ContextInit,    // Failed to create inference context
-    Decode,         // Inference decode step failed
-    Tokenize,       // Tokenization failed
-    InvalidRequest, // Bad input from caller (missing prompt, bad config, etc.)
-    EngineNotReady, // Operation attempted before engine is initialized
-    Cancelled,      // Request terminated by stop_all()/engine replacement before completion
-    Unknown,        // Catch-all for unexpected failures
+    None,                   // No error
+    ModelLoad,              // Failed to load model file
+    ContextInit,            // Failed to create inference context
+    Decode,                 // Inference decode step failed
+    Tokenize,               // Tokenization failed
+    InvalidRequest,         // Bad input from caller (missing prompt, bad config, etc.)
+    EngineNotReady,         // Operation attempted before engine is initialized
+    Cancelled,              // Request terminated by stop_all()/engine replacement before completion
+    UnsupportedModelFormat, // Backend cannot load the requested artifact format
+    UnsupportedFeature,     // Requested capability (constraint, modality, ...) not supported
+    UnsupportedOption,      // A set option is unknown or not honored; never silently dropped
+    SessionBusy,            // Session already has a live request
+    Unknown,                // Catch-all for unexpected failures
 };
 
 struct ChorusConfig {
-    std::string model_path;
-    int32_t context_size = 2048;   // llama.cpp's original default
-    int32_t thread_count = 4;      // conservative enough to avoid over-subscribing most machines out of the box
-    bool use_gpu = true;           // GPU is almost always faster; safer to opt-out than opt-in
-    int32_t gpu_layers = 99;       // use all layers on GPU by default
-    int32_t num_slots = 1;         // matches llama.cpp's n_seq_max default; increase for concurrent requests
-    int32_t tokens_per_tick = 512; // large enough for throughput, small enough not to stall a game tick
+    ModelSpec model;
+    OptionMap backend_options; // engine-wide options, namespaced: backend_options["llama"]
+    LogCallback log_callback;  // optional; falls back to stderr if not set
+};
 
-    LogCallback log_callback; // Optional; falls back to stderr if not set
+enum class ConstraintFormat {
+    Gbnf,
+    JsonSchema,
+    Regex,
+    Lark,
+};
+
+struct OutputConstraint {
+    ConstraintFormat format = ConstraintFormat::Gbnf;
+    std::string source; // grammar text, schema JSON, pattern, ...
+};
+
+// Every field optional: unset means "backend default", set is a deliberate
+// instruction the backend must honor or reject (spec 3c-D). No literal
+// defaults here; resolution happens inside each backend.
+struct PortableGenerationConfig {
+    std::optional<int32_t> max_tokens;
+    std::optional<float> temperature;
+    std::optional<int32_t> top_k;
+    std::optional<float> top_p;
+    std::optional<uint64_t> seed;
+    std::optional<float> frequency_penalty;
+    std::optional<float> presence_penalty;
+    std::vector<std::string> stop; // empty = none requested
+    std::optional<OutputConstraint> constraint;
 };
 
 struct GenerationConfig {
-    int32_t max_tokens = 128;    // -1 for infinite
-    float temperature = 0.8f;    // less boring than 1.0, hopefully customized often by users
-    int32_t top_k = 40;          // llama.cpp default
-    float top_p = 0.95f;         // llama.cpp default
-    float repeat_penalty = 1.1f; // light penalty to discourage loops without distorting the distribution much
-    uint32_t seed = 1337;        // -1 for random
-
-    std::string grammar; // GBNF grammar string for constrained output
+    PortableGenerationConfig common;
+    OptionMap backend_options; // e.g. backend_options["llama"]["repeat_penalty"]
 };
 
 enum class EventType {
@@ -65,9 +87,16 @@ struct ChorusSignal {
     bool is_embedding() const { return type == EventType::Embedding; }
 };
 
+using RequestId = int64_t;
+using SessionId = std::string;
+
 struct ChorusRequest {
     int64_t id;
     int priority = 0;
+
+    // Caller-owned continuity lane. Engines must preserve it as request
+    // identity; they may use it only per declared native_sessions capability.
+    std::optional<SessionId> session_id;
 
     RequestType type = RequestType::Generate; // Replaces 'bool is_embedding'
 

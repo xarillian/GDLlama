@@ -15,7 +15,58 @@ LlamaScheduler::~LlamaScheduler() {
     stop();
 }
 
-bool LlamaScheduler::load_model_from_file(const Chorus::ChorusConfig& config) {
+std::variant<LlamaScheduler::LoadConfig, Chorus::RequestRejection>
+LlamaScheduler::parse_load_config(const Chorus::ChorusConfig& config) {
+    LoadConfig out;
+    for (const auto& asset : config.model.assets) {
+        if (asset.role == "weights") {
+            out.weights_path = asset.location;
+        } else {
+            return Chorus::RequestRejection{
+                Chorus::ChorusError::UnsupportedOption, "LlamaEngine does not use asset role '" + asset.role + "'"
+            };
+        }
+    }
+    if (out.weights_path.empty())
+        return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "ModelSpec has no 'weights' asset."};
+    if (!config.model.backend_options.empty())
+        return Chorus::RequestRejection{
+            Chorus::ChorusError::UnsupportedOption, "LlamaEngine defines no artifact-scoped model options."
+        };
+
+    for (const auto& [ns, value] : config.backend_options) {
+        if (ns != "llama")
+            return Chorus::RequestRejection{
+                Chorus::ChorusError::UnsupportedOption, "Unknown option namespace '" + ns + "'"
+            };
+        const auto* opts = std::get_if<Chorus::OptionMap>(&value);
+        if (!opts)
+            return Chorus::RequestRejection{Chorus::ChorusError::UnsupportedOption, "'llama' options must be a map."};
+        for (const auto& [key, v] : *opts) {
+            const auto* as_int = std::get_if<int64_t>(&v);
+            const auto* as_bool = std::get_if<bool>(&v);
+            if (key == "context_size" && as_int)
+                out.context_size = (int32_t)*as_int;
+            else if (key == "thread_count" && as_int)
+                out.thread_count = (int32_t)*as_int;
+            else if (key == "use_gpu" && as_bool)
+                out.use_gpu = *as_bool;
+            else if (key == "gpu_layers" && as_int)
+                out.gpu_layers = (int32_t)*as_int;
+            else if (key == "num_slots" && as_int)
+                out.num_slots = (int32_t)*as_int;
+            else if (key == "tokens_per_tick" && as_int)
+                out.tokens_per_tick = (int32_t)*as_int;
+            else
+                return Chorus::RequestRejection{
+                    Chorus::ChorusError::UnsupportedOption, "Unknown or mistyped llama load option '" + key + "'"
+                };
+        }
+    }
+    return out;
+}
+
+bool LlamaScheduler::load_model_from_file(const LoadConfig& config) {
     if (model)
         return true;
 
@@ -25,16 +76,16 @@ bool LlamaScheduler::load_model_from_file(const Chorus::ChorusConfig& config) {
     // @todo Add a host-agnostic progress callback here (via ChorusConfig, like log_callback);
     //       the binding layer wires it to whatever UI the host uses. Core must not know the host.
 
-    model = llama_model_load_from_file(config.model_path.c_str(), model_params);
+    model = llama_model_load_from_file(config.weights_path.c_str(), model_params);
     if (!model) {
-        Chorus::chorus_log(_log, Chorus::LogLevel::Error, "Failed to load model from " + config.model_path);
+        Chorus::chorus_log(_log, Chorus::LogLevel::Error, "Failed to load model from " + config.weights_path);
         return false;
     }
 
     return true;
 }
 
-bool LlamaScheduler::init_context(const Chorus::ChorusConfig& config) {
+bool LlamaScheduler::init_context(const LoadConfig& config) {
     if (context)
         return true;
 
@@ -66,17 +117,25 @@ void LlamaScheduler::init_slots(int count) {
 }
 
 std::optional<Chorus::ChorusError> LlamaScheduler::initialize(const Chorus::ChorusConfig& config) {
-    if (!load_model_from_file(config))
-        return Chorus::ChorusError::ModelLoad;
-    if (!init_context(config))
-        return Chorus::ChorusError::ContextInit;
-
-    init_slots(config.num_slots);
-    _tokens_per_tick = config.tokens_per_tick;
-    _batch_capacity = config.context_size;
     _log = config.log_callback;
 
-    if (static_cast<int64_t>(config.num_slots) * config.tokens_per_tick > config.context_size) {
+    auto parsed = parse_load_config(config);
+    if (auto* rejection = std::get_if<Chorus::RequestRejection>(&parsed)) {
+        Chorus::chorus_log(_log, Chorus::LogLevel::Error, rejection->message);
+        return rejection->error;
+    }
+    const LoadConfig& load_config = std::get<LoadConfig>(parsed);
+
+    if (!load_model_from_file(load_config))
+        return Chorus::ChorusError::ModelLoad;
+    if (!init_context(load_config))
+        return Chorus::ChorusError::ContextInit;
+
+    init_slots(load_config.num_slots);
+    _tokens_per_tick = load_config.tokens_per_tick;
+    _batch_capacity = load_config.context_size;
+
+    if (static_cast<int64_t>(load_config.num_slots) * load_config.tokens_per_tick > load_config.context_size) {
         Chorus::chorus_log(
             _log,
             Chorus::LogLevel::Warn,
@@ -85,7 +144,21 @@ std::optional<Chorus::ChorusError> LlamaScheduler::initialize(const Chorus::Chor
         );
     }
 
-    batch = new llama_batch(llama_batch_init(config.context_size, 0, 1));
+    batch = new llama_batch(llama_batch_init(load_config.context_size, 0, 1));
+
+    Chorus::LoadedModelInfo info;
+    info.model_id = config.model.model_id;
+    info.format = Chorus::ModelFormat::Gguf;
+    char buf[256];
+    if (llama_model_meta_val_str(model, "general.architecture", buf, sizeof(buf)) > 0)
+        info.family = buf;
+    if (llama_model_desc(model, buf, sizeof(buf)) > 0)
+        info.quantization = buf; // modest by contract: the desc string, e.g. "gemma3 270M F16"
+    info.maximum_context = (uint32_t)llama_model_n_ctx_train(model);
+    info.model_bytes = llama_model_size(model);
+    info.input_modalities = {Chorus::Modality::Text};
+    info.output_modalities = {Chorus::Modality::Text};
+    _model_info = info;
 
     is_running = true;
     worker_thread = std::thread(&LlamaScheduler::worker_loop, this);
@@ -114,6 +187,7 @@ void LlamaScheduler::stop() {
         llama_model_free(model);
         model = nullptr;
     }
+    _model_info = std::nullopt;
 }
 
 bool LlamaScheduler::is_healthy() const {
@@ -208,7 +282,9 @@ void LlamaScheduler::ingest_new_requests() {
         slot.n_decoded = 0;
         slot.input_cursor = 0;
         slot.current_input_tokens = std::move(tokens);
-        slot.sampler = Chorus::LlamaUtils::build_sampler(chorus_request.gen_config);
+        auto resolved = Chorus::LlamaUtils::resolve_sampling(chorus_request.gen_config);
+        slot.max_tokens = resolved.max_tokens;
+        slot.sampler = Chorus::LlamaUtils::build_sampler(resolved);
     }
 }
 
@@ -300,9 +376,7 @@ void LlamaScheduler::worker_loop() {
             }
 
             bool is_eos = llama_vocab_is_eog(vocab, new_token_id);
-            bool is_limit =
-                (slot.current_request.gen_config.max_tokens > 0 &&
-                 slot.n_decoded >= slot.current_request.gen_config.max_tokens);
+            bool is_limit = (slot.max_tokens > 0 && slot.n_decoded >= slot.max_tokens);
 
             if (is_eos || is_limit) {
                 Chorus::ChorusSignal stop_sig;

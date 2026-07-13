@@ -7,7 +7,6 @@
 void test_initialize_returns_nullopt_on_success() {
     SyncMockEngine engine;
     Chorus::ChorusConfig config;
-    config.model_path = "mock_model.bin";
 
     ASSERT_TRUE(!engine.initialize(config).has_value());
     ASSERT_TRUE(engine.is_initialized());
@@ -16,10 +15,9 @@ void test_initialize_returns_nullopt_on_success() {
     ASSERT_TRUE(!engine.is_initialized());
 }
 
-void test_initialize_returns_InvalidRequest_on_empty_model_path() {
+void test_initialize_propagates_configured_error_and_leaves_engine_uninitialized() {
     SyncMockEngine engine;
     Chorus::ChorusConfig config;
-    config.model_path = "";
     engine.fail_initialize_with = Chorus::ChorusError::InvalidRequest;
 
     auto err = engine.initialize(config);
@@ -31,7 +29,6 @@ void test_initialize_returns_InvalidRequest_on_empty_model_path() {
 void test_request_submission() {
     SyncMockEngine engine;
     Chorus::ChorusConfig config;
-    config.model_path = "mock.bin";
     engine.initialize(config);
     engine.tokens = {"Test", "Token"};
 
@@ -136,7 +133,6 @@ void test_LogCallback_on_ChorusConfig_is_invoked_by_chorus_log() {
     std::vector<std::pair<Chorus::LogLevel, std::string>> log_entries;
 
     Chorus::ChorusConfig config;
-    config.model_path = "mock.bin";
     config.log_callback = [&](Chorus::LogLevel level, const std::string& msg) { log_entries.push_back({level, msg}); };
 
     Chorus::LogCallback log = config.log_callback;
@@ -153,7 +149,6 @@ void test_LogCallback_on_ChorusConfig_is_invoked_by_chorus_log() {
 void test_submit_in_fail_mode_propagates_chosen_error_code_to_caller() {
     SyncMockEngine engine;
     Chorus::ChorusConfig config;
-    config.model_path = "mock.bin";
     engine.initialize(config);
     engine.fail_submit_with = Chorus::ChorusError::Decode;
 
@@ -175,7 +170,6 @@ void test_submit_in_fail_mode_propagates_chosen_error_code_to_caller() {
 void test_submit_in_fail_mode_propagates_Tokenize_error_code() {
     SyncMockEngine engine;
     Chorus::ChorusConfig config;
-    config.model_path = "mock.bin";
     engine.initialize(config);
     engine.fail_submit_with = Chorus::ChorusError::Tokenize;
 
@@ -225,8 +219,8 @@ int run_core_mechanics_tests() {
 
     run_test("Initialize_returns_nullopt_on_success", test_initialize_returns_nullopt_on_success);
     run_test(
-        "Initialize_returns_InvalidRequest_on_empty_model_path",
-        test_initialize_returns_InvalidRequest_on_empty_model_path
+        "Initialize_propagates_configured_error_and_leaves_engine_uninitialized",
+        test_initialize_propagates_configured_error_and_leaves_engine_uninitialized
     );
     run_test("Request_Lifecycle_Submission", test_request_submission);
 

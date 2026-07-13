@@ -33,14 +33,14 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     // --- observability ---
     int initialize_calls = 0;
     int stop_calls = 0;
-    std::string* seen_model_path = nullptr; // survives this object's destruction
-    int* stop_count_sink = nullptr;         // ditto
+    std::string* seen_model_id = nullptr; // survives this object's destruction
+    int* stop_count_sink = nullptr;       // ditto
     std::vector<int64_t> submitted_ids;
 
     std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config) override {
         initialize_calls++;
-        if (seen_model_path)
-            *seen_model_path = config.model_path;
+        if (seen_model_id)
+            *seen_model_id = config.model.model_id;
         if (log_on_initialize_from_worker && config.log_callback) {
             std::thread([cb = config.log_callback] {
                 Chorus::chorus_log(cb, Chorus::LogLevel::Info, "from worker");
@@ -53,6 +53,21 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     }
 
     bool is_initialized() const override { return _initialized; }
+
+    Chorus::EngineCapabilities declared_caps = [] {
+        Chorus::EngineCapabilities caps;
+        caps.backend_id = "mock";
+        caps.streaming = true;
+        return caps;
+    }();
+    std::optional<Chorus::RequestRejection> reject_with; // validate_request returns this
+    std::optional<Chorus::LoadedModelInfo> mock_model_info;
+
+    Chorus::EngineCapabilities capabilities() const override { return declared_caps; }
+    std::optional<Chorus::LoadedModelInfo> loaded_model_info() const override { return mock_model_info; }
+    std::optional<Chorus::RequestRejection> validate_request(const Chorus::ChorusRequest&) const override {
+        return reject_with;
+    }
 
     void submit_request(const Chorus::ChorusRequest& req) override {
         submitted_ids.push_back(req.id);

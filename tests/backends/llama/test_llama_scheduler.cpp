@@ -1,6 +1,7 @@
-#include "test_utils.hpp"
-#include "chorus/core/common.hpp"
 #include "chorus/backends/llama/llama_engine.hpp"
+#include "chorus/backends/llama/llama_utils.hpp"
+#include "chorus/core/common.hpp"
+#include "test_utils.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -12,15 +13,52 @@
 
 const std::string MODEL_PATH = "tests/models/gemma-3-270m-it-F16.gguf";
 
+static Chorus::ChorusConfig make_gguf_config(const std::string& path) {
+    Chorus::ChorusConfig config;
+    config.model.model_id = "test-model";
+    config.model.format = Chorus::ModelFormat::Gguf;
+    config.model.assets.push_back({"weights", path, std::nullopt, std::nullopt});
+    return config;
+}
+
+void test_resolve_sampling_unset_fields_use_upstream_defaults() {
+    Chorus::GenerationConfig config; // everything unset
+    auto r = Chorus::LlamaUtils::resolve_sampling(config);
+    ASSERT_EQ(r.max_tokens, -1); // upstream n_predict default: unbounded
+    ASSERT_EQ(r.top_k, 40);
+    ASSERT_TRUE(r.top_p > 0.94f && r.top_p < 0.96f);
+    ASSERT_TRUE(r.temperature > 0.79f && r.temperature < 0.81f);
+    ASSERT_EQ(r.seed, LLAMA_DEFAULT_SEED);                             // unset seed means random
+    ASSERT_TRUE(r.repeat_penalty > 0.99f && r.repeat_penalty < 1.01f); // upstream: disabled
+}
+
+void test_resolve_sampling_set_fields_override() {
+    Chorus::GenerationConfig config;
+    config.common.max_tokens = 32;
+    config.common.temperature = 0.2f;
+    config.common.top_k = 5;
+    config.common.top_p = 0.5f;
+    config.common.seed = uint64_t{7};
+    config.backend_options["llama"] = Chorus::OptionMap{{"repeat_penalty", 1.3}};
+    auto r = Chorus::LlamaUtils::resolve_sampling(config);
+    ASSERT_EQ(r.max_tokens, 32);
+    ASSERT_TRUE(r.temperature > 0.19f && r.temperature < 0.21f);
+    ASSERT_EQ(r.top_k, 5);
+    ASSERT_TRUE(r.top_p > 0.49f && r.top_p < 0.51f);
+    ASSERT_EQ(r.seed, (uint32_t)7);
+    ASSERT_TRUE(r.repeat_penalty > 1.29f && r.repeat_penalty < 1.31f);
+}
+
 void test_transient_decode_failure_recovers() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
-    Chorus::ChorusConfig config;
-    config.model_path = MODEL_PATH;
-    config.use_gpu = false;
-    config.context_size = 64;    // tiny unified KV cache
-    config.tokens_per_tick = 16; // <= context_size so the batch never overruns before decode
-    config.num_slots = 1;
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{
+        {"use_gpu", false},
+        {"context_size", int64_t{64}},    // tiny unified KV cache
+        {"tokens_per_tick", int64_t{16}}, // <= context_size so the batch never overruns before decode
+        {"num_slots", int64_t{1}},
+    };
 
     // A prompt guaranteed to exceed 64 KV cells (~2000 tokens).
     std::string huge_prompt;
@@ -40,7 +78,7 @@ void test_transient_decode_failure_recovers() {
     Chorus::ChorusRequest big;
     big.id = 1;
     big.prompt = huge_prompt;
-    big.gen_config.max_tokens = 8;
+    big.gen_config.common.max_tokens = 8;
     big.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (sig.type == Chorus::EventType::Error) {
             big_code = sig.error_code;
@@ -61,7 +99,7 @@ void test_transient_decode_failure_recovers() {
     Chorus::ChorusRequest small;
     small.id = 2;
     small.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
-    small.gen_config.max_tokens = 4;
+    small.gen_config.common.max_tokens = 4;
     small.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (sig.type == Chorus::EventType::Token)
             small_tokens++;
@@ -84,10 +122,12 @@ void test_transient_decode_failure_recovers() {
 void test_higher_priority_request_served_first() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
-    Chorus::ChorusConfig config;
-    config.model_path = MODEL_PATH;
-    config.use_gpu = false;
-    config.num_slots = 1; // one slot serializes execution; the priority_queue decides who runs first, not submit order
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{
+        {"use_gpu", false},
+        {"num_slots",
+         int64_t{1}}, // one slot serializes execution; the priority_queue decides who runs first, not submit order
+    };
 
     std::mutex order_mutex;
     std::vector<int64_t> completion_order;
@@ -112,14 +152,14 @@ void test_higher_priority_request_served_first() {
     low.id = 100;
     low.priority = 0;
     low.prompt = prompt;
-    low.gen_config.max_tokens = 8;
+    low.gen_config.common.max_tokens = 8;
     low.on_event = make_handler(100);
 
     Chorus::ChorusRequest high;
     high.id = 200;
     high.priority = 10;
     high.prompt = prompt;
-    high.gen_config.max_tokens = 8;
+    high.gen_config.common.max_tokens = 8;
     high.on_event = make_handler(200);
 
     // Best-effort: a narrow race exists if the worker ingests `low` in the sub-ms gap before `high` is queued.
@@ -147,10 +187,11 @@ void test_higher_priority_request_served_first() {
 void test_slot_reusable_after_request_completes() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
-    Chorus::ChorusConfig config;
-    config.model_path = MODEL_PATH;
-    config.use_gpu = false;
-    config.num_slots = 1; // force the second request to reuse the first slot
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{
+        {"use_gpu", false},
+        {"num_slots", int64_t{1}}, // force the second request to reuse the first slot
+    };
 
     std::atomic<int> tokens{0};
     std::atomic<bool> done{false};
@@ -167,7 +208,7 @@ void test_slot_reusable_after_request_completes() {
         Chorus::ChorusRequest req;
         req.id = id;
         req.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
-        req.gen_config.max_tokens = 6;
+        req.gen_config.common.max_tokens = 6;
         req.on_event = [&](const Chorus::ChorusSignal& sig) {
             if (sig.type == Chorus::EventType::Token)
                 tokens++;
@@ -197,12 +238,13 @@ void test_slot_reusable_after_request_completes() {
 void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
-    Chorus::ChorusConfig config;
-    config.model_path = MODEL_PATH;
-    config.use_gpu = false;
-    config.context_size = 64;    // batch capacity == context_size
-    config.tokens_per_tick = 64; // per-slot demand; 4 slots * 64 = 256 tokens offered to a 64-token batch
-    config.num_slots = 4;
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{
+        {"use_gpu", false},
+        {"context_size", int64_t{64}},    // batch capacity == context_size
+        {"tokens_per_tick", int64_t{64}}, // per-slot demand; 4 slots * 64 = 256 tokens offered to a 64-token batch
+        {"num_slots", int64_t{4}},
+    };
 
     // Long prompts keep every slot in prefill for many ticks, so multiple slots
     // contribute to the same batch regardless of ingest timing.
@@ -223,7 +265,7 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
         Chorus::ChorusRequest req;
         req.id = id;
         req.prompt = long_prompt;
-        req.gen_config.max_tokens = 4;
+        req.gen_config.common.max_tokens = 4;
         req.on_event = [&](const Chorus::ChorusSignal& sig) {
             if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
                 terminal_signals++;
@@ -244,7 +286,7 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
     Chorus::ChorusRequest small;
     small.id = 5;
     small.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
-    small.gen_config.max_tokens = 4;
+    small.gen_config.common.max_tokens = 4;
     small.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (sig.type == Chorus::EventType::Token)
             small_tokens++;
@@ -267,6 +309,10 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
 int run_llama_scheduler_tests() {
     std::cout << "\n--- LLAMA SCHEDULER SUITE ---\n";
 
+    run_test(
+        "resolve_sampling: unset fields use upstream defaults", test_resolve_sampling_unset_fields_use_upstream_defaults
+    );
+    run_test("resolve_sampling: set fields override", test_resolve_sampling_set_fields_override);
     run_test("Transient_decode_failure_recovers", test_transient_decode_failure_recovers);
     run_test("Higher_priority_request_served_first", test_higher_priority_request_served_first);
     run_test("Slot_reusable_after_request_completes", test_slot_reusable_after_request_completes);

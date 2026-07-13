@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace Chorus {
@@ -18,6 +19,11 @@ namespace Chorus {
 // What a host hands the runtime. No id, no callback: those are runtime business.
 struct GenerationRequest {
     std::string prompt;
+
+    // Caller-owned continuity lane (NPC, dialogue thread). Absent = stateless.
+    // Empty string is InvalidRequest -- statelessness has one spelling.
+    std::optional<SessionId> session_id;
+
     int priority = 0;
     bool stream = false; // false: suppress Token events, deliver only Complete
     GenerationConfig config;
@@ -27,6 +33,7 @@ struct GenerationRequest {
 struct RuntimeEvent {
     enum class Kind { Token, Complete, Error };
     int64_t request_id;
+    std::optional<SessionId> session_id; // absent for stateless requests
     Kind kind;
     std::string text; // Token: the token; Complete: full accumulated text; Error: message
     ChorusError error = ChorusError::None;
@@ -37,6 +44,7 @@ struct RuntimeEvent {
 struct SubmitResult {
     int64_t request_id = -1;
     ChorusError error = ChorusError::None;
+    std::string message; // Human-readable rejection detail; empty on success.
     bool ok() const { return error == ChorusError::None; }
 };
 
@@ -89,6 +97,15 @@ class ChorusRuntime {
     // event is drained; _request_streaming's key set defines liveness.
     std::unordered_map<int64_t, bool> _request_streaming;
     std::unordered_map<int64_t, std::string> _accumulator;
+
+    // Host-thread-only session tracking. A session is busy from submit until
+    // its terminal event is DRAINED by poll() -- not merely emitted. Visible
+    // consequence: after stop_all()/replacement, a same-frame resubmission for
+    // that session gets SessionBusy until the next poll() drains the
+    // synthesized Cancelled terminal. Deliberate: drain-time release
+    // guarantees per-session event ordering (#5's history append relies on it).
+    std::unordered_map<int64_t, std::string> _request_sessions; // only sessioned requests
+    std::unordered_set<std::string> _active_sessions;
 
     // Latched on first public call. Unconditional so class layout is stable
     // across debug/release TUs; only the assert_host_thread() body (and its

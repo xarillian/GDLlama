@@ -29,6 +29,10 @@ class EchoEngine : public InferenceEngine {
     void stop() override;
     bool is_initialized() const override;
 
+    EngineCapabilities capabilities() const override;
+    std::optional<LoadedModelInfo> loaded_model_info() const override;
+    std::optional<RequestRejection> validate_request(const Chorus::ChorusRequest& request) const override;
+
   private:
     void worker_loop();
 
