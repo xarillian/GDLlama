@@ -227,6 +227,96 @@ void test_embedding_events_are_dropped_without_corrupting_accumulation() {
     ASSERT_EQ(events[0].text, "Hello world");
 }
 
+void test_cancel_unknown_request_returns_false_without_forwarding() {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* seen = engine.get();
+    runtime.load_engine(std::move(engine), make_config());
+
+    ASSERT_TRUE(!runtime.cancel(404));
+    ASSERT_TRUE(!runtime.is_request_active(404));
+    ASSERT_TRUE(seen->cancelled_ids.empty());
+}
+
+void test_cancel_forwards_each_time_while_request_remains_live() {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* seen = engine.get();
+    engine->hold_requests = true;
+    runtime.load_engine(std::move(engine), make_config());
+    auto result = runtime.submit(make_request("held"));
+
+    ASSERT_TRUE(runtime.cancel(result.request_id));
+    ASSERT_TRUE(runtime.cancel(result.request_id));
+    ASSERT_EQ(seen->cancelled_ids.size(), 2);
+    ASSERT_EQ(seen->cancelled_ids[0], result.request_id);
+    ASSERT_EQ(seen->cancelled_ids[1], result.request_id);
+    ASSERT_TRUE(runtime.is_request_active(result.request_id));
+}
+
+void test_cancelled_request_stays_active_until_terminal_is_drained() {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* seen = engine.get();
+    engine->hold_requests = true;
+    engine->emit_cancelled_on_cancel = true;
+    runtime.load_engine(std::move(engine), make_config());
+    auto result = runtime.submit(make_request("held"));
+
+    ASSERT_TRUE(runtime.cancel(result.request_id));
+    ASSERT_TRUE(runtime.is_request_active(result.request_id));
+    ASSERT_TRUE(runtime.cancel(result.request_id));
+    ASSERT_EQ(seen->cancelled_ids.size(), 2);
+
+    auto events = runtime.poll();
+    ASSERT_EQ(events.size(), 1);
+    ASSERT_EQ(events[0].request_id, result.request_id);
+    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
+    ASSERT_TRUE(events[0].error == Chorus::ChorusError::Cancelled);
+    ASSERT_TRUE(!runtime.is_request_active(result.request_id));
+    ASSERT_TRUE(!runtime.cancel(result.request_id));
+    ASSERT_EQ(seen->cancelled_ids.size(), 2);
+}
+
+void test_cancel_forwards_after_engine_terminal_enqueue_before_poll() {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* seen = engine.get();
+    runtime.load_engine(std::move(engine), make_config());
+    auto result = runtime.submit(make_request("completing"));
+
+    ASSERT_TRUE(runtime.is_request_active(result.request_id));
+    ASSERT_TRUE(runtime.cancel(result.request_id));
+    ASSERT_EQ(seen->cancelled_ids.size(), 1);
+    ASSERT_EQ(seen->cancelled_ids[0], result.request_id);
+
+    auto events = runtime.poll();
+    ASSERT_EQ(events.size(), 1);
+    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Complete);
+    ASSERT_TRUE(!runtime.is_request_active(result.request_id));
+}
+
+void test_cancel_one_request_does_not_affect_another() {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* seen = engine.get();
+    engine->hold_requests = true;
+    engine->emit_cancelled_on_cancel = true;
+    runtime.load_engine(std::move(engine), make_config());
+    auto cancelled = runtime.submit(make_request("cancelled"));
+    auto untouched = runtime.submit(make_request("untouched"));
+
+    ASSERT_TRUE(runtime.cancel(cancelled.request_id));
+    auto events = runtime.poll();
+
+    ASSERT_EQ(events.size(), 1);
+    ASSERT_EQ(events[0].request_id, cancelled.request_id);
+    ASSERT_TRUE(!runtime.is_request_active(cancelled.request_id));
+    ASSERT_TRUE(runtime.is_request_active(untouched.request_id));
+    ASSERT_EQ(seen->cancelled_ids.size(), 1);
+    ASSERT_EQ(seen->cancelled_ids[0], cancelled.request_id);
+}
+
 void test_stop_all_yields_exactly_one_Cancelled_terminal_per_live_request() {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
@@ -369,6 +459,77 @@ void test_destruction_with_active_requests_is_clean() {
     ASSERT_TRUE(true);
 }
 
+// Terminal invariant at the runtime layer: for each accepted request id, poll yields
+// exactly one terminal event (Complete or Error) across success, decode failure,
+// duplicate-terminal defense, and engine stop. This is the cross-layer companion to
+// the engine-level terminal sweeps in the Echo and Llama suites.
+void test_runtime_exactly_one_terminal_per_accepted_request() {
+    const auto terminal_count = [](const std::vector<Chorus::RuntimeEvent>& events, Chorus::RequestId id) {
+        size_t count = 0;
+        for (const auto& event : events)
+            count += event.request_id == id && (event.kind == Chorus::RuntimeEvent::Kind::Complete ||
+                                                event.kind == Chorus::RuntimeEvent::Kind::Error);
+        return count;
+    };
+
+    // Success: one Complete terminal.
+    {
+        Chorus::ChorusRuntime runtime;
+        runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
+        auto result = runtime.submit(make_request("hi", /*stream=*/true));
+        ASSERT_TRUE(result.ok());
+        auto events = runtime.poll();
+        ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
+        ASSERT_TRUE(events.back().kind == Chorus::RuntimeEvent::Kind::Complete);
+    }
+
+    // Decode failure after partial output: one Error terminal, no Complete.
+    {
+        Chorus::ChorusRuntime runtime;
+        auto engine = std::make_unique<SyncMockEngine>();
+        engine->emit_error_instead_of_stop = true;
+        runtime.load_engine(std::move(engine), make_config());
+        auto result = runtime.submit(make_request("hi", /*stream=*/false));
+        ASSERT_TRUE(result.ok());
+        auto events = runtime.poll();
+        ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
+        ASSERT_TRUE(events.back().kind == Chorus::RuntimeEvent::Kind::Error);
+        ASSERT_TRUE(events.back().error == Chorus::ChorusError::Decode);
+    }
+
+    // Broken backend emitting a duplicate terminal: the runtime still surfaces one.
+    {
+        Chorus::ChorusRuntime runtime;
+        auto engine = std::make_unique<SyncMockEngine>();
+        engine->emit_duplicate_stop = true;
+        runtime.load_engine(std::move(engine), make_config());
+        auto result = runtime.submit(make_request("hi", /*stream=*/true));
+        ASSERT_TRUE(result.ok());
+        auto events = runtime.poll();
+        ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
+    }
+
+    // Engine stop: each live request gets exactly one synthesized Cancelled terminal.
+    {
+        Chorus::ChorusRuntime runtime;
+        auto engine = std::make_unique<SyncMockEngine>();
+        engine->hold_requests = true;
+        runtime.load_engine(std::move(engine), make_config());
+        auto a = runtime.submit(make_request("a"));
+        auto b = runtime.submit(make_request("b"));
+        ASSERT_TRUE(a.ok());
+        ASSERT_TRUE(b.ok());
+        runtime.stop_all();
+        auto events = runtime.poll();
+        ASSERT_EQ(terminal_count(events, a.request_id), size_t{1});
+        ASSERT_EQ(terminal_count(events, b.request_id), size_t{1});
+        for (const auto& event : events) {
+            ASSERT_TRUE(event.kind == Chorus::RuntimeEvent::Kind::Error);
+            ASSERT_TRUE(event.error == Chorus::ChorusError::Cancelled);
+        }
+    }
+}
+
 int run_runtime_tests() {
     std::cout << "\n--- RUNTIME TEST SUITE ---\n";
 
@@ -400,6 +561,19 @@ int run_runtime_tests() {
     run_test("Runtime_unknown_id_events_are_dropped", test_unknown_id_events_are_dropped);
     run_test("Runtime_embedding_events_are_dropped", test_embedding_events_are_dropped_without_corrupting_accumulation);
     run_test(
+        "Runtime_cancel_unknown_request_returns_false", test_cancel_unknown_request_returns_false_without_forwarding
+    );
+    run_test("Runtime_cancel_forwards_each_time_while_live", test_cancel_forwards_each_time_while_request_remains_live);
+    run_test(
+        "Runtime_cancelled_request_active_until_terminal_drain",
+        test_cancelled_request_stays_active_until_terminal_is_drained
+    );
+    run_test(
+        "Runtime_cancel_forwards_after_terminal_enqueue_before_poll",
+        test_cancel_forwards_after_engine_terminal_enqueue_before_poll
+    );
+    run_test("Runtime_cancel_two_request_isolation", test_cancel_one_request_does_not_affect_another);
+    run_test(
         "Runtime_stop_all_yields_one_Cancelled_per_live_request",
         test_stop_all_yields_exactly_one_Cancelled_terminal_per_live_request
     );
@@ -418,6 +592,9 @@ int run_runtime_tests() {
     run_test("Runtime_destruction_with_active_requests_is_clean", test_destruction_with_active_requests_is_clean);
     run_test(
         "Runtime_log_callback_passes_through_from_worker_thread", test_log_callback_passes_through_from_worker_thread
+    );
+    run_test(
+        "Runtime_exactly_one_terminal_per_accepted_request", test_runtime_exactly_one_terminal_per_accepted_request
     );
 
     return g_tests_failed > 0 ? 1 : 0;

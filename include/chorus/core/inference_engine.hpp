@@ -26,6 +26,7 @@ class InferenceEngine {
     virtual bool is_initialized() const = 0;
 
     virtual void submit_request(const Chorus::ChorusRequest& chorus_request) = 0;
+    virtual void cancel_request(RequestId id) = 0;
 
     virtual void stop() = 0;
 

@@ -35,7 +35,8 @@ struct RuntimeEvent {
     int64_t request_id;
     std::optional<SessionId> session_id; // absent for stateless requests
     Kind kind;
-    std::string text; // Token: the token; Complete: full accumulated text; Error: message
+    // A Token carries a safe text chunk and need not correspond to exactly one model token.
+    std::string text; // Complete: full accumulated text; Error: message
     ChorusError error = ChorusError::None;
 };
 
@@ -72,6 +73,11 @@ class ChorusRuntime {
 
     [[nodiscard]] SubmitResult submit(const GenerationRequest& request);
 
+    // Requests stay active until poll() drains their terminal event.
+    bool cancel(RequestId id);
+    bool is_request_active(RequestId id) const;
+    std::optional<RequestId> active_request_for_session(const SessionId& session_id) const;
+
     // Drains pending engine signals into host-facing events.
     std::vector<RuntimeEvent> poll();
 
@@ -80,7 +86,7 @@ class ChorusRuntime {
     void stop_all();
 
   private:
-    void assert_host_thread();
+    void assert_host_thread() const;
     void enqueue_signal(const ChorusSignal& signal);
     void unload_engine();
     void cancel_live_requests();
@@ -110,7 +116,7 @@ class ChorusRuntime {
     // Latched on first public call. Unconditional so class layout is stable
     // across debug/release TUs; only the assert_host_thread() body (and its
     // cost) is gated behind NDEBUG.
-    std::atomic<std::thread::id> _host_thread{};
+    mutable std::atomic<std::thread::id> _host_thread{};
 };
 
 } // namespace Chorus

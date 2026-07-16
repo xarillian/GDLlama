@@ -229,6 +229,27 @@ void test_two_sessions_concurrently_live() {
     ASSERT_TRUE(s2_again.ok());
 }
 
+void test_cancel_status_preserves_session_lookup_until_terminal_drain() {
+    Chorus::ChorusRuntime runtime;
+    auto mock = std::make_unique<SyncMockEngine>();
+    mock->hold_requests = true;
+    mock->emit_cancelled_on_cancel = true;
+    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    auto result = runtime.submit(sessioned("hello", "npc"));
+
+    ASSERT_TRUE(runtime.active_request_for_session("npc") == result.request_id);
+    ASSERT_TRUE(!runtime.active_request_for_session("other").has_value());
+    ASSERT_TRUE(runtime.cancel(result.request_id));
+    ASSERT_TRUE(runtime.active_request_for_session("npc") == result.request_id);
+
+    auto events = runtime.poll();
+    ASSERT_EQ(events.size(), 1);
+    ASSERT_EQ(events[0].request_id, result.request_id);
+    ASSERT_TRUE(events[0].session_id.has_value());
+    ASSERT_EQ(*events[0].session_id, "npc");
+    ASSERT_TRUE(!runtime.active_request_for_session("npc").has_value());
+}
+
 int run_runtime_session_tests() {
     std::cout << "\n--- RUNTIME SESSION TEST SUITE ---\n";
 
@@ -250,6 +271,10 @@ int run_runtime_session_tests() {
         test_validate_rejection_creates_no_state_and_carries_message
     );
     run_test("Runtime_session_two_sessions_concurrently_live", test_two_sessions_concurrently_live);
+    run_test(
+        "Runtime_cancel_status_preserves_session_until_terminal_drain",
+        test_cancel_status_preserves_session_lookup_until_terminal_drain
+    );
 
     return g_tests_failed > 0 ? 1 : 0;
 }

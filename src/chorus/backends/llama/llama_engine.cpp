@@ -1,17 +1,9 @@
 #include "chorus/backends/llama/llama_engine.hpp"
+#include "chorus/backends/llama/llama_generation.hpp"
 #include "chorus/backends/llama/llama_scheduler.hpp"
 #include "chorus/core/common.hpp"
 
-#include <algorithm>
-#include <iterator>
-#include <variant>
-
 namespace Chorus {
-
-namespace {
-constexpr const char* kLlamaPortableOptions[] = {"max_tokens", "temperature", "top_k", "top_p", "seed"};
-constexpr const char* kLlamaBackendGenOptions[] = {"repeat_penalty"};
-} // namespace
 
 LlamaEngine::LlamaEngine() {
     // constructor can be empty -- `initialize` does the work
@@ -24,13 +16,18 @@ LlamaEngine::~LlamaEngine() {
 std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config) {
     _log = config.log_callback;
 
-    if (_initialized && scheduler && scheduler->is_healthy()) {
+    bool already_initialized = false;
+    {
+        std::lock_guard<std::mutex> lock(_lifecycle_mutex);
+        already_initialized = _initialized && scheduler && scheduler->is_healthy();
+    }
+    if (already_initialized) {
         chorus_log(_log, LogLevel::Warn, "LlamaEngine is already initialized.");
         return std::nullopt;
     }
-    if (_initialized) {
+    if (is_initialized()) {
         chorus_log(_log, LogLevel::Warn, "Re-initializing LlamaEngine after engine failure.");
-        stop(); // resets scheduler + _initialized; safe now that stop() is robust
+        stop();
     }
 
     if (config.model.format != ModelFormat::Gguf && config.model.format != ModelFormat::Auto) {
@@ -39,16 +36,19 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config) {
     }
 
     try {
-        scheduler = std::make_unique<LlamaScheduler>();
+        auto next_scheduler = std::make_shared<LlamaScheduler>();
 
-        auto err = scheduler->initialize(config);
+        auto err = next_scheduler->initialize(config);
         if (err.has_value()) {
-            scheduler.reset();
             chorus_log(_log, LogLevel::Error, "Failed to initialize LlamaScheduler.");
             return err;
         }
 
-        _initialized = true;
+        {
+            std::lock_guard<std::mutex> lock(_lifecycle_mutex);
+            scheduler = std::move(next_scheduler);
+            _initialized = true;
+        }
         return std::nullopt;
     } catch (const std::exception& e) {
         chorus_log(_log, LogLevel::Error, std::string("Exception during initialization: ") + e.what());
@@ -57,7 +57,13 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config) {
 }
 
 void LlamaEngine::submit_request(const ChorusRequest& chorus_request) {
-    if (!_initialized || !scheduler || !scheduler->is_healthy()) {
+    bool accepted = false;
+    {
+        std::lock_guard<std::mutex> lock(_lifecycle_mutex);
+        if (scheduler && scheduler->is_healthy())
+            accepted = scheduler->push_request(chorus_request);
+    }
+    if (!accepted) {
         chorus_log(_log, LogLevel::Error, "Attempting to submit request to uninitialized engine.");
 
         if (chorus_request.on_event) {
@@ -68,21 +74,28 @@ void LlamaEngine::submit_request(const ChorusRequest& chorus_request) {
             error_sig.text = "Engine not initialized";
             chorus_request.on_event(error_sig);
         }
-        return;
     }
+}
 
-    scheduler->push_request(chorus_request);
+void LlamaEngine::cancel_request(RequestId id) {
+    std::lock_guard<std::mutex> lock(_lifecycle_mutex);
+    if (scheduler)
+        scheduler->cancel_request(id);
 }
 
 void LlamaEngine::stop() {
-    if (scheduler) {
-        scheduler->stop();
-        scheduler.reset();
+    std::shared_ptr<LlamaScheduler> stopped_scheduler;
+    {
+        std::lock_guard<std::mutex> lock(_lifecycle_mutex);
+        stopped_scheduler = std::move(scheduler);
+        _initialized = false;
     }
-    _initialized = false;
+    if (stopped_scheduler)
+        stopped_scheduler->stop();
 }
 
 bool LlamaEngine::is_initialized() const {
+    std::lock_guard<std::mutex> lock(_lifecycle_mutex);
     return _initialized;
 }
 
@@ -92,57 +105,37 @@ EngineCapabilities LlamaEngine::capabilities() const {
     caps.model_formats = {ModelFormat::Gguf};
     caps.input_modalities = {Modality::Text};
     caps.output_modalities = {Modality::Text};
-    // constraint_formats stays empty until #4 wires the grammar sampler:
-    // claiming Gbnf before it constrains would violate the conformance rule.
+    caps.constraint_formats = {ConstraintFormat::Gbnf, ConstraintFormat::JsonSchema};
     caps.scheduling = SchedulingAuthority::ChorusManaged;
     caps.streaming = true;
-    // cancellation arrives with #4, native_sessions with #9, prompt_rendering
-    // with #5, embeddings with #6.
-    caps.portable_generation_options.assign(std::begin(kLlamaPortableOptions), std::end(kLlamaPortableOptions));
-    caps.backend_generation_options.assign(std::begin(kLlamaBackendGenOptions), std::end(kLlamaBackendGenOptions));
+    caps.cancellation = true;
+    // native_sessions arrives with #9, prompt_rendering with #5, embeddings with #6.
+    caps.portable_generation_options = llama_portable_generation_option_names();
+    caps.backend_generation_options = llama_backend_generation_option_names();
     return caps;
 }
 
 std::optional<LoadedModelInfo> LlamaEngine::loaded_model_info() const {
-    if (!scheduler)
+    std::shared_ptr<LlamaScheduler> current_scheduler;
+    {
+        std::lock_guard<std::mutex> lock(_lifecycle_mutex);
+        current_scheduler = scheduler;
+    }
+    if (!current_scheduler)
         return std::nullopt;
-    return scheduler->model_info();
+    return current_scheduler->model_info();
 }
 
 std::optional<RequestRejection> LlamaEngine::validate_request(const ChorusRequest& request) const {
-    if (!_initialized || !scheduler || !scheduler->is_healthy())
+    std::shared_ptr<LlamaScheduler> current_scheduler;
+    {
+        std::lock_guard<std::mutex> lock(_lifecycle_mutex);
+        current_scheduler = scheduler;
+    }
+    if (!current_scheduler || !current_scheduler->is_healthy())
         return RequestRejection{ChorusError::EngineNotReady, "LlamaEngine is not initialized."};
     if (request.type == RequestType::Embedding)
         return RequestRejection{ChorusError::UnsupportedFeature, "Embeddings arrive with workstream #6."};
-    const auto& c = request.gen_config.common;
-    if (c.constraint)
-        return RequestRejection{
-            ChorusError::UnsupportedFeature, "Structured output (grammar/schema) arrives with workstream #4."
-        };
-    if (c.frequency_penalty || c.presence_penalty)
-        return RequestRejection{
-            ChorusError::UnsupportedOption, "frequency/presence penalties arrive with workstream #4."
-        };
-    if (!c.stop.empty())
-        return RequestRejection{ChorusError::UnsupportedOption, "Stop sequences arrive with workstream #4."};
-    for (const auto& [ns, value] : request.gen_config.backend_options) {
-        if (ns != "llama")
-            return RequestRejection{ChorusError::UnsupportedOption, "Unknown option namespace '" + ns + "'"};
-        const auto* opts = std::get_if<OptionMap>(&value);
-        if (!opts)
-            return RequestRejection{ChorusError::UnsupportedOption, "'llama' options must be a map."};
-        for (const auto& [key, v] : *opts) {
-            const bool known = std::find_if(
-                                   std::begin(kLlamaBackendGenOptions),
-                                   std::end(kLlamaBackendGenOptions),
-                                   [&](const char* k) { return key == k; }
-                               ) != std::end(kLlamaBackendGenOptions);
-            if (!known || !std::holds_alternative<double>(v))
-                return RequestRejection{
-                    ChorusError::UnsupportedOption, "Unknown or mistyped llama generation option '" + key + "'"
-                };
-        }
-    }
-    return std::nullopt;
+    return validate_llama_generation(request.gen_config);
 }
 } // namespace Chorus

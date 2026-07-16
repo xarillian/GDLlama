@@ -3,12 +3,13 @@
 #include "chorus/core/common.hpp"
 #include "chorus/core/inference_engine.hpp"
 
-#include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <optional>
-#include <queue>
 #include <thread>
+#include <unordered_set>
+#include <vector>
 
 namespace Chorus {
 // Reference implementation of InferenceEngine: model-free and dependency-free.
@@ -26,6 +27,7 @@ class EchoEngine : public InferenceEngine {
 
     std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config) override;
     void submit_request(const Chorus::ChorusRequest& chorus_request) override;
+    void cancel_request(RequestId id) override;
     void stop() override;
     bool is_initialized() const override;
 
@@ -36,11 +38,14 @@ class EchoEngine : public InferenceEngine {
   private:
     void worker_loop();
 
-    std::queue<Chorus::ChorusRequest> _queue;
+    std::deque<Chorus::ChorusRequest> _queue;
+    std::optional<Chorus::ChorusRequest> _active;
+    std::unordered_set<RequestId> _cancelled_ids;
+    size_t _queued_cancel_callbacks_in_flight = 0;
     std::mutex _queue_mutex;
     std::condition_variable _queue_cv;
     std::thread _worker;
-    std::atomic<bool> _running{false};
+    bool _running = false;
     bool _initialized = false;
     Chorus::LogCallback _log;
 };

@@ -1,22 +1,26 @@
 #pragma once
 
+#include "chorus/backends/llama/llama_generation.hpp"
+#include "chorus/backends/llama/llama_load_config.hpp"
+#include "chorus/backends/llama/stop_sequence_filter.hpp"
 #include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <queue>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
 struct llama_model;
 struct llama_context;
-struct llama_sampler;
 struct llama_batch;
 
 class LlamaScheduler {
@@ -25,35 +29,40 @@ class LlamaScheduler {
     ~LlamaScheduler();
 
     std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config);
-    void push_request(const Chorus::ChorusRequest& req);
+    // Returns false after shutdown and never invokes the request callback inline.
+    bool push_request(const Chorus::ChorusRequest& req);
+    void cancel_request(Chorus::RequestId id);
     void stop();
     bool is_healthy() const;
 
     const std::optional<Chorus::LoadedModelInfo>& model_info() const { return _model_info; }
 
   private:
-    struct LoadConfig {
-        std::string weights_path;
-        int32_t context_size = 2048;
-        int32_t thread_count = 4;
-        bool use_gpu = true;
-        int32_t gpu_layers = 99;
-        int32_t num_slots = 1;
-        int32_t tokens_per_tick = 512;
-    };
-    // Parses config.model + config.backend_options["llama"]. Unknown keys, wrong
-    // value types, missing weights asset, or non-empty model.backend_options
-    // return an error: options are never silently dropped.
-    static std::variant<LoadConfig, Chorus::RequestRejection> parse_load_config(const Chorus::ChorusConfig& config);
+    struct Slot;
 
-    bool load_model_from_file(const LoadConfig& config);
-    bool init_context(const LoadConfig& config);
+    bool load_model_from_file(const Chorus::LlamaLoadConfig& config);
+    bool init_context(const Chorus::LlamaLoadConfig& config);
     void init_slots(int count);
 
+    struct TerminalEvent {
+        Chorus::ChorusRequest request;
+        Chorus::EventType type = Chorus::EventType::Error;
+        Chorus::ChorusError error = Chorus::ChorusError::None;
+        std::string text;
+    };
+
     void ingest_new_requests();
+    bool process_control_requests();
+    void emit_terminal(TerminalEvent terminal);
+    void emit_terminals(std::vector<TerminalEvent> terminals);
+    TerminalEvent release_with_terminal(
+        Slot& slot, Chorus::EventType type, Chorus::ChorusError error = Chorus::ChorusError::None, std::string text = {}
+    );
     bool prepare_next_batch(int32_t tokens_per_tick);
     int run_inference();
     void fail_busy_slots(Chorus::ChorusError code);
+    void emit_token(Slot& slot, std::string text);
+    void complete_slot(Slot& slot, bool flush_pending_text);
 
     void worker_loop();
 
@@ -70,13 +79,28 @@ class LlamaScheduler {
         std::vector<int32_t> current_input_tokens;
         size_t input_cursor = 0; // How many input tokens have we batched so far?
 
-        llama_sampler* sampler = nullptr;
+        common_sampler_ptr sampler;
+        std::optional<Chorus::StopSequenceFilter> stop_filter;
+    };
+
+    struct PendingRequest {
+        Chorus::ChorusRequest request;
+        std::optional<Chorus::ResolvedLlamaGeneration> resolved;
+    };
+
+    using PendingRequestPtr = std::shared_ptr<PendingRequest>;
+
+    struct PendingRequestCompare {
+        bool operator()(const PendingRequestPtr& left, const PendingRequestPtr& right) const {
+            return left->request < right->request;
+        }
     };
 
     int find_free_slot();
     void release_slot(int slot_id);
 
-    std::priority_queue<Chorus::ChorusRequest> request_queue;
+    std::priority_queue<PendingRequestPtr, std::vector<PendingRequestPtr>, PendingRequestCompare> request_queue;
+    std::unordered_set<Chorus::RequestId> _cancel_requested;
     std::mutex queue_mutex;
     std::condition_variable queue_cv;
 

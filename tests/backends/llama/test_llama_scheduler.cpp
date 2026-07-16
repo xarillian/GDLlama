@@ -1,5 +1,6 @@
 #include "chorus/backends/llama/llama_engine.hpp"
-#include "chorus/backends/llama/llama_utils.hpp"
+#include "chorus/backends/llama/llama_generation.hpp"
+#include "chorus/backends/llama/llama_load_config.hpp"
 #include "chorus/core/common.hpp"
 #include "test_utils.hpp"
 
@@ -7,7 +8,9 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -21,18 +24,152 @@ static Chorus::ChorusConfig make_gguf_config(const std::string& path) {
     return config;
 }
 
-void test_resolve_sampling_unset_fields_use_upstream_defaults() {
-    Chorus::GenerationConfig config; // everything unset
-    auto r = Chorus::LlamaUtils::resolve_sampling(config);
-    ASSERT_EQ(r.max_tokens, -1); // upstream n_predict default: unbounded
-    ASSERT_EQ(r.top_k, 40);
-    ASSERT_TRUE(r.top_p > 0.94f && r.top_p < 0.96f);
-    ASSERT_TRUE(r.temperature > 0.79f && r.temperature < 0.81f);
-    ASSERT_EQ(r.seed, LLAMA_DEFAULT_SEED);                             // unset seed means random
-    ASSERT_TRUE(r.repeat_penalty > 0.99f && r.repeat_penalty < 1.01f); // upstream: disabled
+static std::optional<Chorus::RequestRejection> load_rejection(const Chorus::ChorusConfig& config) {
+    auto result = Chorus::parse_llama_load_config(config);
+    if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&result))
+        return *rejection;
+    return std::nullopt;
 }
 
-void test_resolve_sampling_set_fields_override() {
+void test_load_option_defaults() {
+    auto result = Chorus::parse_llama_load_config(make_gguf_config(MODEL_PATH));
+    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaLoadConfig>(result));
+    const auto& load = std::get<Chorus::LlamaLoadConfig>(result);
+    ASSERT_EQ(load.n_batch, uint32_t{2048});
+    ASSERT_EQ(load.n_ubatch, uint32_t{512});
+    ASSERT_EQ(load.main_gpu, int32_t{0});
+}
+
+void test_load_option_accepts_exact_int64_values() {
+    auto config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{
+        {"n_batch", int64_t{96}},
+        {"n_ubatch", int64_t{32}},
+        {"main_gpu", int64_t{2}},
+    };
+    auto result = Chorus::parse_llama_load_config(config);
+    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaLoadConfig>(result));
+    const auto& load = std::get<Chorus::LlamaLoadConfig>(result);
+    ASSERT_EQ(load.n_batch, uint32_t{96});
+    ASSERT_EQ(load.n_ubatch, uint32_t{32});
+    ASSERT_EQ(load.main_gpu, int32_t{2});
+}
+
+void test_load_option_rejects_wrong_scalar_alternatives() {
+    auto expect_rejection = [](const std::string& key, Chorus::OptionValue value) {
+        auto config = make_gguf_config(MODEL_PATH);
+        config.backend_options["llama"] = Chorus::OptionMap{{key, std::move(value)}};
+        auto result = Chorus::parse_llama_load_config(config);
+        const auto* rejection = std::get_if<Chorus::RequestRejection>(&result);
+        return rejection && rejection->error == Chorus::ChorusError::UnsupportedOption &&
+               rejection->message.find(key) != std::string::npos;
+    };
+
+    ASSERT_TRUE(expect_rejection("n_batch", true));
+    ASSERT_TRUE(expect_rejection("n_ubatch", 32.0));
+    ASSERT_TRUE(expect_rejection("main_gpu", "0"));
+}
+
+void test_load_option_rejects_invalid_batch_sizes() {
+    for (const auto& [key, value] : std::vector<std::pair<std::string, int64_t>>{
+             {"n_batch", 0}, {"n_batch", -1}, {"n_ubatch", 0}, {"n_ubatch", -1}
+         }) {
+        auto config = make_gguf_config(MODEL_PATH);
+        config.backend_options["llama"] = Chorus::OptionMap{{key, value}};
+        const auto rejection = load_rejection(config);
+        ASSERT_TRUE(rejection.has_value());
+        ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
+        ASSERT_TRUE(rejection->message.find(key) != std::string::npos);
+    }
+}
+
+void test_load_option_rejects_microbatch_larger_than_batch() {
+    auto config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{{"n_batch", int64_t{32}}, {"n_ubatch", int64_t{33}}};
+    const auto rejection = load_rejection(config);
+    ASSERT_TRUE(rejection.has_value());
+    ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
+    ASSERT_TRUE(rejection->message.find("n_ubatch") != std::string::npos);
+}
+
+void test_load_option_rejects_negative_main_gpu() {
+    auto config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{{"main_gpu", int64_t{-1}}};
+    const auto rejection = load_rejection(config);
+    ASSERT_TRUE(rejection.has_value());
+    ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
+    ASSERT_TRUE(rejection->message.find("main_gpu") != std::string::npos);
+}
+
+void test_load_option_rejects_narrowing_overflow() {
+    auto expect_rejection = [](const std::string& key, int64_t value) {
+        auto config = make_gguf_config(MODEL_PATH);
+        config.backend_options["llama"] = Chorus::OptionMap{{key, value}};
+        auto result = Chorus::parse_llama_load_config(config);
+        const auto* rejection = std::get_if<Chorus::RequestRejection>(&result);
+        return rejection && rejection->error == Chorus::ChorusError::UnsupportedOption &&
+               rejection->message.find(key) != std::string::npos;
+    };
+
+    ASSERT_TRUE(expect_rejection("n_batch", int64_t{std::numeric_limits<int32_t>::max()} + 1));
+    ASSERT_TRUE(expect_rejection("n_ubatch", int64_t{std::numeric_limits<uint32_t>::max()} + 1));
+    ASSERT_TRUE(expect_rejection("main_gpu", int64_t{std::numeric_limits<int32_t>::max()} + 1));
+}
+
+void test_load_option_still_rejects_unknown_keys() {
+    auto config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{{"warp_factor", int64_t{9}}};
+    const auto rejection = load_rejection(config);
+    ASSERT_TRUE(rejection.has_value());
+    ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
+    ASSERT_TRUE(rejection->message.find("warp_factor") != std::string::npos);
+}
+
+void test_load_option_model_params_forward_gpu_values() {
+    Chorus::LlamaLoadConfig load;
+    load.use_gpu = true;
+    load.gpu_layers = 17;
+    load.main_gpu = 2;
+    auto params = Chorus::make_llama_model_params(load);
+    ASSERT_EQ(params.n_gpu_layers, int32_t{17});
+    ASSERT_EQ(params.main_gpu, int32_t{2});
+
+    load.use_gpu = false;
+    params = Chorus::make_llama_model_params(load);
+    ASSERT_EQ(params.n_gpu_layers, int32_t{0});
+    ASSERT_EQ(params.main_gpu, int32_t{2});
+}
+
+void test_load_option_context_params_forward_exact_values() {
+    Chorus::LlamaLoadConfig load;
+    load.context_size = 4096;
+    load.num_slots = 3;
+    load.thread_count = 6;
+    load.n_batch = 96;
+    load.n_ubatch = 32;
+    const auto params = Chorus::make_llama_context_params(load);
+    ASSERT_EQ(params.n_ctx, uint32_t{4096});
+    ASSERT_EQ(params.n_seq_max, uint32_t{3});
+    ASSERT_EQ(params.n_threads, int32_t{6});
+    ASSERT_EQ(params.n_threads_batch, int32_t{6});
+    ASSERT_EQ(params.n_batch, uint32_t{96});
+    ASSERT_EQ(params.n_ubatch, uint32_t{32});
+}
+
+void test_resolve_generation_unset_fields_use_upstream_defaults() {
+    Chorus::GenerationConfig config; // everything unset
+    auto result = Chorus::resolve_llama_generation(config);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(result));
+    const auto& r = std::get<Chorus::ResolvedLlamaGeneration>(result);
+    ASSERT_EQ(r.max_tokens, -1); // upstream n_predict default: unbounded
+    ASSERT_EQ(r.sampling.top_k, 40);
+    ASSERT_TRUE(r.sampling.top_p > 0.94f && r.sampling.top_p < 0.96f);
+    ASSERT_TRUE(r.sampling.temp > 0.79f && r.sampling.temp < 0.81f);
+    ASSERT_EQ(r.sampling.seed, LLAMA_DEFAULT_SEED);
+    ASSERT_TRUE(r.sampling.penalty_repeat > 0.99f && r.sampling.penalty_repeat < 1.01f);
+}
+
+void test_resolve_generation_set_fields_override() {
     Chorus::GenerationConfig config;
     config.common.max_tokens = 32;
     config.common.temperature = 0.2f;
@@ -40,13 +177,15 @@ void test_resolve_sampling_set_fields_override() {
     config.common.top_p = 0.5f;
     config.common.seed = uint64_t{7};
     config.backend_options["llama"] = Chorus::OptionMap{{"repeat_penalty", 1.3}};
-    auto r = Chorus::LlamaUtils::resolve_sampling(config);
+    auto result = Chorus::resolve_llama_generation(config);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(result));
+    const auto& r = std::get<Chorus::ResolvedLlamaGeneration>(result);
     ASSERT_EQ(r.max_tokens, 32);
-    ASSERT_TRUE(r.temperature > 0.19f && r.temperature < 0.21f);
-    ASSERT_EQ(r.top_k, 5);
-    ASSERT_TRUE(r.top_p > 0.49f && r.top_p < 0.51f);
-    ASSERT_EQ(r.seed, (uint32_t)7);
-    ASSERT_TRUE(r.repeat_penalty > 1.29f && r.repeat_penalty < 1.31f);
+    ASSERT_TRUE(r.sampling.temp > 0.19f && r.sampling.temp < 0.21f);
+    ASSERT_EQ(r.sampling.top_k, 5);
+    ASSERT_TRUE(r.sampling.top_p > 0.49f && r.sampling.top_p < 0.51f);
+    ASSERT_EQ(r.sampling.seed, (uint32_t)7);
+    ASSERT_TRUE(r.sampling.penalty_repeat > 1.29f && r.sampling.penalty_repeat < 1.31f);
 }
 
 void test_transient_decode_failure_recovers() {
@@ -55,8 +194,10 @@ void test_transient_decode_failure_recovers() {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.backend_options["llama"] = Chorus::OptionMap{
         {"use_gpu", false},
-        {"context_size", int64_t{64}},    // tiny unified KV cache
-        {"tokens_per_tick", int64_t{16}}, // <= context_size so the batch never overruns before decode
+        {"context_size", int64_t{64}}, // tiny unified KV cache
+        {"n_batch", int64_t{64}},      // keep decode-failure setup independent from the larger default batch
+        {"n_ubatch", int64_t{32}},
+        {"tokens_per_tick", int64_t{16}},
         {"num_slots", int64_t{1}},
     };
 
@@ -241,7 +382,9 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.backend_options["llama"] = Chorus::OptionMap{
         {"use_gpu", false},
-        {"context_size", int64_t{64}},    // batch capacity == context_size
+        {"context_size", int64_t{64}},
+        {"n_batch", int64_t{64}}, // explicit logical batch capacity
+        {"n_ubatch", int64_t{32}},
         {"tokens_per_tick", int64_t{64}}, // per-slot demand; 4 slots * 64 = 256 tokens offered to a 64-token batch
         {"num_slots", int64_t{4}},
     };
@@ -309,10 +452,21 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
 int run_llama_scheduler_tests() {
     std::cout << "\n--- LLAMA SCHEDULER SUITE ---\n";
 
+    run_test("load option defaults", test_load_option_defaults);
+    run_test("load option accepts exact int64 values", test_load_option_accepts_exact_int64_values);
+    run_test("load option rejects wrong scalar alternatives", test_load_option_rejects_wrong_scalar_alternatives);
+    run_test("load option rejects invalid batch sizes", test_load_option_rejects_invalid_batch_sizes);
+    run_test("load option rejects n_ubatch above n_batch", test_load_option_rejects_microbatch_larger_than_batch);
+    run_test("load option rejects negative main_gpu", test_load_option_rejects_negative_main_gpu);
+    run_test("load option rejects narrowing overflow", test_load_option_rejects_narrowing_overflow);
+    run_test("load option still rejects unknown keys", test_load_option_still_rejects_unknown_keys);
+    run_test("load option model params forward GPU values", test_load_option_model_params_forward_gpu_values);
+    run_test("load option context params forward exact values", test_load_option_context_params_forward_exact_values);
     run_test(
-        "resolve_sampling: unset fields use upstream defaults", test_resolve_sampling_unset_fields_use_upstream_defaults
+        "resolve generation: unset fields use upstream defaults",
+        test_resolve_generation_unset_fields_use_upstream_defaults
     );
-    run_test("resolve_sampling: set fields override", test_resolve_sampling_set_fields_override);
+    run_test("resolve generation: set fields override", test_resolve_generation_set_fields_override);
     run_test("Transient_decode_failure_recovers", test_transient_decode_failure_recovers);
     run_test("Higher_priority_request_served_first", test_higher_priority_request_served_first);
     run_test("Slot_reusable_after_request_completes", test_slot_reusable_after_request_completes);

@@ -1,4 +1,5 @@
 #include "godot_chorus/register_types.hpp"
+#include "godot_chorus/chorus_generation_defaults.hpp"
 #include "godot_chorus/godot_chorus.hpp"
 
 #include <gdextension_interface.h>
@@ -12,6 +13,7 @@ void initialize_chorus_module(ModuleInitializationLevel p_level) {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
         return;
     }
+    GDREGISTER_CLASS(ChorusGenerationDefaults);
     GDREGISTER_CLASS(GodotChorus);
 }
 

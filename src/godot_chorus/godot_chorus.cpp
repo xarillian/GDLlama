@@ -2,8 +2,10 @@
 
 #include <cmath>
 #include <memory>
+#include <variant>
 
 #include "chorus/engine_factory.hpp"
+#include "godot_chorus/generation_request_normalizer.hpp"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -107,44 +109,6 @@ void GodotChorus::_process(double /*delta*/) {
 // Core API
 // ===========================================================================
 
-static std::optional<Chorus::OptionValue> variant_to_option_value(const Variant& v) {
-    switch (v.get_type()) {
-    case Variant::BOOL:
-        return Chorus::OptionValue{(bool)v};
-    case Variant::INT:
-        return Chorus::OptionValue{(int64_t)v};
-    case Variant::FLOAT:
-        return Chorus::OptionValue{(double)v};
-    case Variant::STRING:
-        return Chorus::OptionValue{std::string(((String)v).utf8().get_data())};
-    case Variant::ARRAY: {
-        Chorus::OptionList list;
-        Array arr = v;
-        for (int i = 0; i < arr.size(); ++i) {
-            auto item = variant_to_option_value(arr[i]);
-            if (!item)
-                return std::nullopt;
-            list.push_back(std::move(*item));
-        }
-        return Chorus::OptionValue{std::move(list)};
-    }
-    case Variant::DICTIONARY: {
-        Chorus::OptionMap map;
-        Dictionary dict = v;
-        Array keys = dict.keys();
-        for (int i = 0; i < keys.size(); ++i) {
-            auto item = variant_to_option_value(dict[keys[i]]);
-            if (!item)
-                return std::nullopt;
-            map[std::string(((String)keys[i]).utf8().get_data())] = std::move(*item);
-        }
-        return Chorus::OptionValue{std::move(map)};
-    }
-    default:
-        return std::nullopt;
-    }
-}
-
 bool GodotChorus::load_model() {
     if (_backend != BACKEND_ECHO && _model_path.is_empty()) {
         UtilityFunctions::push_error("[Chorus] model_path is not set.");
@@ -179,6 +143,9 @@ bool GodotChorus::load_model() {
             {"gpu_layers", int64_t{_gpu_layers}},
             {"num_slots", int64_t{_num_slots}},
             {"tokens_per_tick", int64_t{_tokens_per_tick}},
+            {"n_batch", int64_t{_n_batch}},
+            {"n_ubatch", int64_t{_n_ubatch}},
+            {"main_gpu", int64_t{_main_gpu}},
         };
     }
     // Echo: empty ModelSpec, no options (it rejects any it is given).
@@ -201,57 +168,16 @@ bool GodotChorus::is_loaded() const {
 }
 
 int64_t GodotChorus::generate(const Dictionary& request) {
-    if (!request.has("prompt")) {
-        UtilityFunctions::push_error("[Chorus] generate() requires a 'prompt' key in the request dictionary.");
+    const Chorus::GenerationConfig defaults =
+        Chorus::apply_generation_patch(Chorus::GenerationConfig{}, effective_generation_defaults()->to_patch());
+
+    auto normalized = godot_chorus::normalize_generation_request(request, defaults);
+    if (std::holds_alternative<String>(normalized)) {
+        UtilityFunctions::push_error(std::get<String>(normalized));
         return -1;
     }
 
-    Chorus::GenerationRequest gen_request;
-    gen_request.prompt = ((String)request["prompt"]).utf8().get_data();
-    gen_request.stream = request.has("stream") ? (bool)request["stream"] : false;
-    gen_request.priority = request.has("priority") ? (int)(int64_t)request["priority"] : 0;
-
-    if (request.has("max_tokens"))
-        gen_request.config.common.max_tokens = (int32_t)(int64_t)request["max_tokens"];
-    if (request.has("temperature"))
-        gen_request.config.common.temperature = (float)request["temperature"];
-    if (request.has("top_k"))
-        gen_request.config.common.top_k = (int32_t)(int64_t)request["top_k"];
-    if (request.has("top_p"))
-        gen_request.config.common.top_p = (float)request["top_p"];
-    if (request.has("seed"))
-        gen_request.config.common.seed = (uint64_t)(int64_t)request["seed"];
-
-    if (request.has("session"))
-        gen_request.session_id = std::string(((String)request["session"]).utf8().get_data());
-
-    if (request.has("backend_options")) {
-        auto converted = variant_to_option_value(request["backend_options"]);
-        if (!converted || !std::holds_alternative<Chorus::OptionMap>(*converted)) {
-            UtilityFunctions::push_error(
-                "[Chorus] generate(): backend_options must be a Dictionary of "
-                "bool/int/float/String/Array/Dictionary values."
-            );
-            return -1;
-        }
-        gen_request.config.backend_options = std::get<Chorus::OptionMap>(*converted);
-    }
-
-    if (request.has("repeat_penalty")) {
-        auto& llama_opts = gen_request.config.backend_options["llama"];
-        if (!std::holds_alternative<Chorus::OptionMap>(llama_opts))
-            llama_opts = Chorus::OptionMap{};
-        std::get<Chorus::OptionMap>(llama_opts)["repeat_penalty"] = (double)(float)request["repeat_penalty"];
-    }
-
-    if (request.has("grammar")) {
-        Chorus::OutputConstraint constraint;
-        constraint.format = Chorus::ConstraintFormat::Gbnf;
-        constraint.source = ((String)request["grammar"]).utf8().get_data();
-        gen_request.config.common.constraint = constraint;
-    }
-
-    auto result = _runtime.submit(gen_request);
+    auto result = _runtime.submit(std::get<Chorus::GenerationRequest>(normalized));
     if (!result.ok()) {
         String message = String("[Chorus] generate() rejected: ") + chorus_error_name(result.error);
         if (!result.message.empty())
@@ -262,6 +188,23 @@ int64_t GodotChorus::generate(const Dictionary& request) {
         return -1;
     }
     return result.request_id;
+}
+
+// ===========================================================================
+// Runtime controls
+// ===========================================================================
+
+bool GodotChorus::cancel_request(int64_t request_id) {
+    return _runtime.cancel(request_id);
+}
+
+bool GodotChorus::is_request_active(int64_t request_id) const {
+    return _runtime.is_request_active(request_id);
+}
+
+int64_t GodotChorus::active_request_for_session(const String& session) const {
+    auto active = _runtime.active_request_for_session(std::string(session.utf8().get_data()));
+    return active.has_value() ? *active : -1;
 }
 
 // ===========================================================================
@@ -317,6 +260,27 @@ int32_t GodotChorus::get_tokens_per_tick() const {
     return _tokens_per_tick;
 }
 
+void GodotChorus::set_n_batch(int32_t count) {
+    _n_batch = count;
+}
+int32_t GodotChorus::get_n_batch() const {
+    return _n_batch;
+}
+
+void GodotChorus::set_n_ubatch(int32_t count) {
+    _n_ubatch = count;
+}
+int32_t GodotChorus::get_n_ubatch() const {
+    return _n_ubatch;
+}
+
+void GodotChorus::set_main_gpu(int32_t index) {
+    _main_gpu = index;
+}
+int32_t GodotChorus::get_main_gpu() const {
+    return _main_gpu;
+}
+
 void GodotChorus::set_backend(BackendChoice backend) {
     if (is_loaded()) {
         UtilityFunctions::push_warning("[Chorus] backend changed while loaded; takes effect on the next load_model().");
@@ -326,6 +290,22 @@ void GodotChorus::set_backend(BackendChoice backend) {
 
 GodotChorus::BackendChoice GodotChorus::get_backend() const {
     return _backend;
+}
+
+void GodotChorus::set_generation_defaults(const Ref<ChorusGenerationDefaults>& defaults) {
+    _generation_defaults = defaults;
+}
+
+Ref<ChorusGenerationDefaults> GodotChorus::get_generation_defaults() const {
+    return _generation_defaults;
+}
+
+Ref<ChorusGenerationDefaults> GodotChorus::effective_generation_defaults() {
+    if (_generation_defaults.is_valid())
+        return _generation_defaults;
+    if (_fallback_generation_defaults.is_null())
+        _fallback_generation_defaults.instantiate();
+    return _fallback_generation_defaults;
 }
 
 // ===========================================================================
@@ -398,6 +378,9 @@ void GodotChorus::_bind_methods() {
     ClassDB::bind_method(D_METHOD("stop_all"), &GodotChorus::stop_all);
     ClassDB::bind_method(D_METHOD("is_loaded"), &GodotChorus::is_loaded);
     ClassDB::bind_method(D_METHOD("generate", "request"), &GodotChorus::generate);
+    ClassDB::bind_method(D_METHOD("cancel_request", "request_id"), &GodotChorus::cancel_request);
+    ClassDB::bind_method(D_METHOD("is_request_active", "request_id"), &GodotChorus::is_request_active);
+    ClassDB::bind_method(D_METHOD("active_request_for_session", "session"), &GodotChorus::active_request_for_session);
     ClassDB::bind_method(D_METHOD("similarity_cos", "array1", "array2"), &GodotChorus::similarity_cos);
 
     // --- Properties ---
@@ -447,7 +430,29 @@ void GodotChorus::_bind_methods() {
         "get_tokens_per_tick"
     );
 
+    ClassDB::bind_method(D_METHOD("set_n_batch", "count"), &GodotChorus::set_n_batch);
+    ClassDB::bind_method(D_METHOD("get_n_batch"), &GodotChorus::get_n_batch);
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "n_batch", PROPERTY_HINT_RANGE, "1,65536,1"), "set_n_batch", "get_n_batch");
+
+    ClassDB::bind_method(D_METHOD("set_n_ubatch", "count"), &GodotChorus::set_n_ubatch);
+    ClassDB::bind_method(D_METHOD("get_n_ubatch"), &GodotChorus::get_n_ubatch);
+    ADD_PROPERTY(
+        PropertyInfo(Variant::INT, "n_ubatch", PROPERTY_HINT_RANGE, "1,65536,1"), "set_n_ubatch", "get_n_ubatch"
+    );
+
+    ClassDB::bind_method(D_METHOD("set_main_gpu", "index"), &GodotChorus::set_main_gpu);
+    ClassDB::bind_method(D_METHOD("get_main_gpu"), &GodotChorus::get_main_gpu);
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "main_gpu", PROPERTY_HINT_RANGE, "0,15,1"), "set_main_gpu", "get_main_gpu");
+
     ClassDB::bind_method(D_METHOD("set_backend", "backend"), &GodotChorus::set_backend);
     ClassDB::bind_method(D_METHOD("get_backend"), &GodotChorus::get_backend);
     ADD_PROPERTY(PropertyInfo(Variant::INT, "backend", PROPERTY_HINT_ENUM, "Llama,Echo"), "set_backend", "get_backend");
+
+    ClassDB::bind_method(D_METHOD("set_generation_defaults", "defaults"), &GodotChorus::set_generation_defaults);
+    ClassDB::bind_method(D_METHOD("get_generation_defaults"), &GodotChorus::get_generation_defaults);
+    ADD_PROPERTY(
+        PropertyInfo(Variant::OBJECT, "generation_defaults", PROPERTY_HINT_RESOURCE_TYPE, "ChorusGenerationDefaults"),
+        "set_generation_defaults",
+        "get_generation_defaults"
+    );
 }

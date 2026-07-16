@@ -89,10 +89,10 @@ env = SConscript("external/godot-cpp/SConstruct")
 use_vulkan = ARGUMENTS.get("use_vulkan", "no") == "yes"
 use_metal = ARGUMENTS.get("use_metal", "no") == "yes"
 
-# Auto-detect the GPU backend the prebuilt llama.cpp was actually compiled with, so the
-# link libs always match — regardless of the command-line flag. (A prebuilt Vulkan llama
-# linked without ggml-vulkan fails: `undefined reference to ggml_backend_vk_reg`.) An
-# explicit use_vulkan=yes / use_metal=yes still forces the backend on for a fresh build.
+# Auto-detect the GPU backend the prebuilt llama.cpp was actually compiled with, 
+# so that the link libs always match regardless of the CLI flags.
+# e.g. A prebuilt Vulkan llama linked without ggml-vulkan fails: `undefined reference to ggml_backend_vk_reg`.
+# An explicit use_vulkan=yes / use_metal=yes still forces the backend on for a fresh build.
 def _llama_built_with(flag, build_dir="external/llama.cpp/build"):
     cache = os.path.join(build_dir, "CMakeCache.txt")
     if not os.path.exists(cache):
@@ -270,6 +270,15 @@ if "test" in COMMAND_LINE_TARGETS:
 else:
     # --- LIBRARY BUILD (DEFAULT) ---
     env.Append(LIBS=llama_libs)
+
+    # llama.cpp/ggml are archived in with a static libstdc++, so the .so carries a
+    # full private copy of the C++ runtime. When Godot loads us it already has its
+    # own dynamic libstdc++.so.6; exporting our copy's symbols lets them interpose,
+    # and a locale facet built against one vtable layout gets dispatched through the
+    # other, crashing inside ostream/codecvt during model load. Localizing every
+    # symbol pulled from a static archive keeps the process on one libstdc++.
+    if sys.platform.startswith("linux"):
+        env.Append(LINKFLAGS=["-Wl,--exclude-libs,ALL"])
 
     library = env.SharedLibrary(
         target="bin/libgodot_chorus",

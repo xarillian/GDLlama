@@ -70,6 +70,29 @@ SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
     return SubmitResult{id, ChorusError::None, ""};
 }
 
+bool ChorusRuntime::cancel(RequestId id) {
+    assert_host_thread();
+    if (_request_streaming.find(id) == _request_streaming.end())
+        return false;
+    if (_engine)
+        _engine->cancel_request(id);
+    return true;
+}
+
+bool ChorusRuntime::is_request_active(RequestId id) const {
+    assert_host_thread();
+    return _request_streaming.find(id) != _request_streaming.end();
+}
+
+std::optional<RequestId> ChorusRuntime::active_request_for_session(const SessionId& session_id) const {
+    assert_host_thread();
+    for (const auto& [id, request_session] : _request_sessions) {
+        if (request_session == session_id)
+            return id;
+    }
+    return std::nullopt;
+}
+
 std::vector<RuntimeEvent> ChorusRuntime::poll() {
     assert_host_thread();
     std::vector<ChorusSignal> batch;
@@ -159,7 +182,7 @@ void ChorusRuntime::enqueue_signal(const ChorusSignal& signal) {
     _pending_signals.push_back(signal);
 }
 
-void ChorusRuntime::assert_host_thread() {
+void ChorusRuntime::assert_host_thread() const {
 #ifndef NDEBUG
     std::thread::id expected{};
     _host_thread.compare_exchange_strong(expected, std::this_thread::get_id());

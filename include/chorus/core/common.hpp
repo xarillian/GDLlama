@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "chorus/core/generation_config.hpp"
 #include "chorus/core/log.hpp"
 #include "chorus/core/model_spec.hpp"
 #include "chorus/core/options.hpp"
@@ -32,38 +33,6 @@ struct ChorusConfig {
     ModelSpec model;
     OptionMap backend_options; // engine-wide options, namespaced: backend_options["llama"]
     LogCallback log_callback;  // optional; falls back to stderr if not set
-};
-
-enum class ConstraintFormat {
-    Gbnf,
-    JsonSchema,
-    Regex,
-    Lark,
-};
-
-struct OutputConstraint {
-    ConstraintFormat format = ConstraintFormat::Gbnf;
-    std::string source; // grammar text, schema JSON, pattern, ...
-};
-
-// Every field optional: unset means "backend default", set is a deliberate
-// instruction the backend must honor or reject (spec 3c-D). No literal
-// defaults here; resolution happens inside each backend.
-struct PortableGenerationConfig {
-    std::optional<int32_t> max_tokens;
-    std::optional<float> temperature;
-    std::optional<int32_t> top_k;
-    std::optional<float> top_p;
-    std::optional<uint64_t> seed;
-    std::optional<float> frequency_penalty;
-    std::optional<float> presence_penalty;
-    std::vector<std::string> stop; // empty = none requested
-    std::optional<OutputConstraint> constraint;
-};
-
-struct GenerationConfig {
-    PortableGenerationConfig common;
-    OptionMap backend_options; // e.g. backend_options["llama"]["repeat_penalty"]
 };
 
 enum class EventType {
