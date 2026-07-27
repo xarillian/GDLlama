@@ -204,13 +204,15 @@ sources_echo    = Glob("bin/obj/chorus/backends/echo/*.cpp")
 sources_llama   = Glob("bin/obj/chorus/backends/llama/*.cpp")
 sources_godot   = Glob("bin/obj/godot_chorus/*.cpp")
 sources_tests   = (
-    Glob("bin/obj/tests/*.cpp") +
-    Glob("bin/obj/tests/wlib/*.cpp") +
-    Glob("bin/obj/tests/core/*.cpp") +
-    Glob("bin/obj/tests/godot_chorus/*.cpp") +
-    Glob("bin/obj/tests/backends/echo/*.cpp") +
-    Glob("bin/obj/tests/backends/llama/*.cpp") +
-    Glob("bin/obj/tests/runtime/*.cpp")
+    Glob("bin/obj/tests/native/*.cpp") +
+    Glob("bin/obj/tests/native/support/*.cpp") +
+    Glob("bin/obj/tests/native/wlib/*.cpp") +
+    Glob("bin/obj/tests/native/core/*.cpp") +
+    Glob("bin/obj/tests/native/factory/*.cpp") +
+    Glob("bin/obj/tests/native/godot_chorus/*.cpp") +
+    Glob("bin/obj/tests/native/backends/echo/*.cpp") +
+    Glob("bin/obj/tests/native/backends/llama/*.cpp") +
+    Glob("bin/obj/tests/native/runtime/*.cpp")
 )
 
 # Tests compile under their own env. Built by one helper so the compiledb section
@@ -218,7 +220,7 @@ sources_tests   = (
 def make_test_env(base_env):
     test_env = base_env.Clone()
     test_env.Append(CPPDEFINES=["TEST_BUILD"])
-    test_env.Append(CPPPATH=["tests"])
+    test_env.Append(CPPPATH=["tests/native", "tests/native/support"])
     return test_env
 
 # ----------------------------------------------------------------------
