@@ -4,26 +4,35 @@ default:
 build:
     scons
 
-build-tests:
-    scons test
-
-# The full gate: every suite, model included. Run once per change-set; trust its FINAL SUMMARY line.
-test:
-    just build-tests
-    ./bin/run_tests
-
-# Fast inner loop: model suites skipped; optional test-name filter, e.g. `just test-quick Echo`
-test-quick filter="":
-    just build-tests
-    CHORUS_SKIP_MODEL_TESTS=1 ./bin/run_tests {{filter}}
-
-# One test/suite by name substring with the model available, e.g. `just test-only Batch_demand`
-test-only filter:
-    just build-tests
-    ./bin/run_tests {{filter}}
-
-compiledb:
-    scons compiledb
+release:
+    scons target=template_release
 
 clean:
     scons -c
+
+build-tests:
+    scons test
+
+# Run the test suite.
+#
+# Skip model tests: `just test --quick`
+# Optionally filter by test name, e.g. `just test Echo`
+[arg('quick', long, value='true')]
+test quick='false' filter='':
+    if [ '{{quick}}' = 'true' ]; then \
+        CHORUS_SKIP_MODEL_TESTS=1 ./bin/run_tests {{filter}}; \
+    else \
+        ./bin/run_tests {{filter}}; \
+    fi
+
+# Build the test binary, then run the test suite.
+[arg('quick', long, value='true')]
+check quick='false' filter='': build-tests
+    if [ '{{quick}}' = 'true' ]; then \
+        just test --quick {{filter}}; \
+    else \
+        just test {{filter}}; \
+    fi
+
+compiledb:
+    scons compiledb

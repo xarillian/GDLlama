@@ -1,6 +1,11 @@
 #include "chorus/backends/llama/llama_engine.hpp"
 #include "chorus/core/common.hpp"
+#include "chorus/engine_factory.hpp"
+#include "chorus/runtime/runtime.hpp"
+#include "process_test.hpp"
 #include "test_utils.hpp"
+
+#include <llama.h>
 
 #include <algorithm>
 #include <atomic>
@@ -11,12 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
-#if defined(__unix__) || defined(__APPLE__)
-#include <cerrno>
-#include <signal.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
+#include <string_view>
 #include <thread>
 
 const std::string MODEL_PATH = "tests/models/gemma-3-270m-it-F16.gguf";
@@ -27,6 +27,53 @@ static Chorus::ChorusConfig make_gguf_config(const std::string& path) {
     config.model.format = Chorus::ModelFormat::Gguf;
     config.model.assets.push_back({"weights", path, std::nullopt, std::nullopt});
     return config;
+}
+
+class ScopedLlamaLogCapture {
+  public:
+    ScopedLlamaLogCapture() {
+        llama_log_get(&_previous_callback, &_previous_user_data);
+        llama_log_set(capture, this);
+    }
+
+    ~ScopedLlamaLogCapture() { llama_log_set(_previous_callback, _previous_user_data); }
+
+    std::string text() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _text;
+    }
+
+  private:
+    static void capture(ggml_log_level, const char* text, void* user_data) {
+        if (!text || !user_data)
+            return;
+        auto& self = *static_cast<ScopedLlamaLogCapture*>(user_data);
+        std::lock_guard<std::mutex> lock(self._mutex);
+        self._text += text;
+    }
+
+    ggml_log_callback _previous_callback = nullptr;
+    void* _previous_user_data = nullptr;
+    mutable std::mutex _mutex;
+    std::string _text;
+};
+
+bool contains_vulkan_compute_buffer_log(std::string_view logs) {
+    size_t line_start = 0;
+    while (line_start < logs.size()) {
+        const size_t line_end = logs.find('\n', line_start);
+        const std::string_view line = logs.substr(
+            line_start, line_end == std::string_view::npos ? logs.size() - line_start : line_end - line_start
+        );
+        if (line.find("Vulkan") != std::string_view::npos &&
+            line.find("compute buffer size") != std::string_view::npos) {
+            return true;
+        }
+        if (line_end == std::string_view::npos)
+            break;
+        line_start = line_end + 1;
+    }
+    return false;
 }
 
 void test_unsupported_model_format_is_rejected() {
@@ -65,6 +112,60 @@ void test_model_loading() {
 
     engine.stop();
     ASSERT_TRUE(!engine.is_initialized());
+}
+
+void test_llama_cpu_placement_avoids_vulkan_compute_buffer() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
+    ScopedLlamaLogCapture log_capture;
+    Chorus::LlamaEngine engine;
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    ASSERT_TRUE(!engine.initialize(config).has_value());
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    int token_count = 0;
+    int terminal_count = 0;
+    bool errored = false;
+
+    Chorus::ChorusRequest request;
+    request.id = 9001;
+    request.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
+    request.gen_config.common.max_tokens = 1;
+    request.on_event = [&](const Chorus::ChorusSignal& signal) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (signal.type == Chorus::EventType::Token) {
+            ++token_count;
+        } else if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error) {
+            ++terminal_count;
+            errored = signal.type == Chorus::EventType::Error;
+            cv.notify_one();
+        }
+    };
+    engine.submit_request(request);
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(10), [&] { return terminal_count == 1; }));
+    }
+    engine.stop();
+
+    ASSERT_EQ(token_count, 1);
+    ASSERT_EQ(terminal_count, 1);
+    ASSERT_TRUE(!errored);
+
+    const std::string logs = log_capture.text();
+    ASSERT_TRUE(!contains_vulkan_compute_buffer_log(logs));
+    ASSERT_TRUE(logs.find("CPU compute buffer size") != std::string::npos);
+}
+
+void test_llama_vulkan_compute_buffer_oracle_covers_every_device_index() {
+    ASSERT_TRUE(contains_vulkan_compute_buffer_log("Vulkan0 compute buffer size = 12 MiB\n"));
+    ASSERT_TRUE(contains_vulkan_compute_buffer_log("Vulkan1 compute buffer size = 12 MiB\n"));
+    ASSERT_TRUE(contains_vulkan_compute_buffer_log("Vulkan_Host compute buffer size = 12 MiB\n"));
+    ASSERT_TRUE(!contains_vulkan_compute_buffer_log("CPU compute buffer size = 12 MiB\n"));
+    ASSERT_TRUE(!contains_vulkan_compute_buffer_log("Vulkan0 model buffer size = 12 MiB\n"));
 }
 
 void test_simple_generation() {
@@ -318,7 +419,7 @@ void test_llama_declares_gguf_and_chorus_managed() {
     ASSERT_EQ(caps.constraint_formats.size(), size_t{2});
     ASSERT_TRUE(caps.constraint_formats[0] == Chorus::ConstraintFormat::Gbnf);
     ASSERT_TRUE(caps.constraint_formats[1] == Chorus::ConstraintFormat::JsonSchema);
-    ASSERT_EQ(caps.portable_generation_options.size(), (size_t)9);
+    ASSERT_EQ(caps.portable_generation_options.size(), (size_t)10);
     ASSERT_TRUE(
         std::find(caps.portable_generation_options.begin(), caps.portable_generation_options.end(), "constraint") !=
         caps.portable_generation_options.end()
@@ -1177,11 +1278,12 @@ void test_llama_stop_marker_never_emits_and_slot_reuses() {
     engine.stop();
 }
 
-#if defined(__unix__) || defined(__APPLE__)
-
 namespace {
 
 enum class ReentryTrigger { ZeroBudget, Rejection };
+
+constexpr std::string_view REENTRY_ZERO_BUDGET_CHILD = "llama_reentry_zero_budget";
+constexpr std::string_view REENTRY_REJECTION_CHILD = "llama_reentry_rejection";
 
 struct ReentryState {
     std::mutex mutex;
@@ -1240,44 +1342,10 @@ int run_reentry_child(ReentryTrigger trigger) {
     return completed && state->trigger_completed ? 0 : 11;
 }
 
-void kill_and_reap(pid_t child, bool send_sigkill) {
-    if (send_sigkill)
-        kill(child, SIGKILL);
-
-    int status = 0;
-    while (true) {
-        const pid_t result = waitpid(child, &status, 0);
-        if (result == child || (result < 0 && errno == ECHILD))
-            return;
-    }
-}
-
 bool run_reentry_isolated(ReentryTrigger trigger) {
-    const pid_t child = fork();
-    if (child < 0)
-        return false;
-    if (child == 0)
-        _exit(run_reentry_child(trigger));
-
-    int status = 0;
-    for (int elapsed_ms = 0; elapsed_ms < 15000; elapsed_ms += 10) {
-        const pid_t result = waitpid(child, &status, WNOHANG);
-        if (result == child)
-            return WIFEXITED(status) && WEXITSTATUS(status) == 0;
-        if (result < 0 && errno == EINTR) {
-            elapsed_ms -= 10;
-            continue;
-        }
-        if (result < 0) {
-            const bool child_may_remain = errno != ECHILD;
-            kill_and_reap(child, child_may_remain);
-            return false;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    kill_and_reap(child, true);
-    return false;
+    const std::string_view child_name =
+        trigger == ReentryTrigger::ZeroBudget ? REENTRY_ZERO_BUDGET_CHILD : REENTRY_REJECTION_CHILD;
+    return run_isolated_test_child(std::string(child_name), std::chrono::seconds(15));
 }
 
 } // namespace
@@ -1292,19 +1360,13 @@ void test_llama_stop_rejection_callback_can_submit_followup() {
     ASSERT_TRUE(run_reentry_isolated(ReentryTrigger::Rejection));
 }
 
-#else
-
-void test_llama_stop_zero_callback_can_submit_followup() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-    std::cout << YELLOW << "[SKIP] process-isolated deadlock coverage requires POSIX" << RESET << std::endl;
+int run_llama_reentry_child_mode(std::string_view child_name) {
+    if (child_name == REENTRY_ZERO_BUDGET_CHILD)
+        return run_reentry_child(ReentryTrigger::ZeroBudget);
+    if (child_name == REENTRY_REJECTION_CHILD)
+        return run_reentry_child(ReentryTrigger::Rejection);
+    return 64;
 }
-
-void test_llama_stop_rejection_callback_can_submit_followup() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-    std::cout << YELLOW << "[SKIP] process-isolated deadlock coverage requires POSIX" << RESET << std::endl;
-}
-
-#endif
 
 void test_llama_stop_completion_releases_callback_resources() {
     SKIP_IF_MODEL_TESTS_DISABLED();
@@ -1727,12 +1789,177 @@ void test_llama_two_slot_one_cancels_one_completes() {
     ASSERT_TRUE(state->complete_terminals[0].type == Chorus::EventType::Stop);
 }
 
+// --- #5 chat support: render path, messages ingest, fitting against the real model ---
+
+namespace {
+
+Chorus::ChorusConfig make_chat_config() {
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    return config;
+}
+
+struct RuntimeDrainResult {
+    std::optional<Chorus::RuntimeEvent::Kind> terminal_kind;
+    bool saw_truncation = false;
+    std::string complete_text;
+};
+
+// Polls the runtime until a Complete/Error terminal or timeout, recording the
+// Complete text and whether a HistoryTruncated event fired en route.
+RuntimeDrainResult drain_runtime_until_terminal(Chorus::ChorusRuntime& runtime, int timeout_ms = 60000) {
+    RuntimeDrainResult result;
+    while (timeout_ms > 0) {
+        for (auto& event : runtime.poll()) {
+            if (event.kind == Chorus::RuntimeEvent::Kind::HistoryTruncated)
+                result.saw_truncation = true;
+            if (event.kind == Chorus::RuntimeEvent::Kind::Complete) {
+                result.complete_text = event.text;
+                result.terminal_kind = event.kind;
+            }
+            if (event.kind == Chorus::RuntimeEvent::Kind::Error)
+                result.terminal_kind = event.kind;
+        }
+        if (result.terminal_kind)
+            return result;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        timeout_ms -= 50;
+    }
+    return result;
+}
+
+} // namespace
+
+void test_chat_messages_render_and_generate() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+    Chorus::LlamaEngine engine;
+    ASSERT_TRUE(!engine.initialize(make_chat_config()).has_value());
+
+    // Render hook: gemma's embedded template must produce its role scaffolding.
+    auto rendered = engine.render_chat_prompt({{"system", "You are terse."}, {"user", "Say hi."}}, "", true);
+    ASSERT_TRUE(rendered.has_value());
+    ASSERT_TRUE(rendered->text.find("<start_of_turn>user") != std::string::npos);
+    ASSERT_TRUE(rendered->token_count > 0);
+
+    // A custom override changes the rendering.
+    auto overridden = engine.render_chat_prompt(
+        {{"user", "Say hi."}}, "{%- for m in messages -%}[[{{ m.role }}]]{{ m.content }}{%- endfor -%}", true
+    );
+    ASSERT_TRUE(overridden.has_value());
+    ASSERT_TRUE(overridden->text.find("[[user]]") != std::string::npos);
+
+    // Messages-carrying request generates a completion.
+    std::mutex mutex;
+    std::string text;
+    std::atomic<bool> done{false};
+    std::atomic<bool> stopped{false};
+    Chorus::ChorusRequest request;
+    request.id = 901;
+    request.messages = {{"user", "Reply with the single word: hello"}};
+    request.gen_config.common.max_tokens = 16;
+    request.on_event = [&](Chorus::ChorusSignal& sig) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (sig.type == Chorus::EventType::Token)
+            text += sig.text;
+        if (sig.type == Chorus::EventType::Stop) {
+            stopped = true;
+            done = true;
+        } else if (sig.type == Chorus::EventType::Error) {
+            done = true;
+        }
+    };
+    engine.submit_request(request);
+    for (int waited_ms = 0; waited_ms < 30000 && !done; waited_ms += 50)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ASSERT_TRUE(done.load());
+    ASSERT_TRUE(stopped.load());
+    ASSERT_TRUE(!text.empty());
+    engine.stop();
+}
+
+void test_capabilities_and_model_info_report_rendering() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+    Chorus::LlamaEngine engine;
+    ASSERT_TRUE(!engine.initialize(make_chat_config()).has_value());
+    ASSERT_TRUE(engine.capabilities().prompt_rendering);
+    auto info = engine.loaded_model_info();
+    ASSERT_TRUE(info.has_value() && info->per_request_context.has_value());
+    ASSERT_TRUE(*info->per_request_context > 0);
+    engine.stop();
+}
+
+void test_multi_turn_conversation_stays_contextual() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+    // Spec integration bullet: a 2-3 turn conversation is coherent. Exercised
+    // at the RUNTIME level so history assembly itself is under test.
+    Chorus::ChorusRuntime runtime;
+    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Backend::Llama), make_chat_config()).has_value());
+
+    Chorus::GenerationRequest turn1;
+    turn1.prompt = "My name is Trebor. Remember my name.";
+    turn1.session_id = "npc_1";
+    turn1.config.common.max_tokens = 48;
+    turn1.config.common.temperature = 0.0f; // greedy: deterministic recall
+    ASSERT_TRUE(runtime.submit(turn1).ok());
+    ASSERT_TRUE(drain_runtime_until_terminal(runtime).terminal_kind == Chorus::RuntimeEvent::Kind::Complete);
+
+    Chorus::GenerationRequest turn2;
+    turn2.prompt = "What is my name? Answer with just the name.";
+    turn2.session_id = "npc_1";
+    turn2.config.common.max_tokens = 24;
+    turn2.config.common.temperature = 0.0f;
+    ASSERT_TRUE(runtime.submit(turn2).ok());
+    auto drained = drain_runtime_until_terminal(runtime);
+    ASSERT_TRUE(drained.terminal_kind == Chorus::RuntimeEvent::Kind::Complete);
+    ASSERT_TRUE(drained.complete_text.find("Trebor") != std::string::npos);
+}
+
+void test_model_truncation_preserves_system_message() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+    // Spec integration bullet: truncation drops oldest while preserving
+    // system. Tiny context (num_slots=1) forces a real truncation, then the
+    // render hook proves the system message survived in the fitted window.
+    Chorus::ChorusRuntime runtime;
+    auto config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] =
+        Chorus::OptionMap{{"context_size", int64_t{512}}, {"num_slots", int64_t{1}}, {"use_gpu", false}};
+    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Backend::Llama), config).has_value());
+
+    std::vector<Chorus::ChatMessage> history{{"system", "You are Brunn the blacksmith."}};
+    for (int i = 0; i < 30; ++i) {
+        history.push_back({"user", "Filler question number " + std::to_string(i) + " about the weather."});
+        history.push_back({"assistant", "A filler answer about the weather, number " + std::to_string(i) + "."});
+    }
+    ASSERT_TRUE(!runtime.import_conversation_history("npc_1", std::move(history)).has_value());
+
+    Chorus::GenerationConfig gen;
+    gen.common.max_tokens = 64;
+    auto fitted = runtime.render_prompt("npc_1", "", {}, gen);
+    ASSERT_TRUE(fitted.has_value());
+    ASSERT_TRUE(fitted->find("Brunn the blacksmith") != std::string::npos); // system pinned
+    ASSERT_TRUE(fitted->find("number 0 ") == std::string::npos);            // oldest dropped
+
+    Chorus::GenerationRequest turn;
+    turn.prompt = "Who are you?";
+    turn.session_id = "npc_1";
+    turn.config = gen;
+    ASSERT_TRUE(runtime.submit(turn).ok());
+    auto drained = drain_runtime_until_terminal(runtime);
+    ASSERT_TRUE(drained.terminal_kind == Chorus::RuntimeEvent::Kind::Complete);
+    ASSERT_TRUE(drained.saw_truncation);
+}
+
 int run_llama_integration_tests() {
     std::cout << "\n--- LLAMA INTEGRATION SUITE ---\n";
 
     run_test("Llama: unsupported model format is rejected", test_unsupported_model_format_is_rejected);
     run_test("Llama: unknown load option is rejected", test_unknown_llama_load_option_is_rejected);
     run_test("Llama_Model_Load", test_model_loading);
+    run_test("Llama CPU placement avoids Vulkan compute buffer", test_llama_cpu_placement_avoids_vulkan_compute_buffer);
+    run_test(
+        "Llama Vulkan compute-buffer oracle covers every device index",
+        test_llama_vulkan_compute_buffer_oracle_covers_every_device_index
+    );
     run_test("Llama_Generation_Stream", test_simple_generation);
     run_test(
         "Llama batch controls create context and generate four tokens",
@@ -1765,6 +1992,10 @@ int run_llama_integration_tests() {
         test_llama_stop_waits_for_active_cancellation_callback_and_drains_queue
     );
     run_test("Llama loaded model info populated", test_llama_loaded_model_info_populated);
+    run_test("Llama_chat_messages_render_and_generate", test_chat_messages_render_and_generate);
+    run_test("Llama_chat_capabilities_report_rendering", test_capabilities_and_model_info_report_rendering);
+    run_test("Llama_chat_multi_turn_stays_contextual", test_multi_turn_conversation_stays_contextual);
+    run_test("Llama_chat_truncation_preserves_system", test_model_truncation_preserves_system_message);
     run_test("Llama_rejects_unwired_controls_explicitly", test_llama_rejects_unwired_controls_explicitly);
     run_test("Llama_conformance_seed_and_temperature", test_llama_conformance_seed_and_temperature);
     run_test("Llama_conformance_max_tokens_bounds_output", test_llama_conformance_max_tokens_bounds_output);

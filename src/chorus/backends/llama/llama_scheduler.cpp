@@ -19,7 +19,7 @@ bool LlamaScheduler::load_model_from_file(const Chorus::LlamaLoadConfig& config)
     if (model)
         return true;
 
-    llama_model_params model_params = Chorus::make_llama_model_params(config);
+    llama_model_params model_params = Chorus::make_llama_model_params(config, _no_offload_devices);
 
     // @todo Add a host-agnostic progress callback here (via ChorusConfig, like log_callback);
     //       the binding layer wires it to whatever UI the host uses. Core must not know the host.
@@ -99,10 +99,21 @@ std::optional<Chorus::ChorusError> LlamaScheduler::initialize(const Chorus::Chor
     if (llama_model_desc(model, buf, sizeof(buf)) > 0)
         info.quantization = buf; // modest by contract: the desc string, e.g. "gemma3 270M F16"
     info.maximum_context = (uint32_t)llama_model_n_ctx_train(model);
+    // What prompt fitting budgets against: today's slot model divides the
+    // context evenly across concurrent requests.
+    info.per_request_context = (uint32_t)(llama_n_ctx(context) / std::max<size_t>(1, slots.size()));
     info.model_bytes = llama_model_size(model);
     info.input_modalities = {Chorus::Modality::Text};
     info.output_modalities = {Chorus::Modality::Text};
     _model_info = info;
+
+    try {
+        _chat_templates = common_chat_templates_init(model, /*chat_template_override=*/"");
+    } catch (const std::exception& e) {
+        // No usable template: chat requests will reject at ingest and
+        // render_chat_prompt returns nullopt; raw-prompt generation still works.
+        Chorus::chorus_log(_log, Chorus::LogLevel::Warn, std::string("Chat templates unavailable: ") + e.what());
+    }
 
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
@@ -140,7 +151,36 @@ void LlamaScheduler::stop() {
         llama_model_free(model);
         model = nullptr;
     }
+    _chat_templates.reset();
     _model_info = std::nullopt;
+}
+
+std::optional<Chorus::RenderedPrompt> LlamaScheduler::render_chat_prompt(
+    const std::vector<Chorus::ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+) const {
+    if (!model || !_chat_templates)
+        return std::nullopt;
+    // Serialize template application against the worker's ingest path -- no
+    // upstream thread-safety guarantee for common_chat_templates_apply.
+    std::lock_guard<std::mutex> template_lock(_template_mutex);
+    const common_chat_templates* tmpls = _chat_templates.get();
+    common_chat_templates_ptr override_templates;
+    if (!template_override.empty()) {
+        try {
+            override_templates = common_chat_templates_init(model, template_override);
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
+        tmpls = override_templates.get();
+    }
+    auto rendered = Chorus::render_llama_chat(tmpls, messages, enable_thinking);
+    if (std::holds_alternative<Chorus::RequestRejection>(rendered))
+        return std::nullopt;
+    auto& render = std::get<Chorus::LlamaChatRender>(rendered);
+    // Vocab tokenization is read-only and safe beside the running worker.
+    std::vector<int32_t> tokens =
+        Chorus::LlamaUtils::tokenize(context, render.prompt, /*add_special=*/true, /*parse_special=*/true);
+    return Chorus::RenderedPrompt{std::move(render.prompt), (int32_t)tokens.size()};
 }
 
 bool LlamaScheduler::is_healthy() const {
@@ -175,9 +215,9 @@ void LlamaScheduler::cancel_request(Chorus::RequestId id) {
 }
 
 int LlamaScheduler::find_free_slot() {
-    for (int i = 0; i < slots.size(); ++i) {
-        if (!slots[i].is_busy)
-            return i;
+    for (size_t index = 0; index < slots.size(); ++index) {
+        if (!slots[index].is_busy)
+            return static_cast<int>(index);
     }
     return -1;
 }
@@ -187,6 +227,9 @@ void LlamaScheduler::release_slot(int slot_id) {
 
     slot.sampler.reset();
     slot.stop_filter.reset();
+    slot.parse_stream.reset();
+    slot.reasoning_chunker.reset();
+    slot.content_chunker.reset();
 
     // Reclaim this sequence's KV cache so freed capacity is available to other slots.
     if (context) {
@@ -218,6 +261,7 @@ void LlamaScheduler::emit_terminal(TerminalEvent terminal) {
     signal.request_id = terminal.request.id;
     signal.type = terminal.type;
     signal.error_code = terminal.error;
+    signal.channel = terminal.channel;
     signal.text = std::move(terminal.text);
     terminal.request.on_event(signal);
 }
@@ -227,19 +271,33 @@ void LlamaScheduler::emit_terminals(std::vector<TerminalEvent> terminals) {
         emit_terminal(std::move(terminal));
 }
 
-void LlamaScheduler::emit_token(Slot& slot, std::string text) {
+void LlamaScheduler::emit_token(Slot& slot, std::string text, Chorus::TokenChannel channel) {
     if (text.empty() || !slot.current_request.on_event)
         return;
 
     Chorus::ChorusSignal signal;
     signal.request_id = slot.current_request.id;
     signal.type = Chorus::EventType::Token;
+    signal.channel = channel;
     signal.text = std::move(text);
     slot.current_request.on_event(signal);
 }
 
 void LlamaScheduler::complete_slot(Slot& slot, bool flush_pending_text) {
-    std::optional<TerminalEvent> buffered_token;
+    // Finalize the reasoning split before taking the queue lock: it is a full
+    // non-partial parse of the whole response, the parse stream is worker-owned,
+    // and the host thread waits on queue_mutex in push/cancel. A request that
+    // turns out cancelled below pays for a discarded parse; cancels are rare.
+    Chorus::LlamaChatParseStream::Delta residual;
+    if (slot.parse_stream) {
+        residual = slot.parse_stream->finalize();
+        // Reasoning residuals pass the same UTF-8 guard as the streamed path.
+        // Content stays raw until finish_content_stream so malformed-byte
+        // recovery cannot join non-contiguous stop-marker fragments.
+        residual.reasoning = slot.reasoning_chunker.push(residual.reasoning);
+    }
+
+    std::vector<TerminalEvent> buffered_tokens;
     TerminalEvent terminal;
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
@@ -249,16 +307,34 @@ void LlamaScheduler::complete_slot(Slot& slot, bool flush_pending_text) {
                 slot, Chorus::EventType::Error, Chorus::ChorusError::Cancelled, "Request cancelled."
             );
         } else {
-            if (flush_pending_text && slot.stop_filter) {
-                std::string text = slot.stop_filter->flush();
+            // Residuals surface before the terminal: reasoning first, then
+            // residual content passes through the stop filter before its
+            // withheld tail is released.
+            if (!residual.reasoning.empty()) {
+                buffered_tokens.push_back(
+                    TerminalEvent{
+                        slot.current_request,
+                        Chorus::EventType::Token,
+                        {},
+                        std::move(residual.reasoning),
+                        Chorus::TokenChannel::Reasoning,
+                    }
+                );
+            }
+            if (flush_pending_text) {
+                auto filtered = Chorus::finish_content_stream(
+                    slot.stop_filter ? &*slot.stop_filter : nullptr, slot.content_chunker, residual.content
+                );
+                std::string text = std::move(filtered.safe_text);
                 if (!text.empty())
-                    buffered_token = TerminalEvent{slot.current_request, Chorus::EventType::Token, {}, std::move(text)};
+                    buffered_tokens.push_back(
+                        TerminalEvent{slot.current_request, Chorus::EventType::Token, {}, std::move(text)}
+                    );
             }
             terminal = release_with_terminal(slot, Chorus::EventType::Stop);
         }
     }
-    if (buffered_token)
-        emit_terminal(std::move(*buffered_token));
+    emit_terminals(std::move(buffered_tokens));
     emit_terminal(std::move(terminal));
 }
 
@@ -402,7 +478,7 @@ void LlamaScheduler::ingest_new_requests() {
                                      Chorus::ChorusError::Cancelled,
                                      is_running ? "Request cancelled." : "Request cancelled: engine stopped.",
                                  }
-                               : TerminalEvent{chorus_request, Chorus::EventType::Stop};
+                               : TerminalEvent{chorus_request, Chorus::EventType::Stop, Chorus::ChorusError::None, {}};
             }
             emit_terminal(std::move(terminal));
             continue;
@@ -432,7 +508,53 @@ void LlamaScheduler::ingest_new_requests() {
         pending->resolved.reset();
         std::vector<std::string> stop_sequences = std::move(admitted.stop);
         auto sampler = Chorus::make_llama_sampler(model, std::move(admitted));
-        std::vector<int32_t> tokens = Chorus::LlamaUtils::tokenize(context, chorus_request.prompt, true);
+
+        // #5: a non-empty messages list renders through the chat template
+        // (embedded or per-request override) and supersedes the raw prompt.
+        std::vector<int32_t> tokens;
+        std::optional<Chorus::LlamaChatParseStream> parse_stream;
+        std::optional<Chorus::RequestRejection> render_rejection;
+        if (!chorus_request.messages.empty()) {
+            std::lock_guard<std::mutex> template_lock(_template_mutex);
+            const common_chat_templates* tmpls = _chat_templates.get();
+            common_chat_templates_ptr override_templates;
+            if (!chorus_request.chat_template.empty()) {
+                try {
+                    override_templates = common_chat_templates_init(model, chorus_request.chat_template);
+                    tmpls = override_templates.get();
+                } catch (const std::exception& e) {
+                    render_rejection = Chorus::RequestRejection{
+                        Chorus::ChorusError::InvalidRequest, std::string("Invalid chat_template: ") + e.what()
+                    };
+                }
+            }
+            if (!render_rejection && !tmpls) {
+                render_rejection = Chorus::RequestRejection{
+                    Chorus::ChorusError::InvalidRequest, "No chat template available for messages."
+                };
+            }
+            if (!render_rejection) {
+                const bool thinking = chorus_request.gen_config.common.thinking.value_or(true);
+                auto rendered = Chorus::render_llama_chat(tmpls, chorus_request.messages, thinking);
+                if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered)) {
+                    render_rejection = *rejection;
+                } else {
+                    auto& render = std::get<Chorus::LlamaChatRender>(rendered);
+                    tokens = Chorus::LlamaUtils::tokenize(
+                        context, render.prompt, /*add_special=*/true, /*parse_special=*/true
+                    );
+                    for (auto& stop : render.additional_stops)
+                        stop_sequences.push_back(std::move(stop));
+                    // The request flag controls template rendering, not channel
+                    // separation. Some reasoning templates ignore the flag and
+                    // still open a think block, so capability alone selects the
+                    // parser.
+                    parse_stream = Chorus::make_llama_chat_parse_stream(render);
+                }
+            }
+        } else {
+            tokens = Chorus::LlamaUtils::tokenize(context, chorus_request.prompt, true);
+        }
 
         std::optional<TerminalEvent> terminal;
         {
@@ -443,6 +565,15 @@ void LlamaScheduler::ingest_new_requests() {
                     Chorus::EventType::Error,
                     Chorus::ChorusError::Cancelled,
                     is_running ? "Request cancelled." : "Request cancelled: engine stopped.",
+                };
+            } else if (render_rejection) {
+                // Checked before tokens.empty(): a failed render leaves tokens
+                // empty and must not masquerade as a Tokenize error.
+                terminal = TerminalEvent{
+                    chorus_request,
+                    Chorus::EventType::Error,
+                    render_rejection->error,
+                    render_rejection->message,
                 };
             } else if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&sampler)) {
                 terminal = TerminalEvent{
@@ -480,6 +611,7 @@ void LlamaScheduler::ingest_new_requests() {
                 slot.current_input_tokens = std::move(tokens);
                 slot.max_tokens = max_tokens;
                 slot.sampler = std::get<common_sampler_ptr>(std::move(sampler));
+                slot.parse_stream = std::move(parse_stream);
                 if (!stop_sequences.empty())
                     slot.stop_filter.emplace(std::move(stop_sequences));
             }
@@ -596,7 +728,16 @@ void LlamaScheduler::worker_loop() {
                 continue;
             }
 
-            const std::string piece = Chorus::LlamaUtils::token_to_piece(context, new_token_id);
+            std::string piece = Chorus::LlamaUtils::token_to_piece(context, new_token_id);
+            if (slot.parse_stream) {
+                auto delta = slot.parse_stream->push(piece);
+                if (!delta.reasoning.empty())
+                    emit_token(slot, slot.reasoning_chunker.push(delta.reasoning), Chorus::TokenChannel::Reasoning);
+                // Only content meets the stop filter. An all-reasoning piece
+                // leaves it empty: both emit paths below no-op on empty text,
+                // while the EOS/limit bookkeeping still runs.
+                piece = std::move(delta.content);
+            }
             if (slot.stop_filter) {
                 auto filtered = slot.stop_filter->push(piece);
                 emit_token(slot, std::move(filtered.safe_text));
@@ -605,7 +746,7 @@ void LlamaScheduler::worker_loop() {
                     continue;
                 }
             } else {
-                emit_token(slot, piece);
+                emit_token(slot, slot.content_chunker.push(piece));
             }
 
             if (is_limit)

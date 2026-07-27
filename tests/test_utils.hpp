@@ -12,6 +12,7 @@ inline int g_tests_passed = 0;
 inline int g_tests_failed = 0;
 inline bool g_run_model_tests = true; // user-controlled; false skips model-dependent tests
 inline std::string g_test_filter;     // empty = run every test; else a name substring filter
+inline std::string g_test_executable_path;
 
 inline bool test_name_matches(const std::string& name) {
     return g_test_filter.empty() || name.find(g_test_filter) != std::string::npos;

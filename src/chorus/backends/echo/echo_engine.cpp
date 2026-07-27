@@ -162,18 +162,59 @@ std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest
         return RequestRejection{ChorusError::EngineNotReady, "EchoEngine is not initialized."};
     if (request.type == RequestType::Embedding)
         return RequestRejection{ChorusError::UnsupportedFeature, "EchoEngine does not produce embeddings."};
-    if (request.gen_config.common.constraint)
-        return RequestRejection{ChorusError::UnsupportedFeature, "EchoEngine supports no output constraints."};
     const auto& c = request.gen_config.common;
     if (c.max_tokens && *c.max_tokens < -1)
         return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine max_tokens must be -1 or greater."};
-    if (c.temperature || c.top_k || c.top_p || c.seed || c.frequency_penalty || c.presence_penalty || !c.stop.empty())
+    // Options addressed to this engine by namespace are demands: Echo has no
+    // options, so any 'echo' entry is a typo to catch.
+    if (request.gen_config.backend_options.count("echo"))
         return RequestRejection{
-            ChorusError::UnsupportedOption,
-            "EchoEngine honors only max_tokens; unset other options or use another backend."
+            ChorusError::UnsupportedOption, "EchoEngine has no backend options; remove the 'echo' entry."
         };
+
+    // Content controls (sampling, stop, constraint, thinking, templates,
+    // foreign backend namespaces) are inert here: echoed output makes no
+    // content claims, so any value is vacuously honored. Accept them so real
+    // request pipelines run unmodified against the test double, and warn once
+    // per engine lifetime so the discard is not silent (user decision
+    // 2026-07-17 amending the no-silent-discard posture for Echo).
+    std::vector<const char*> ignored;
+    if (c.temperature)
+        ignored.push_back("temperature");
+    if (c.top_k)
+        ignored.push_back("top_k");
+    if (c.top_p)
+        ignored.push_back("top_p");
+    if (c.seed)
+        ignored.push_back("seed");
+    if (c.frequency_penalty)
+        ignored.push_back("frequency_penalty");
+    if (c.presence_penalty)
+        ignored.push_back("presence_penalty");
+    if (!c.stop.empty())
+        ignored.push_back("stop");
+    if (c.constraint)
+        ignored.push_back("constraint");
+    if (c.thinking.has_value())
+        ignored.push_back("thinking");
+    if (!request.chat_template.empty())
+        ignored.push_back("chat_template");
     if (!request.gen_config.backend_options.empty())
-        return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine accepts no backend options."};
+        ignored.push_back("backend_options");
+
+    if (!ignored.empty() && !_warned_ignored.exchange(true)) {
+        std::string names;
+        for (size_t i = 0; i < ignored.size(); ++i) {
+            if (i)
+                names += ", ";
+            names += ignored[i];
+        }
+        chorus_log(
+            _log,
+            LogLevel::Warn,
+            "EchoEngine ignoring content controls (" + names + "); echoed output makes no content claims."
+        );
+    }
     return std::nullopt;
 }
 
@@ -197,10 +238,22 @@ void EchoEngine::worker_loop() {
             continue;
         }
 
+        // Chat requests echo the last user message (keeps the model-free
+        // path exercising the messages carrier).
+        std::string chat_source;
+        if (!req.messages.empty()) {
+            chat_source = req.messages.back().content;
+            for (auto it = req.messages.rbegin(); it != req.messages.rend(); ++it) {
+                if (it->role == "user") {
+                    chat_source = it->content;
+                    break;
+                }
+            }
+        }
         // One Token per space-delimited chunk (spaces only, not all whitespace); each
         // chunk keeps its trailing space(s) so the concatenation of all token texts
         // equals the prompt exactly.
-        const std::string& text = req.prompt;
+        const std::string& text = req.messages.empty() ? req.prompt : chat_source;
         size_t start = 0;
         int32_t chunks = 0;
         const int32_t max_chunks = req.gen_config.common.max_tokens.value_or(-1);

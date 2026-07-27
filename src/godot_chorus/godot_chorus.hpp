@@ -3,11 +3,14 @@
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
 
 #include "chorus/core/common.hpp"
 #include "chorus/runtime/runtime.hpp"
 #include "godot_chorus/chorus_generation_defaults.hpp"
+#include "godot_chorus/llama_load_options.hpp"
 
 class GodotChorus : public godot::Node {
     GDCLASS(GodotChorus, godot::Node);
@@ -38,7 +41,17 @@ class GodotChorus : public godot::Node {
         BACKEND_ECHO,  // mirrors Chorus::Backend::Echo
     };
 
+    // Mirrors Chorus::TurnOutcome: the terminal state of a session's most
+    // recent chat turn.
+    enum TurnOutcomeCode {
+        TURN_NONE,
+        TURN_COMPLETED,
+        TURN_CANCELLED,
+        TURN_ERRORED,
+    };
+
     static int to_godot(Chorus::ChorusError e);
+    static int to_godot(Chorus::TurnOutcome outcome);
 
     // --- Core API ---
 
@@ -75,8 +88,23 @@ class GodotChorus : public godot::Node {
     //                          convenience spellings grammar: String (GBNF text) / json_schema:
     //                          String (schema text) / json: String (same as json_schema); at most
     //                          one spelling may be present; null clears an inherited constraint.
+    //   thinking: bool       (reasoning-model toggle; null clears an inherited value back to the
+    //                          template/backend default)
+    // Chat keys (meaningful on sessioned requests):
+    //   inject: Array        (of {role: String, content: String, depth?: int} Dictionaries;
+    //                          ephemeral messages placed into this turn's prompt only, never
+    //                          durable history; depth counts from the end, 0 = last)
+    //   chat_template: String (per-request jinja override; wins over the chat_template node
+    //                          property; null reads as absent)
     // Returns the request ID (>= 0) on success, or -1 on failure.
     int64_t generate(const godot::Dictionary& request);
+
+    // Reroll the session's last assistant line. `overrides` takes the same
+    // keys as generate() minus 'prompt' (the turn text comes from history);
+    // a 'session' key in it is ignored -- the positional argument names the
+    // lane. On completion the new reply replaces the old; on cancel/error the
+    // old reply is restored. Returns the request ID (>= 0), or -1 on failure.
+    int64_t regenerate(const godot::String& session, const godot::Dictionary& overrides);
 
     // --- Runtime controls ---
 
@@ -85,6 +113,35 @@ class GodotChorus : public godot::Node {
     bool is_request_active(int64_t request_id) const;
     // -1 if the session has no active request (including an unknown session).
     int64_t active_request_for_session(const godot::String& session) const;
+
+    // --- Conversation history ---
+    // import/clear on a busy session (and reset_context with ANY busy session)
+    // fail with SessionBusy: cancel or stop_all + poll first.
+
+    bool import_conversation_history(const godot::String& session, const godot::Array& history);
+    // Array of {role, content} Dictionaries; empty for an unknown session.
+    godot::Array export_conversation_history(const godot::String& session) const;
+    bool clear_conversation_history(const godot::String& session);
+    // Rewrites one message's content in place (any role); sugar over the
+    // export -> mutate -> import roundtrip, so it inherits import's semantics
+    // (SessionBusy guard, last_turn_outcome reset to TURN_NONE). Negative
+    // index counts from the end (-1 = newest). Role edits and insert/delete
+    // stay on the full roundtrip.
+    bool edit_message(const godot::String& session, int64_t index, const godot::String& content);
+    godot::PackedStringArray list_conversations() const;
+    bool reset_context();
+    TurnOutcomeCode last_turn_outcome(const godot::String& session) const;
+    // The exact fitted prompt generation would consume for this session right
+    // now ("" when unavailable: unknown session, no engine, or no backend
+    // rendering). Uses this node's effective generation defaults for the
+    // fitting reservation and thinking flag, so inspection matches a
+    // default-configured turn; a generate() call overriding max_tokens or
+    // thinking per-request can still fit differently.
+    godot::String render_chat_prompt(
+        const godot::String& session,
+        const godot::String& template_override = godot::String(),
+        const godot::Array& inject = godot::Array()
+    );
 
     void _process(double delta) override;
 
@@ -114,6 +171,11 @@ class GodotChorus : public godot::Node {
     BackendChoice get_backend() const;
     void set_generation_defaults(const godot::Ref<ChorusGenerationDefaults>& defaults);
     godot::Ref<ChorusGenerationDefaults> get_generation_defaults() const;
+    // Node-default jinja chat template for chat (sessioned) turns; "" = the
+    // model's embedded template. Stateless generate() calls ignore it. Echo
+    // accepts it as inert (content controls are vacuous on the test double).
+    void set_chat_template(const godot::String& chat_template);
+    godot::String get_chat_template() const;
 
     // --- Utility ---
     float similarity_cos(godot::PackedFloat32Array array1, godot::PackedFloat32Array array2) const;
@@ -124,13 +186,18 @@ class GodotChorus : public godot::Node {
     // contributes a generation default even with the property unset.
     godot::Ref<ChorusGenerationDefaults> effective_generation_defaults();
 
+    // Precedence for the chat_template node default: a per-request override
+    // wins; otherwise the node property (when non-empty). One rule, three
+    // entry points: generate, regenerate, render_chat_prompt.
+    std::string resolve_chat_template(std::string request_template) const;
+
     Chorus::ChorusRuntime _runtime;
 
     godot::String _model_path;
     int32_t _context_size = 2048;
     int32_t _thread_count = 4;
     bool _use_gpu = true;
-    int32_t _gpu_layers = 99;
+    int32_t _gpu_layers = Chorus::GodotAdapter::DEFAULT_GPU_LAYERS;
     int32_t _num_slots = 1;
     int32_t _tokens_per_tick = 512;
     int32_t _n_batch = 2048;
@@ -138,6 +205,9 @@ class GodotChorus : public godot::Node {
     int32_t _main_gpu = 0;
 
     BackendChoice _backend = BACKEND_LLAMA;
+
+    // Node-default jinja chat template; "" = the model's embedded template.
+    godot::String _chat_template;
 
     // The bound property: null when the user has not assigned a resource, so
     // scene serialization stays clean. effective_generation_defaults() supplies
@@ -148,3 +218,4 @@ class GodotChorus : public godot::Node {
 
 VARIANT_ENUM_CAST(GodotChorus::ErrorCode);
 VARIANT_ENUM_CAST(GodotChorus::BackendChoice);
+VARIANT_ENUM_CAST(GodotChorus::TurnOutcomeCode);

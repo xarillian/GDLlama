@@ -109,7 +109,8 @@ EngineCapabilities LlamaEngine::capabilities() const {
     caps.scheduling = SchedulingAuthority::ChorusManaged;
     caps.streaming = true;
     caps.cancellation = true;
-    // native_sessions arrives with #9, prompt_rendering with #5, embeddings with #6.
+    caps.prompt_rendering = true; // #5
+    // native_sessions arrives with #9, embeddings with #6.
     caps.portable_generation_options = llama_portable_generation_option_names();
     caps.backend_generation_options = llama_backend_generation_option_names();
     return caps;
@@ -136,6 +137,19 @@ std::optional<RequestRejection> LlamaEngine::validate_request(const ChorusReques
         return RequestRejection{ChorusError::EngineNotReady, "LlamaEngine is not initialized."};
     if (request.type == RequestType::Embedding)
         return RequestRejection{ChorusError::UnsupportedFeature, "Embeddings arrive with workstream #6."};
-    return validate_llama_generation(request.gen_config);
+    return validate_llama_request(request);
+}
+
+std::optional<RenderedPrompt> LlamaEngine::render_chat_prompt(
+    const std::vector<ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+) const {
+    std::shared_ptr<LlamaScheduler> current_scheduler;
+    {
+        std::lock_guard<std::mutex> lock(_lifecycle_mutex);
+        current_scheduler = scheduler;
+    }
+    if (!current_scheduler || !current_scheduler->is_healthy())
+        return std::nullopt;
+    return current_scheduler->render_chat_prompt(messages, template_override, enable_thinking);
 }
 } // namespace Chorus

@@ -38,6 +38,7 @@ void test_load_option_defaults() {
     ASSERT_EQ(load.n_batch, uint32_t{2048});
     ASSERT_EQ(load.n_ubatch, uint32_t{512});
     ASSERT_EQ(load.main_gpu, int32_t{0});
+    ASSERT_EQ(load.gpu_layers, int32_t{-1});
 }
 
 void test_load_option_accepts_exact_int64_values() {
@@ -125,19 +126,61 @@ void test_load_option_still_rejects_unknown_keys() {
     ASSERT_TRUE(rejection->message.find("warp_factor") != std::string::npos);
 }
 
-void test_load_option_model_params_forward_gpu_values() {
+void test_load_option_rejects_cpu_with_explicit_gpu_controls() {
+    auto expect_rejection = [](const std::string& key, int64_t value) {
+        auto config = make_gguf_config(MODEL_PATH);
+        config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {key, value}};
+        const auto rejection = load_rejection(config);
+        return rejection.has_value() && rejection->error == Chorus::ChorusError::UnsupportedOption &&
+               rejection->message.find(key) != std::string::npos;
+    };
+
+    ASSERT_TRUE(expect_rejection("main_gpu", 0));
+    ASSERT_TRUE(expect_rejection("gpu_layers", 17));
+    ASSERT_TRUE(expect_rejection("gpu_layers", -1));
+}
+
+void test_load_option_accepts_cpu_with_explicit_zero_gpu_layers() {
+    auto config = make_gguf_config(MODEL_PATH);
+    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"gpu_layers", int64_t{0}}};
+    auto result = Chorus::parse_llama_load_config(config);
+    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaLoadConfig>(result));
+    const auto& load = std::get<Chorus::LlamaLoadConfig>(result);
+    ASSERT_TRUE(load.gpu_layers_explicit);
+    ASSERT_TRUE(!load.main_gpu_explicit);
+    ASSERT_EQ(load.gpu_layers, int32_t{0});
+}
+
+void test_load_option_cpu_placement_disables_every_offload_path() {
+    Chorus::LlamaLoadConfig load;
+    load.use_gpu = false;
+    Chorus::LlamaOffloadDeviceList no_offload_devices{};
+
+    const auto model = Chorus::make_llama_model_params(load, no_offload_devices);
+    const auto context = Chorus::make_llama_context_params(load);
+
+    ASSERT_EQ(model.n_gpu_layers, int32_t{0});
+    ASSERT_TRUE(model.devices == no_offload_devices.data());
+    ASSERT_TRUE(model.devices[0] == nullptr);
+    ASSERT_TRUE(!context.offload_kqv);
+    ASSERT_TRUE(!context.op_offload);
+}
+
+void test_load_option_gpu_placement_preserves_upstream_device_selection() {
     Chorus::LlamaLoadConfig load;
     load.use_gpu = true;
     load.gpu_layers = 17;
     load.main_gpu = 2;
-    auto params = Chorus::make_llama_model_params(load);
-    ASSERT_EQ(params.n_gpu_layers, int32_t{17});
-    ASSERT_EQ(params.main_gpu, int32_t{2});
+    Chorus::LlamaOffloadDeviceList no_offload_devices{};
 
-    load.use_gpu = false;
-    params = Chorus::make_llama_model_params(load);
-    ASSERT_EQ(params.n_gpu_layers, int32_t{0});
-    ASSERT_EQ(params.main_gpu, int32_t{2});
+    const auto model = Chorus::make_llama_model_params(load, no_offload_devices);
+    const auto context = Chorus::make_llama_context_params(load);
+
+    ASSERT_EQ(model.n_gpu_layers, int32_t{17});
+    ASSERT_EQ(model.main_gpu, int32_t{2});
+    ASSERT_TRUE(model.devices == nullptr);
+    ASSERT_TRUE(context.offload_kqv);
+    ASSERT_TRUE(context.op_offload);
 }
 
 void test_load_option_context_params_forward_exact_values() {
@@ -460,7 +503,21 @@ int run_llama_scheduler_tests() {
     run_test("load option rejects negative main_gpu", test_load_option_rejects_negative_main_gpu);
     run_test("load option rejects narrowing overflow", test_load_option_rejects_narrowing_overflow);
     run_test("load option still rejects unknown keys", test_load_option_still_rejects_unknown_keys);
-    run_test("load option model params forward GPU values", test_load_option_model_params_forward_gpu_values);
+    run_test(
+        "load option rejects CPU with explicit GPU controls", test_load_option_rejects_cpu_with_explicit_gpu_controls
+    );
+    run_test(
+        "load option accepts CPU with explicit zero GPU layers",
+        test_load_option_accepts_cpu_with_explicit_zero_gpu_layers
+    );
+    run_test(
+        "load option CPU placement disables every offload path",
+        test_load_option_cpu_placement_disables_every_offload_path
+    );
+    run_test(
+        "load option GPU placement preserves upstream device selection",
+        test_load_option_gpu_placement_preserves_upstream_device_selection
+    );
     run_test("load option context params forward exact values", test_load_option_context_params_forward_exact_values);
     run_test(
         "resolve generation: unset fields use upstream defaults",

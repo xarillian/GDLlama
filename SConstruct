@@ -1,18 +1,22 @@
 #!/usr/bin/env python
 import os
-import shutil
 import sys
 import subprocess
-from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, Glob, SConscript
+from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, Glob, SConscript, Value
+
+def discover_llama_revision():
+    try:
+        return subprocess.check_output(
+            ["git", "-C", "external/llama.cpp", "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return "unknown"
 
 def build_llama_with_cmake(target, source, env):
     source_dir = os.path.abspath("external/llama.cpp")
-    build_dir = os.path.abspath("external/llama.cpp/build")
-
-    if os.path.exists(build_dir):
-        # Clean up.
-        shutil.rmtree(build_dir)
-
+    build_dir = os.path.abspath(env["llama_build_dir"])
 
     cmake_config = [
         "cmake",
@@ -85,43 +89,46 @@ def build_llama_with_cmake(target, source, env):
 # ----------------------------------------------------------------------
 # BASE CONFIGURATION
 # ----------------------------------------------------------------------
+use_vulkan = ARGUMENTS.pop("use_vulkan", "no") == "yes"
+use_metal = ARGUMENTS.pop("use_metal", "no") == "yes"
 env = SConscript("external/godot-cpp/SConstruct")
-use_vulkan = ARGUMENTS.get("use_vulkan", "no") == "yes"
-use_metal = ARGUMENTS.get("use_metal", "no") == "yes"
 
-# Auto-detect the GPU backend the prebuilt llama.cpp was actually compiled with, 
-# so that the link libs always match regardless of the CLI flags.
-# e.g. A prebuilt Vulkan llama linked without ggml-vulkan fails: `undefined reference to ggml_backend_vk_reg`.
-# An explicit use_vulkan=yes / use_metal=yes still forces the backend on for a fresh build.
-def _llama_built_with(flag, build_dir="external/llama.cpp/build"):
-    cache = os.path.join(build_dir, "CMakeCache.txt")
-    if not os.path.exists(cache):
-        return False
-    with open(cache) as f:
-        return (flag + ":BOOL=ON") in f.read()
-
-use_vulkan = use_vulkan or _llama_built_with("GGML_VULKAN")
-use_metal = use_metal or _llama_built_with("GGML_METAL")
+llama_variant_parts = []
+if use_vulkan:
+    llama_variant_parts.append("vulkan")
+if use_metal:
+    llama_variant_parts.append("metal")
+llama_variant = "-".join(llama_variant_parts) or "cpu"
+llama_platform = str(env["platform"])
+llama_arch = str(env.get("arch", "unknown") or "unknown")
+llama_build_identity = f"{llama_platform}-{llama_arch}"
+llama_build_dir = os.path.join(
+    "external", "llama.cpp", "build", "chorus", llama_build_identity, llama_variant
+)
+print(f">>> [SCons] llama.cpp variant: {os.path.abspath(llama_build_dir)}")
 
 env["use_vulkan"] = use_vulkan
 env["use_metal"] = use_metal
+env["llama_build_dir"] = llama_build_dir
 
 if env["platform"] == "windows":
     lib_paths = [
-        "external/llama.cpp/build/src/Release",
-        "external/llama.cpp/build/ggml/src/Release",
-        "external/llama.cpp/build/common/Release",
+        os.path.join(llama_build_dir, "src", "Release"),
+        os.path.join(llama_build_dir, "ggml", "src", "Release"),
+        os.path.join(llama_build_dir, "common", "Release"),
     ]
     if use_vulkan:
-        lib_paths.append("external/llama.cpp/build/ggml/src/ggml-vulkan/Release")
+        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-vulkan", "Release"))
 else:
     lib_paths = [
-        "external/llama.cpp/build/src",
-        "external/llama.cpp/build/ggml/src",
-        "external/llama.cpp/build/common",
+        os.path.join(llama_build_dir, "src"),
+        os.path.join(llama_build_dir, "ggml", "src"),
+        os.path.join(llama_build_dir, "common"),
     ]
     if use_vulkan:
-        lib_paths.append("external/llama.cpp/build/ggml/src/ggml-vulkan")
+        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-vulkan"))
+    if use_metal and env["platform"] == "macos":
+        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-metal"))
 
 if env["platform"] == "windows":
     # Force /MD to match llama.cpp Release build
@@ -198,7 +205,9 @@ sources_llama   = Glob("bin/obj/chorus/backends/llama/*.cpp")
 sources_godot   = Glob("bin/obj/godot_chorus/*.cpp")
 sources_tests   = (
     Glob("bin/obj/tests/*.cpp") +
+    Glob("bin/obj/tests/wlib/*.cpp") +
     Glob("bin/obj/tests/core/*.cpp") +
+    Glob("bin/obj/tests/godot_chorus/*.cpp") +
     Glob("bin/obj/tests/backends/echo/*.cpp") +
     Glob("bin/obj/tests/backends/llama/*.cpp") +
     Glob("bin/obj/tests/runtime/*.cpp")
@@ -220,9 +229,9 @@ llama_libs = ["llama-common", "llama-common-base", "llama", "ggml", "ggml-cpu", 
 
 if env["platform"] == "windows":
     llama_libs = [lib + ".lib" for lib in llama_libs]
-    llama_lib_trigger = "external/llama.cpp/build/src/Release/llama.lib"
+    llama_lib_trigger = os.path.join(llama_build_dir, "src", "Release", "llama.lib")
 else:
-    llama_lib_trigger = "external/llama.cpp/build/src/libllama.a"
+    llama_lib_trigger = os.path.join(llama_build_dir, "src", "libllama.a")
 
 if use_metal and env["platform"] == "macos":
     llama_libs.append("ggml-metal")
@@ -230,9 +239,13 @@ if use_metal and env["platform"] == "macos":
 if use_vulkan:
     llama_libs.append("ggml-vulkan")
 
+llama_revision = discover_llama_revision()
+llama_build_signature = Value(
+    f"revision={llama_revision};variant={llama_variant};platform={env['platform']};arch={env.get('arch', '')}"
+)
 cmake_target = env.Command(
     target=llama_lib_trigger,
-    source=[],
+    source=[llama_build_signature],
     action=build_llama_with_cmake
 )
 

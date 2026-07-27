@@ -44,10 +44,29 @@ enum class EventType {
 
 enum class RequestType { Generate, Embedding };
 
+// OpenAI-style chat content (spec #5-A). Plain data; the engine renders it.
+struct ChatMessage {
+    std::string role;
+    std::string content;
+};
+
+// Per-request ephemeral message: placed into the fitted copy only, never
+// durable history. depth counts messages from the end (0 = just before the
+// assistant generation prefix).
+struct InjectedMessage {
+    ChatMessage message;
+    int32_t depth = 0;
+};
+
+// Reasoning pass-through (spec #5-B): thinking content is never merged into
+// response text. Engines tag Token signals with the channel they belong to.
+enum class TokenChannel { Content, Reasoning };
+
 struct ChorusSignal {
     int64_t request_id;
     EventType type;
     ChorusError error_code = ChorusError::None;
+    TokenChannel channel = TokenChannel::Content; // meaningful on Token signals
 
     std::string text;
     std::vector<float> embedding;
@@ -70,6 +89,10 @@ struct ChorusRequest {
     RequestType type = RequestType::Generate; // Replaces 'bool is_embedding'
 
     std::string prompt;
+    // Non-empty => the engine renders these via chat template and ignores
+    // `prompt`. chat_template: optional override; empty = model's embedded.
+    std::vector<ChatMessage> messages;
+    std::string chat_template;
     GenerationConfig gen_config;
 
     std::function<void(ChorusSignal&)> on_event;

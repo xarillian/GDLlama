@@ -213,6 +213,7 @@ void test_llama_generation_catalogs_match_resolver_vocabulary() {
         "presence_penalty",
         "constraint",
         "stop",
+        "thinking",
     };
     const std::vector<std::string> backend{
         "min_keep",
@@ -709,6 +710,15 @@ void test_llama_generation_conformance_matrix() {
          [](Chorus::GenerationConfig& c) { c.backend_options["llama"] = Chorus::OptionMap{{"adaptive_decay", 0.95}}; },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.adaptive_decay == 0.95f); }}
     );
+    cases.push_back(
+        {"thinking",
+         [](Chorus::GenerationConfig& c) { c.common.thinking = false; },
+         [](const Chorus::ResolvedLlamaGeneration& r) {
+             // Honored at chat-render time (#5), not in the sampler: the
+             // resolver's whole contract for this option is "accepted".
+             (void)r;
+         }}
+    );
 
     std::set<std::string> covered;
     for (const auto& conformance_case : cases) {
@@ -748,7 +758,40 @@ void test_llama_generation_conformance_matrix() {
     ASSERT_EQ(covered.size(), advertised.size());
 }
 
+void test_llama_request_rejects_chat_controls_without_messages() {
+    Chorus::ChorusRequest with_template;
+    with_template.prompt = "raw";
+    with_template.chat_template = "{{ messages }}";
+    auto rejection = Chorus::validate_llama_request(with_template);
+    ASSERT_TRUE(rejection.has_value());
+    ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
+    ASSERT_TRUE(rejection->message.find("chat_template") != std::string::npos);
+
+    Chorus::ChorusRequest with_thinking;
+    with_thinking.prompt = "raw";
+    with_thinking.gen_config.common.thinking = false;
+    rejection = Chorus::validate_llama_request(with_thinking);
+    ASSERT_TRUE(rejection.has_value());
+    ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
+    ASSERT_TRUE(rejection->message.find("thinking") != std::string::npos);
+}
+
+void test_llama_request_accepts_chat_controls_with_messages() {
+    Chorus::ChorusRequest request;
+    request.messages = {{"user", "hello"}};
+    request.chat_template = "{{ messages }}";
+    request.gen_config.common.thinking = false;
+    ASSERT_TRUE(!Chorus::validate_llama_request(request).has_value());
+}
+
 int run_llama_generation_tests() {
+    run_test(
+        "Llama request rejects chat controls without messages",
+        test_llama_request_rejects_chat_controls_without_messages
+    );
+    run_test(
+        "Llama request accepts chat controls with messages", test_llama_request_accepts_chat_controls_with_messages
+    );
     run_test("Llama generation resolves portable scalars", test_llama_generation_resolves_portable_scalars);
     run_test(
         "Llama generation resolves portable penalties and stop",

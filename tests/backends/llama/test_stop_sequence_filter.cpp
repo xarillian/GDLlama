@@ -1,5 +1,6 @@
 #include "chorus/backends/llama/stop_sequence_filter.hpp"
 #include "test_utils.hpp"
+#include "wlib/utf8.hpp"
 
 #include <iostream>
 #include <string>
@@ -79,11 +80,61 @@ void test_stop_filter_flushes_partial_marker() {
     ASSERT_EQ(filter.flush(), "<E");
 }
 
+void test_stop_filter_matches_marker_in_final_piece() {
+    Chorus::StopSequenceFilter filter({"END"});
+    auto result = filter.finish("ENDvisible");
+    ASSERT_TRUE(result.matched);
+    ASSERT_TRUE(result.safe_text.empty());
+}
+
+void test_stop_filter_matches_marker_across_final_piece() {
+    Chorus::StopSequenceFilter filter({"END"});
+    auto prefix = filter.push("safe E");
+    ASSERT_EQ(prefix.safe_text, std::string("safe "));
+    auto result = filter.finish("NDvisible");
+    ASSERT_TRUE(result.matched);
+    ASSERT_TRUE(result.safe_text.empty());
+}
+
 void test_stop_filter_drops_incomplete_utf8_before_match() {
     Chorus::StopSequenceFilter filter({"<END>"});
     auto result = filter.push(std::string("A\xF0\x9F<END>", 8));
     ASSERT_EQ(result.safe_text, "A");
     ASSERT_TRUE(result.matched);
+}
+
+void test_stop_filter_drops_malformed_byte_without_damming() {
+    Chorus::StopSequenceFilter filter({"<END>"});
+    auto malformed = filter.push(std::string("\x80", 1));
+    ASSERT_TRUE(malformed.safe_text.empty());
+    ASSERT_TRUE(!malformed.matched);
+    auto recovered = filter.push("abc");
+    ASSERT_EQ(recovered.safe_text, std::string("abc"));
+    ASSERT_TRUE(!recovered.matched);
+    ASSERT_EQ(filter.flush(), std::string{});
+}
+
+void test_final_content_filter_does_not_match_marker_joined_by_utf8_recovery() {
+    Chorus::StopSequenceFilter filter({"AB"});
+    wlib::Utf8Chunker content_chunker;
+    std::string raw = "A";
+    raw.push_back(static_cast<char>(0x80));
+    raw += "B";
+
+    auto result = Chorus::finish_content_stream(&filter, content_chunker, raw);
+
+    ASSERT_TRUE(!result.matched);
+    ASSERT_EQ(result.safe_text, std::string("AB"));
+}
+
+void test_final_content_without_stop_filter_drops_incomplete_utf8_tail() {
+    wlib::Utf8Chunker content_chunker;
+    const std::string raw("A\xF0", 2);
+
+    auto result = Chorus::finish_content_stream(nullptr, content_chunker, raw);
+
+    ASSERT_TRUE(!result.matched);
+    ASSERT_EQ(result.safe_text, std::string("A"));
 }
 
 void test_stop_filter_reset_discards_pending_state() {
@@ -147,7 +198,18 @@ int run_stop_sequence_filter_tests() {
     run_test("Stop filter without markers emits text", test_stop_filter_without_markers_emits_valid_text);
     run_test("Stop filter ordinary flush", test_stop_filter_flushes_ordinary_pending_text);
     run_test("Stop filter flushes partial marker", test_stop_filter_flushes_partial_marker);
+    run_test("Stop filter matches marker in final piece", test_stop_filter_matches_marker_in_final_piece);
+    run_test("Stop filter matches marker across final piece", test_stop_filter_matches_marker_across_final_piece);
     run_test("Stop filter drops incomplete UTF-8 before match", test_stop_filter_drops_incomplete_utf8_before_match);
+    run_test("Stop filter drops malformed byte without damming", test_stop_filter_drops_malformed_byte_without_damming);
+    run_test(
+        "Final content filter does not synthesize stop marker after UTF-8 recovery",
+        test_final_content_filter_does_not_match_marker_joined_by_utf8_recovery
+    );
+    run_test(
+        "Final content without stop filter drops incomplete UTF-8 tail",
+        test_final_content_without_stop_filter_drops_incomplete_utf8_tail
+    );
     run_test("Stop filter reset discards pending state", test_stop_filter_reset_discards_pending_state);
     run_test("Stop filter rejects identical markers", test_stop_filter_rejects_identical_markers);
     run_test("Stop filter rejects empty marker", test_stop_filter_rejects_empty_marker);

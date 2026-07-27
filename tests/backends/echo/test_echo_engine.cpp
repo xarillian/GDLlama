@@ -2,6 +2,7 @@
 #include "chorus/core/common.hpp"
 #include "test_utils.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
@@ -109,35 +110,41 @@ void test_echo_capabilities_deterministic_across_init() {
     engine.stop();
 }
 
-void test_echo_rejects_set_but_unsupported_controls() {
+// Content controls are inert on a test double whose output makes no content
+// claims (user decision 2026-07-17 amending the no-silent-discard posture for
+// Echo): accept them so real request pipelines run unmodified, warn once per
+// engine lifetime so the discard is not silent. Options addressed to Echo by
+// namespace stay demands: unknown keys are typos and reject.
+void test_echo_ignores_content_controls_with_one_warning() {
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
+    std::vector<Chorus::LogLevel> warns;
+    config.log_callback = [&](Chorus::LogLevel level, const std::string& message) {
+        if (level == Chorus::LogLevel::Warn && message.find("ignoring content controls") != std::string::npos)
+            warns.push_back(level);
+    };
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
     Chorus::ChorusRequest req;
     req.id = 1;
     req.prompt = "hi";
-
-    req.gen_config.common.temperature = 0.5f; // set but unsupported
-    auto r1 = engine.validate_request(req);
-    ASSERT_TRUE(r1.has_value());
-    ASSERT_TRUE(r1->error == Chorus::ChorusError::UnsupportedOption);
-
-    req = {};
-    req.id = 2;
-    req.prompt = "hi";
+    req.gen_config.common.temperature = 0.5f;
     req.gen_config.common.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= \"x\""};
-    auto r2 = engine.validate_request(req);
-    ASSERT_TRUE(r2.has_value());
-    ASSERT_TRUE(r2->error == Chorus::ChorusError::UnsupportedFeature);
+    req.gen_config.backend_options["llama"] = Chorus::OptionMap{{"repeat_penalty", 1.1}};
+    ASSERT_TRUE(!engine.validate_request(req).has_value());
 
+    // Second sighting stays quiet: one warning per engine lifetime.
+    ASSERT_TRUE(!engine.validate_request(req).has_value());
+    ASSERT_EQ(warns.size(), size_t{1});
+
+    // Namespace-addressed options are demands, not content controls.
     req = {};
     req.id = 3;
     req.prompt = "hi";
     req.gen_config.backend_options["echo"] = Chorus::OptionMap{{"volume", int64_t{11}}};
-    auto r3 = engine.validate_request(req);
-    ASSERT_TRUE(r3.has_value());
-    ASSERT_TRUE(r3->error == Chorus::ChorusError::UnsupportedOption);
+    auto rejection = engine.validate_request(req);
+    ASSERT_TRUE(rejection.has_value());
+    ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
     engine.stop();
 }
 
@@ -752,6 +759,52 @@ void test_echo_terminal_invariant_one_per_request() {
     }
 }
 
+void test_echo_messages_echoes_last_user_message() {
+    Chorus::EchoEngine engine;
+    ASSERT_TRUE(!engine.initialize(Chorus::ChorusConfig{}).has_value());
+
+    std::mutex mutex;
+    std::string text;
+    std::atomic<bool> done{false};
+    Chorus::EventType terminal = Chorus::EventType::Error;
+    Chorus::ChorusRequest request;
+    request.id = 1;
+    request.messages = {{"system", "persona"}, {"user", "first"}, {"assistant", "reply"}, {"user", "second question"}};
+    request.on_event = [&](Chorus::ChorusSignal& sig) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (sig.type == Chorus::EventType::Token)
+            text += sig.text;
+        if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error) {
+            terminal = sig.type;
+            done = true;
+        }
+    };
+    engine.submit_request(request);
+    // Echo's worker is asynchronous: stop() before the dequeue would cancel
+    // the request (Cancelled terminal). Wait for the natural terminal first --
+    // mirror the wait helper this suite already uses for its other tests.
+    for (int i = 0; i < 200 && !done; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    engine.stop();
+    ASSERT_TRUE(done.load());
+    ASSERT_TRUE(terminal == Chorus::EventType::Stop); // completed, not cancelled
+    ASSERT_EQ(text, std::string("second question"));
+}
+
+void test_echo_accepts_chat_template_and_thinking_as_inert() {
+    Chorus::EchoEngine engine;
+    ASSERT_TRUE(!engine.initialize(Chorus::ChorusConfig{}).has_value());
+
+    Chorus::ChorusRequest with_template;
+    with_template.chat_template = "{{ bogus }}";
+    ASSERT_TRUE(!engine.validate_request(with_template).has_value());
+
+    Chorus::ChorusRequest with_thinking;
+    with_thinking.gen_config.common.thinking = true;
+    ASSERT_TRUE(!engine.validate_request(with_thinking).has_value());
+    engine.stop();
+}
+
 int run_echo_engine_tests() {
     std::cout << "\n--- ECHO ENGINE SUITE ---\n";
 
@@ -762,7 +815,7 @@ int run_echo_engine_tests() {
         test_echo_submit_before_initialize_signals_engine_not_ready
     );
     run_test("Echo_capabilities_deterministic_across_init", test_echo_capabilities_deterministic_across_init);
-    run_test("Echo_rejects_set_but_unsupported_controls", test_echo_rejects_set_but_unsupported_controls);
+    run_test("Echo_ignores_content_controls_with_one_warning", test_echo_ignores_content_controls_with_one_warning);
     run_test("Echo_accepts_session_id_as_correlation", test_echo_accepts_session_id_as_correlation);
     run_test("Echo_max_tokens_counts_word_chunks", test_echo_max_tokens_counts_word_chunks);
     run_test("Echo_rejects_max_tokens_below_negative_sentinel", test_echo_rejects_max_tokens_below_negative_sentinel);
@@ -778,6 +831,8 @@ int run_echo_engine_tests() {
     run_test("Echo_stop_waits_for_queued_cancellation_callback", test_echo_stop_waits_for_queued_cancellation_callback);
     run_test("Echo_conformance_matrix_covers_advertised_options", test_echo_conformance_matrix);
     run_test("Echo_terminal_invariant_one_per_request", test_echo_terminal_invariant_one_per_request);
+    run_test("Echo_messages_echoes_last_user_message", test_echo_messages_echoes_last_user_message);
+    run_test("Echo_accepts_chat_template_and_thinking_as_inert", test_echo_accepts_chat_template_and_thinking_as_inert);
 
     std::cout << "\n======================================\n";
     if (g_tests_failed > 0) {

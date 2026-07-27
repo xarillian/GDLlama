@@ -209,6 +209,23 @@ String ChorusGenerationDefaults::get_constraint_source() const {
 }
 
 // ===========================================================================
+// thinking (disabled = the template/backend default, typically on)
+// ===========================================================================
+
+void ChorusGenerationDefaults::set_override_thinking(bool enabled) {
+    _patch.thinking.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
+}
+bool ChorusGenerationDefaults::get_override_thinking() const {
+    return _patch.thinking.action == Chorus::PatchAction::Set;
+}
+void ChorusGenerationDefaults::set_thinking(bool value) {
+    _patch.thinking.value = value;
+}
+bool ChorusGenerationDefaults::get_thinking() const {
+    return _patch.thinking.value;
+}
+
+// ===========================================================================
 // backend_options
 // ===========================================================================
 
@@ -355,6 +372,16 @@ void ChorusGenerationDefaults::_bind_methods() {
         "get_constraint_format"
     );
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "constraint_source"), "set_constraint_source", "get_constraint_source");
+
+    ClassDB::bind_method(
+        D_METHOD("set_override_thinking", "enabled"), &ChorusGenerationDefaults::set_override_thinking
+    );
+    ClassDB::bind_method(D_METHOD("get_override_thinking"), &ChorusGenerationDefaults::get_override_thinking);
+    ClassDB::bind_method(D_METHOD("set_thinking", "value"), &ChorusGenerationDefaults::set_thinking);
+    ClassDB::bind_method(D_METHOD("get_thinking"), &ChorusGenerationDefaults::get_thinking);
+    ADD_GROUP("Thinking", "");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "override_thinking"), "set_override_thinking", "get_override_thinking");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "thinking"), "set_thinking", "get_thinking");
 
     ClassDB::bind_method(D_METHOD("set_backend_options", "options"), &ChorusGenerationDefaults::set_backend_options);
     ClassDB::bind_method(D_METHOD("get_backend_options"), &ChorusGenerationDefaults::get_backend_options);

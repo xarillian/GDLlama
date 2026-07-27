@@ -16,18 +16,25 @@ inline void batch_add_seq(llama_batch& batch, llama_token token, int seq_id, int
     batch.n_tokens++;
 }
 
-inline std::vector<llama_token> tokenize(llama_context* ctx, const std::string& text, bool add_special) {
+// parse_special: raw user prompts keep special-token text literal (false);
+// rendered chat prompts carry real control tokens ("<start_of_turn>") that
+// must map to their token ids (true).
+inline std::vector<llama_token>
+tokenize(llama_context* ctx, const std::string& text, bool add_special, bool parse_special = false) {
     const llama_model* model = llama_get_model(ctx);
     const llama_vocab* vocab = llama_model_get_vocab(model);
 
     std::vector<llama_token> result(text.length() + 2);
 
-    int n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), result.data(), result.size(), add_special, false);
+    int n_tokens =
+        llama_tokenize(vocab, text.c_str(), text.length(), result.data(), result.size(), add_special, parse_special);
 
     if (n_tokens < 0) {
         // llama.cpp returns -(required_size) on overflow; resize and retry.
         result.resize(-n_tokens);
-        n_tokens = llama_tokenize(vocab, text.c_str(), text.length(), result.data(), result.size(), add_special, false);
+        n_tokens = llama_tokenize(
+            vocab, text.c_str(), text.length(), result.data(), result.size(), add_special, parse_special
+        );
     }
 
     if (n_tokens < 0) {

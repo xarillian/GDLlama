@@ -3,6 +3,7 @@
 #include "chorus/core/common.hpp"
 #include "chorus/core/inference_engine.hpp"
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -48,5 +49,8 @@ class EchoEngine : public InferenceEngine {
     bool _running = false;
     bool _initialized = false;
     Chorus::LogCallback _log;
+    // Content controls are accepted-and-inert (see validate_request); the
+    // one-per-lifetime warning keeps the discard from being silent.
+    mutable std::atomic<bool> _warned_ignored{false};
 };
 } // namespace Chorus

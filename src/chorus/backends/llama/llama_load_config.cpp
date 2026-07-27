@@ -49,9 +49,10 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
                 out.thread_count = static_cast<int32_t>(*as_int);
             else if (key == "use_gpu" && as_bool)
                 out.use_gpu = *as_bool;
-            else if (key == "gpu_layers" && as_int)
+            else if (key == "gpu_layers" && as_int) {
                 out.gpu_layers = static_cast<int32_t>(*as_int);
-            else if (key == "num_slots" && as_int)
+                out.gpu_layers_explicit = true;
+            } else if (key == "num_slots" && as_int)
                 out.num_slots = static_cast<uint32_t>(*as_int);
             else if (key == "tokens_per_tick" && as_int)
                 out.tokens_per_tick = static_cast<int32_t>(*as_int);
@@ -85,6 +86,7 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
                 if (*as_int > std::numeric_limits<int32_t>::max())
                     return unsupported("Llama load option 'main_gpu' does not fit llama_model_params::main_gpu.");
                 out.main_gpu = static_cast<int32_t>(*as_int);
+                out.main_gpu_explicit = true;
             } else {
                 return unsupported("Unknown or mistyped llama load option '" + key + "'");
             }
@@ -93,12 +95,17 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
 
     if (out.n_ubatch > out.n_batch)
         return unsupported("Llama load option 'n_ubatch' must not exceed 'n_batch'.");
+    if (!out.use_gpu && out.gpu_layers_explicit && out.gpu_layers != 0)
+        return unsupported("Llama load option 'gpu_layers' must be zero when 'use_gpu' is false.");
+    if (!out.use_gpu && out.main_gpu_explicit)
+        return unsupported("Llama load option 'main_gpu' cannot be set when 'use_gpu' is false.");
 
     return out;
 }
 
-llama_model_params make_llama_model_params(const LlamaLoadConfig& config) {
+llama_model_params make_llama_model_params(const LlamaLoadConfig& config, LlamaOffloadDeviceList& no_offload_devices) {
     llama_model_params params = llama_model_default_params();
+    params.devices = config.use_gpu ? nullptr : no_offload_devices.data();
     params.n_gpu_layers = config.use_gpu ? config.gpu_layers : 0;
     params.main_gpu = config.main_gpu;
     return params;
@@ -112,6 +119,8 @@ llama_context_params make_llama_context_params(const LlamaLoadConfig& config) {
     params.n_threads_batch = config.thread_count;
     params.n_batch = config.n_batch;
     params.n_ubatch = config.n_ubatch;
+    params.offload_kqv = config.use_gpu;
+    params.op_offload = config.use_gpu;
     return params;
 }
 

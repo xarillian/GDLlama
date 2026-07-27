@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // Deterministic InferenceEngine for runtime tests: emits everything inline on
@@ -31,6 +32,11 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     bool emit_cancelled_on_cancel = false;                   // emit one Cancelled terminal for a matching held request
     bool emit_error_during_stop = false;                     // emit Error for held requests inside stop()
     bool log_on_initialize_from_worker = false;              // exercise log-callback pass-through
+    bool supports_render = false;                            // render_chat_prompt returns text + word-count tokens
+    std::optional<uint32_t> mock_per_request_context;        // reported via loaded_model_info()
+    // When non-empty, submit_request emits exactly these channel-tagged tokens
+    // (then the usual terminal) instead of `tokens`.
+    std::vector<std::pair<Chorus::TokenChannel, std::string>> scripted_channel_tokens;
 
     // --- observability ---
     int initialize_calls = 0;
@@ -39,6 +45,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     int* stop_count_sink = nullptr;       // ditto
     std::vector<int64_t> submitted_ids;
     std::vector<Chorus::RequestId> cancelled_ids;
+    std::vector<Chorus::ChatMessage> last_messages; // messages of the last submitted request
 
     std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config) override {
         initialize_calls++;
@@ -67,13 +74,47 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     std::optional<Chorus::LoadedModelInfo> mock_model_info;
 
     Chorus::EngineCapabilities capabilities() const override { return declared_caps; }
-    std::optional<Chorus::LoadedModelInfo> loaded_model_info() const override { return mock_model_info; }
+    std::optional<Chorus::LoadedModelInfo> loaded_model_info() const override {
+        if (mock_per_request_context.has_value()) {
+            Chorus::LoadedModelInfo info = mock_model_info.value_or(Chorus::LoadedModelInfo{});
+            info.per_request_context = mock_per_request_context;
+            return info;
+        }
+        return mock_model_info;
+    }
     std::optional<Chorus::RequestRejection> validate_request(const Chorus::ChorusRequest&) const override {
         return reject_with;
     }
 
+    std::optional<Chorus::RenderedPrompt> render_chat_prompt(
+        const std::vector<Chorus::ChatMessage>& messages,
+        const std::string& /*template_override*/,
+        bool /*enable_thinking*/
+    ) const override {
+        if (!supports_render)
+            return std::nullopt;
+        Chorus::RenderedPrompt rendered;
+        int32_t count = 0;
+        for (const auto& message : messages) {
+            rendered.text += "<" + message.role + ">" + message.content + "\n";
+            count += 1; // per-message overhead
+            bool in_word = false;
+            for (char c : message.content) {
+                if (c == ' ') {
+                    in_word = false;
+                } else if (!in_word) {
+                    in_word = true;
+                    ++count;
+                }
+            }
+        }
+        rendered.token_count = count;
+        return rendered;
+    }
+
     void submit_request(const Chorus::ChorusRequest& req) override {
         submitted_ids.push_back(req.id);
+        last_messages = req.messages;
         if (!req.on_event)
             return;
 
@@ -86,8 +127,36 @@ class SyncMockEngine : public Chorus::InferenceEngine {
             return;
         }
 
-        for (const auto& t : tokens)
-            send(req.on_event, req.id, Chorus::EventType::Token, t);
+        if (!scripted_channel_tokens.empty()) {
+            for (const auto& [channel, text] : scripted_channel_tokens) {
+                Chorus::ChorusSignal sig;
+                sig.request_id = req.id;
+                sig.type = Chorus::EventType::Token;
+                sig.channel = channel;
+                sig.text = text;
+                req.on_event(sig);
+            }
+            if (emit_stop)
+                send(req.on_event, req.id, Chorus::EventType::Stop, "");
+            return;
+        }
+
+        if (!tokens.empty()) {
+            for (const auto& t : tokens)
+                send(req.on_event, req.id, Chorus::EventType::Token, t);
+        } else if (!req.messages.empty()) {
+            // Deterministic assistant reply for chat-shaped tests: the last
+            // user message's content, echoed as a single Token. Opt in by
+            // setting `tokens = {}` (a non-empty `tokens` knob always wins).
+            std::string reply;
+            for (auto it = req.messages.rbegin(); it != req.messages.rend(); ++it) {
+                if (it->role == "user") {
+                    reply = it->content;
+                    break;
+                }
+            }
+            send(req.on_event, req.id, Chorus::EventType::Token, reply);
+        }
         if (rogue_extra_id >= 0)
             send(req.on_event, rogue_extra_id, Chorus::EventType::Token, "rogue");
         if (emit_embedding_event)

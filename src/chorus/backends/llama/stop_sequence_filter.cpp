@@ -1,4 +1,5 @@
 #include "chorus/backends/llama/stop_sequence_filter.hpp"
+#include "wlib/utf8.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -7,54 +8,6 @@
 
 namespace Chorus {
 namespace {
-
-bool is_continuation(unsigned char byte) {
-    return byte >= 0x80 && byte <= 0xBF;
-}
-
-size_t valid_utf8_prefix_length(std::string_view text) {
-    size_t index = 0;
-    while (index < text.size()) {
-        const auto first = static_cast<unsigned char>(text[index]);
-        if (first <= 0x7F) {
-            ++index;
-            continue;
-        }
-
-        size_t width = 0;
-        if (first >= 0xC2 && first <= 0xDF)
-            width = 2;
-        else if (first >= 0xE0 && first <= 0xEF)
-            width = 3;
-        else if (first >= 0xF0 && first <= 0xF4)
-            width = 4;
-        else
-            break;
-
-        if (text.size() - index < width)
-            break;
-
-        const auto second = static_cast<unsigned char>(text[index + 1]);
-        if (!is_continuation(second))
-            break;
-        if ((first == 0xE0 && second < 0xA0) || (first == 0xED && second > 0x9F) || (first == 0xF0 && second < 0x90) ||
-            (first == 0xF4 && second > 0x8F))
-            break;
-
-        bool valid = true;
-        for (size_t offset = 2; offset < width; ++offset) {
-            if (!is_continuation(static_cast<unsigned char>(text[index + offset]))) {
-                valid = false;
-                break;
-            }
-        }
-        if (!valid)
-            break;
-
-        index += width;
-    }
-    return index;
-}
 
 bool is_marker_prefix(std::string_view shorter, std::string_view longer) {
     return longer.starts_with(shorter);
@@ -75,7 +28,7 @@ StopFilterResult StopSequenceFilter::push(std::string_view piece) {
     }
 
     if (match_position != std::numeric_limits<size_t>::max()) {
-        const size_t safe_length = valid_utf8_prefix_length(std::string_view(_pending).substr(0, match_position));
+        const size_t safe_length = wlib::valid_utf8_prefix_length(std::string_view(_pending).substr(0, match_position));
         std::string safe_text = _pending.substr(0, safe_length);
         _pending.clear();
         return {std::move(safe_text), true};
@@ -93,15 +46,35 @@ StopFilterResult StopSequenceFilter::push(std::string_view piece) {
     }
 
     const size_t emission_limit = _pending.size() - marker_prefix_length;
-    const size_t safe_length = valid_utf8_prefix_length(std::string_view(_pending).substr(0, emission_limit));
-    std::string safe_text = _pending.substr(0, safe_length);
-    _pending.erase(0, safe_length);
+    size_t remaining = emission_limit;
+    std::string safe_text;
+    while (remaining > 0) {
+        const std::string_view candidate(_pending.data(), remaining);
+        const size_t safe_length = wlib::valid_utf8_prefix_length(candidate);
+        safe_text.append(_pending, 0, safe_length);
+        _pending.erase(0, safe_length);
+        remaining -= safe_length;
+        if (remaining == 0)
+            break;
+        const std::string_view unresolved(_pending.data(), remaining);
+        if (wlib::is_utf8_incomplete_sequence(unresolved))
+            break;
+        _pending.erase(0, 1);
+        --remaining;
+    }
     return {std::move(safe_text), false};
+}
+
+StopFilterResult StopSequenceFilter::finish(std::string_view final_piece) {
+    StopFilterResult result = push(final_piece);
+    if (!result.matched)
+        result.safe_text += flush();
+    return result;
 }
 
 std::string StopSequenceFilter::flush() {
     std::string result;
-    if (valid_utf8_prefix_length(_pending) == _pending.size())
+    if (wlib::valid_utf8_prefix_length(_pending) == _pending.size())
         result = std::move(_pending);
     _pending.clear();
     return result;
@@ -109,6 +82,14 @@ std::string StopSequenceFilter::flush() {
 
 void StopSequenceFilter::reset() {
     _pending.clear();
+}
+
+StopFilterResult finish_content_stream(
+    StopSequenceFilter* stop_filter, wlib::Utf8Chunker& content_chunker, std::string_view final_piece
+) {
+    if (stop_filter)
+        return stop_filter->finish(final_piece);
+    return {content_chunker.push(final_piece), false};
 }
 
 std::optional<RequestRejection> validate_stop_sequences(const std::vector<std::string>& markers) {

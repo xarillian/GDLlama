@@ -1,6 +1,7 @@
 #pragma once
 
 #include "chorus/core/capabilities.hpp"
+#include "wlib/utf8.hpp"
 
 #include <optional>
 #include <string>
@@ -19,6 +20,7 @@ class StopSequenceFilter {
     explicit StopSequenceFilter(std::vector<std::string> markers);
 
     StopFilterResult push(std::string_view piece);
+    StopFilterResult finish(std::string_view final_piece);
     std::string flush();
     void reset();
 
@@ -26,6 +28,10 @@ class StopSequenceFilter {
     std::vector<std::string> _markers;
     std::string _pending;
 };
+
+StopFilterResult finish_content_stream(
+    StopSequenceFilter* stop_filter, wlib::Utf8Chunker& content_chunker, std::string_view final_piece
+);
 
 std::optional<RequestRejection> validate_stop_sequences(const std::vector<std::string>& markers);
 

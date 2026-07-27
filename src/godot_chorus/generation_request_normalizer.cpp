@@ -212,21 +212,101 @@ std::optional<String> apply_repeat_penalty_convenience(Chorus::OptionMap& backen
     return std::nullopt;
 }
 
+// ===========================================================================
+// thinking: reasoning-model toggle. Absent inherits, null clears an inherited
+// value back to the template/backend default, a bool sets it.
+// ===========================================================================
+
+std::optional<String> apply_thinking_overlay(const Dictionary& request, Chorus::GenerationConfigPatch& patch) {
+    if (!request.has("thinking"))
+        return std::nullopt;
+    const Variant value = request["thinking"];
+    if (value.get_type() == Variant::NIL) {
+        patch.thinking = Chorus::OptionalPatch<bool>::clear();
+        return std::nullopt;
+    }
+    if (value.get_type() != Variant::BOOL)
+        return String("[Chorus] generate(): 'thinking' must be a bool or null.");
+    patch.thinking = Chorus::OptionalPatch<bool>::set((bool)value);
+    return std::nullopt;
+}
+
+// ===========================================================================
+// inject: per-request ephemeral messages, {role, content, depth?} entries.
+// ===========================================================================
+
+std::optional<String> apply_inject_overlay(const Dictionary& request, Chorus::GenerationRequest& gen_request) {
+    if (!request.has("inject"))
+        return std::nullopt;
+    const Variant value = request["inject"];
+    if (value.get_type() != Variant::ARRAY)
+        return String("[Chorus] generate(): 'inject' must be an Array of {role, content, depth} Dictionaries.");
+    auto parsed = normalize_inject_array((Array)value);
+    if (std::holds_alternative<String>(parsed))
+        return std::get<String>(parsed);
+    gen_request.inject = std::move(std::get<std::vector<Chorus::InjectedMessage>>(parsed));
+    return std::nullopt;
+}
+
+// ===========================================================================
+// chat_template: per-request jinja override. Null reads as absent (the node
+// default may still apply downstream).
+// ===========================================================================
+
+std::optional<String> apply_chat_template_overlay(const Dictionary& request, Chorus::GenerationRequest& gen_request) {
+    if (!request.has("chat_template"))
+        return std::nullopt;
+    const Variant value = request["chat_template"];
+    if (value.get_type() == Variant::NIL)
+        return std::nullopt;
+    if (value.get_type() != Variant::STRING)
+        return String("[Chorus] generate(): 'chat_template' must be a String or null.");
+    gen_request.chat_template = std::string(((String)value).utf8().get_data());
+    return std::nullopt;
+}
+
 } // namespace
+
+std::variant<std::vector<Chorus::InjectedMessage>, String> normalize_inject_array(const Array& entries) {
+    std::vector<Chorus::InjectedMessage> inject;
+    inject.reserve(entries.size());
+    for (int i = 0; i < entries.size(); ++i) {
+        if (entries[i].get_type() != Variant::DICTIONARY)
+            return String("[Chorus] generate(): 'inject' entries must be Dictionaries.");
+        const Dictionary entry = entries[i];
+        if (!entry.has("role") || !entry.has("content"))
+            return String("[Chorus] generate(): 'inject' entries require 'role' and 'content'.");
+        if (entry["role"].get_type() != Variant::STRING || entry["content"].get_type() != Variant::STRING)
+            return String("[Chorus] generate(): 'inject' role and content must be Strings.");
+        if (entry.has("depth") && entry["depth"].get_type() != Variant::INT)
+            return String("[Chorus] generate(): 'inject' depth must be an int.");
+        Chorus::InjectedMessage injected;
+        injected.message.role = std::string(((String)entry["role"]).utf8().get_data());
+        injected.message.content = std::string(((String)entry["content"]).utf8().get_data());
+        injected.depth = entry.has("depth") ? (int32_t)(int64_t)entry["depth"] : 0;
+        inject.push_back(std::move(injected));
+    }
+    return inject;
+}
 
 std::variant<Chorus::GenerationRequest, String>
 normalize_generation_request(const Dictionary& request, const Chorus::GenerationConfig& defaults) {
     if (!request.has("prompt"))
         return String("[Chorus] generate() requires a 'prompt' key in the request dictionary.");
-    const Variant prompt_value = request["prompt"];
-    if (prompt_value.get_type() == Variant::NIL)
+    if (request["prompt"].get_type() == Variant::NIL)
         return String("[Chorus] generate(): 'prompt' must not be null.");
+    return normalize_generation_overrides(request, defaults);
+}
 
+std::variant<Chorus::GenerationRequest, String>
+normalize_generation_overrides(const Dictionary& request, const Chorus::GenerationConfig& defaults) {
     Chorus::GenerationConfigPatch patch;
     apply_portable_scalar_overlays(request, patch);
     if (auto error = apply_stop_overlay(request, patch))
         return *error;
     if (auto error = apply_constraint_overlay(request, patch))
+        return *error;
+    if (auto error = apply_thinking_overlay(request, patch))
         return *error;
 
     Chorus::GenerationConfig config = Chorus::apply_generation_patch(defaults, patch);
@@ -242,11 +322,16 @@ normalize_generation_request(const Dictionary& request, const Chorus::Generation
         return *error;
 
     Chorus::GenerationRequest gen_request;
-    gen_request.prompt = std::string(((String)prompt_value).utf8().get_data());
+    if (request.has("prompt") && request["prompt"].get_type() != Variant::NIL)
+        gen_request.prompt = std::string(((String)request["prompt"]).utf8().get_data());
     gen_request.stream = request.has("stream") ? (bool)request["stream"] : false;
     gen_request.priority = request.has("priority") ? (int)(int64_t)request["priority"] : 0;
     if (request.has("session"))
         gen_request.session_id = std::string(((String)request["session"]).utf8().get_data());
+    if (auto error = apply_inject_overlay(request, gen_request))
+        return *error;
+    if (auto error = apply_chat_template_overlay(request, gen_request))
+        return *error;
     gen_request.config = std::move(config);
     return gen_request;
 }

@@ -66,7 +66,7 @@ struct OptionDescriptor {
     TargetMember target_member;
 };
 
-constexpr std::array<const char*, 9> kPortableOptions{
+constexpr std::array<const char*, 10> kPortableOptions{
     "max_tokens",
     "temperature",
     "top_k",
@@ -76,6 +76,7 @@ constexpr std::array<const char*, 9> kPortableOptions{
     "presence_penalty",
     "constraint",
     "stop",
+    "thinking", // honored at chat-render time (#5), not in the sampler
 };
 
 constexpr std::array<OptionDescriptor, 23> kBackendOptions{{
@@ -667,6 +668,24 @@ std::optional<RequestRejection> validate_llama_generation(const GenerationConfig
     if (const auto* rejection = std::get_if<RequestRejection>(&resolved))
         return *rejection;
     return std::nullopt;
+}
+
+std::optional<RequestRejection> validate_llama_request(const ChorusRequest& request) {
+    if (request.messages.empty()) {
+        if (!request.chat_template.empty()) {
+            return RequestRejection{
+                ChorusError::UnsupportedOption,
+                "Llama chat_template requires non-empty messages; unset it for raw-prompt generation.",
+            };
+        }
+        if (request.gen_config.common.thinking.has_value()) {
+            return RequestRejection{
+                ChorusError::UnsupportedOption,
+                "Llama thinking requires non-empty messages; unset it for raw-prompt generation.",
+            };
+        }
+    }
+    return validate_llama_generation(request.gen_config);
 }
 
 const std::vector<std::string>& llama_portable_generation_option_names() {

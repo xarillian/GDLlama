@@ -33,8 +33,13 @@ struct PortableGenerationConfig {
     std::optional<uint64_t> seed;
     std::optional<float> frequency_penalty;
     std::optional<float> presence_penalty;
-    std::vector<std::string> stop; // empty = none requested
+    // Empty = none requested. Stop sequences match the content channel only;
+    // reasoning output never meets them, so max_tokens is what bounds a
+    // think block.
+    std::vector<std::string> stop;
     std::optional<OutputConstraint> constraint;
+    // Reasoning-model thinking toggle; unset = template/backend default (on).
+    std::optional<bool> thinking;
 };
 
 struct GenerationConfig {
@@ -63,6 +68,7 @@ struct GenerationConfigPatch {
     OptionalPatch<float> presence_penalty;
     ValuePatch<std::vector<std::string>> stop;
     OptionalPatch<OutputConstraint> constraint;
+    OptionalPatch<bool> thinking;
     OptionMap backend_options;
 };
 

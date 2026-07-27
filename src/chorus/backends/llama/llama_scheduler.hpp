@@ -1,10 +1,13 @@
 #pragma once
 
+#include "chorus/backends/llama/llama_chat.hpp"
 #include "chorus/backends/llama/llama_generation.hpp"
 #include "chorus/backends/llama/llama_load_config.hpp"
 #include "chorus/backends/llama/stop_sequence_filter.hpp"
 #include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
+#include "chorus/core/inference_engine.hpp"
+#include "wlib/utf8.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -37,6 +40,13 @@ class LlamaScheduler {
 
     const std::optional<Chorus::LoadedModelInfo>& model_info() const { return _model_info; }
 
+    // Host-thread render hook (#5): the exact templated prompt + token count
+    // for `messages`. Safe beside the running worker; template application is
+    // serialized via _template_mutex (no upstream thread-safety guarantee).
+    std::optional<Chorus::RenderedPrompt> render_chat_prompt(
+        const std::vector<Chorus::ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+    ) const;
+
   private:
     struct Slot;
 
@@ -49,6 +59,7 @@ class LlamaScheduler {
         Chorus::EventType type = Chorus::EventType::Error;
         Chorus::ChorusError error = Chorus::ChorusError::None;
         std::string text;
+        Chorus::TokenChannel channel = Chorus::TokenChannel::Content; // meaningful on Token events
     };
 
     void ingest_new_requests();
@@ -61,7 +72,7 @@ class LlamaScheduler {
     bool prepare_next_batch(int32_t tokens_per_tick);
     int run_inference();
     void fail_busy_slots(Chorus::ChorusError code);
-    void emit_token(Slot& slot, std::string text);
+    void emit_token(Slot& slot, std::string text, Chorus::TokenChannel channel = Chorus::TokenChannel::Content);
     void complete_slot(Slot& slot, bool flush_pending_text);
 
     void worker_loop();
@@ -81,6 +92,13 @@ class LlamaScheduler {
 
         common_sampler_ptr sampler;
         std::optional<Chorus::StopSequenceFilter> stop_filter;
+        // #5: present when the render advertised thinking support; Task 10
+        // wires it into token emission (reasoning/content channel split).
+        std::optional<Chorus::LlamaChatParseStream> parse_stream;
+        // UTF-8 boundary guards for the emission paths the stop filter does
+        // not cover: reasoning deltas, and content when no filter is set.
+        wlib::Utf8Chunker reasoning_chunker;
+        wlib::Utf8Chunker content_chunker;
     };
 
     struct PendingRequest {
@@ -106,6 +124,7 @@ class LlamaScheduler {
 
     llama_model* model = nullptr;
     llama_context* context = nullptr;
+    Chorus::LlamaOffloadDeviceList _no_offload_devices{};
 
     std::vector<Slot> slots;
 
@@ -116,6 +135,13 @@ class LlamaScheduler {
     int32_t _batch_capacity = 0; // token capacity of `batch`; prepare_next_batch must never exceed it
     Chorus::LogCallback _log;
     std::optional<Chorus::LoadedModelInfo> _model_info;
+
+    // #5 chat templates, initialized from the model at load. Reached from the
+    // worker (ingest) and the host (render_chat_prompt); llama.cpp declares no
+    // thread-safety for common_chat_templates_apply, so every application
+    // takes _template_mutex first.
+    common_chat_templates_ptr _chat_templates;
+    mutable std::mutex _template_mutex;
 
     struct llama_batch* batch = nullptr;
 };

@@ -76,6 +76,11 @@ class ChorusGenerationDefaults : public godot::Resource {
     void set_constraint_source(const godot::String& source);
     godot::String get_constraint_source() const;
 
+    void set_override_thinking(bool enabled);
+    bool get_override_thinking() const;
+    void set_thinking(bool value);
+    bool get_thinking() const;
+
     void set_backend_options(const godot::Dictionary& options);
     godot::Dictionary get_backend_options() const;
 

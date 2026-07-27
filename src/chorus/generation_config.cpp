@@ -60,6 +60,7 @@ GenerationConfig apply_generation_patch(const GenerationConfig& base, const Gene
     apply_optional_patch(merged.common.presence_penalty, patch.presence_penalty);
     apply_value_patch(merged.common.stop, patch.stop);
     apply_optional_patch(merged.common.constraint, patch.constraint);
+    apply_optional_patch(merged.common.thinking, patch.thinking);
     merged.backend_options = merge_option_maps(base.backend_options, patch.backend_options);
     return merged;
 }

@@ -55,6 +55,11 @@ struct LoadedModelInfo {
     std::vector<Modality> input_modalities;
     std::vector<Modality> output_modalities;
     std::optional<uint32_t> maximum_context;
+    // Usable context per concurrent request under the current configuration
+    // (today's slot model divides n_ctx across num_slots). This -- not
+    // maximum_context, which reports the model's training window -- is what
+    // prompt fitting budgets against.
+    std::optional<uint32_t> per_request_context;
     std::optional<uint64_t> model_bytes;
     bool has_speculative_assets = false;
 };

@@ -7,6 +7,11 @@
 
 namespace Chorus {
 
+struct RenderedPrompt {
+    std::string text;
+    int32_t token_count = 0;
+};
+
 // The backend port. Implementations must honor the callback contract:
 //
 // - ChorusRequest::on_event may be invoked from an engine worker thread, or
@@ -46,6 +51,21 @@ class InferenceEngine {
     // for carrying a session id. Acceptance does not guarantee execution
     // cannot fail later.
     virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
+
+    // --- #5 optional prompt rendering (host-thread-only, like capabilities) ---
+
+    // The exact templated prompt this backend would feed the model for
+    // `messages`, plus its token count (the runtime's fitting loop budgets
+    // against it). Backends that render remotely or not at all return
+    // std::nullopt honestly; capability flag: EngineCapabilities::prompt_rendering.
+    virtual std::optional<RenderedPrompt> render_chat_prompt(
+        const std::vector<ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+    ) const {
+        (void)messages;
+        (void)template_override;
+        (void)enable_thinking;
+        return std::nullopt;
+    }
 };
 
 } // namespace Chorus

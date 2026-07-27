@@ -24,6 +24,9 @@ class LlamaEngine : public InferenceEngine {
     EngineCapabilities capabilities() const override;
     std::optional<LoadedModelInfo> loaded_model_info() const override;
     std::optional<RequestRejection> validate_request(const Chorus::ChorusRequest& request) const override;
+    std::optional<RenderedPrompt> render_chat_prompt(
+        const std::vector<ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+    ) const override;
 
   private:
     mutable std::mutex _lifecycle_mutex;
