@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GodotChorus" inherits="Node" api_type="extension" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+	</brief_description>
+	<description>
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="active_request_for_session" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="session" type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="cancel_request">
+			<return type="bool" />
+			<param index="0" name="request_id" type="int" />
+			<description>
+			</description>
+		</method>
+		<method name="clear_conversation_history">
+			<return type="bool" />
+			<param index="0" name="session" type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="edit_message">
+			<return type="bool" />
+			<param index="0" name="session" type="String" />
+			<param index="1" name="index" type="int" />
+			<param index="2" name="content" type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="export_conversation_history" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="session" type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="generate">
+			<return type="int" />
+			<param index="0" name="request" type="Dictionary" />
+			<description>
+			</description>
+		</method>
+		<method name="import_conversation_history">
+			<return type="bool" />
+			<param index="0" name="session" type="String" />
+			<param index="1" name="history" type="Array" />
+			<description>
+			</description>
+		</method>
+		<method name="is_loaded" qualifiers="const">
+			<return type="bool" />
+			<description>
+			</description>
+		</method>
+		<method name="is_request_active" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="request_id" type="int" />
+			<description>
+			</description>
+		</method>
+		<method name="last_turn_outcome" qualifiers="const">
+			<return type="int" enum="GodotChorus.TurnOutcomeCode" />
+			<param index="0" name="session" type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="list_conversations" qualifiers="const">
+			<return type="PackedStringArray" />
+			<description>
+			</description>
+		</method>
+		<method name="load_model">
+			<return type="bool" />
+			<description>
+			</description>
+		</method>
+		<method name="regenerate">
+			<return type="int" />
+			<param index="0" name="session" type="String" />
+			<param index="1" name="overrides" type="Dictionary" default="{}" />
+			<description>
+			</description>
+		</method>
+		<method name="render_chat_prompt">
+			<return type="String" />
+			<param index="0" name="session" type="String" />
+			<param index="1" name="template" type="String" default="&quot;&quot;" />
+			<param index="2" name="inject" type="Array" default="[]" />
+			<description>
+			</description>
+		</method>
+		<method name="reset_context">
+			<return type="bool" />
+			<description>
+			</description>
+		</method>
+		<method name="similarity_cos" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="array1" type="PackedFloat32Array" />
+			<param index="1" name="array2" type="PackedFloat32Array" />
+			<description>
+			</description>
+		</method>
+		<method name="stop_all">
+			<return type="void" />
+			<description>
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="backend" type="int" setter="set_backend" getter="get_backend" enum="GodotChorus.BackendChoice" default="0">
+		</member>
+		<member name="chat_template" type="String" setter="set_chat_template" getter="get_chat_template" default="&quot;&quot;">
+		</member>
+		<member name="context_size" type="int" setter="set_context_size" getter="get_context_size" default="2048">
+		</member>
+		<member name="generation_defaults" type="ChorusGenerationDefaults" setter="set_generation_defaults" getter="get_generation_defaults">
+		</member>
+		<member name="gpu_layers" type="int" setter="set_gpu_layers" getter="get_gpu_layers" default="-1">
+		</member>
+		<member name="main_gpu" type="int" setter="set_main_gpu" getter="get_main_gpu" default="0">
+		</member>
+		<member name="model_path" type="String" setter="set_model_path" getter="get_model_path" default="&quot;&quot;">
+		</member>
+		<member name="n_batch" type="int" setter="set_n_batch" getter="get_n_batch" default="2048">
+		</member>
+		<member name="n_ubatch" type="int" setter="set_n_ubatch" getter="get_n_ubatch" default="512">
+		</member>
+		<member name="num_slots" type="int" setter="set_num_slots" getter="get_num_slots" default="1">
+		</member>
+		<member name="thread_count" type="int" setter="set_thread_count" getter="get_thread_count" default="4">
+		</member>
+		<member name="tokens_per_tick" type="int" setter="set_tokens_per_tick" getter="get_tokens_per_tick" default="512">
+		</member>
+		<member name="use_gpu" type="bool" setter="set_use_gpu" getter="get_use_gpu" default="true">
+		</member>
+	</members>
+	<signals>
+		<signal name="generation_complete">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="String" />
+			<param index="2" name="full_text" type="String" />
+			<param index="3" name="reasoning" type="String" />
+			<description>
+			</description>
+		</signal>
+		<signal name="generation_error">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="String" />
+			<param index="2" name="error_code" type="int" />
+			<param index="3" name="message" type="String" />
+			<description>
+			</description>
+		</signal>
+		<signal name="history_truncated">
+			<param index="0" name="session" type="String" />
+			<param index="1" name="dropped" type="int" />
+			<description>
+			</description>
+		</signal>
+		<signal name="reasoning_token_generated">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="String" />
+			<param index="2" name="token" type="String" />
+			<description>
+			</description>
+		</signal>
+		<signal name="token_generated">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="String" />
+			<param index="2" name="token" type="String" />
+			<description>
+			</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="ERR_NONE" value="0" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_MODEL_LOAD" value="1" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_CONTEXT_INIT" value="2" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_DECODE" value="3" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_TOKENIZE" value="4" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_INVALID_REQUEST" value="5" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_ENGINE_NOT_READY" value="6" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_CANCELLED" value="7" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_UNSUPPORTED_MODEL_FORMAT" value="8" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_UNSUPPORTED_FEATURE" value="9" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_UNSUPPORTED_OPTION" value="10" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_SESSION_BUSY" value="11" enum="ErrorCode">
+		</constant>
+		<constant name="ERR_UNKNOWN" value="12" enum="ErrorCode">
+		</constant>
+		<constant name="BACKEND_LLAMA" value="0" enum="BackendChoice">
+		</constant>
+		<constant name="BACKEND_ECHO" value="1" enum="BackendChoice">
+		</constant>
+		<constant name="TURN_NONE" value="0" enum="TurnOutcomeCode">
+		</constant>
+		<constant name="TURN_COMPLETED" value="1" enum="TurnOutcomeCode">
+		</constant>
+		<constant name="TURN_CANCELLED" value="2" enum="TurnOutcomeCode">
+		</constant>
+		<constant name="TURN_ERRORED" value="3" enum="TurnOutcomeCode">
+		</constant>
+	</constants>
+</class>

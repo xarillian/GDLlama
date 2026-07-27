@@ -1,0 +1,3 @@
+[gd_scene format=3 uid="uid://euvpmhtnpj8c"]
+
+[node name="ChorusNode" type="GodotChorus"]

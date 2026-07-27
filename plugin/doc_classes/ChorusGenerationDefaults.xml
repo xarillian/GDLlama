@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusGenerationDefaults" inherits="Resource" api_type="extension" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
+	<brief_description>
+	</brief_description>
+	<description>
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="backend_options" type="Dictionary" setter="set_backend_options" getter="get_backend_options" default="{}">
+		</member>
+		<member name="constraint_format" type="int" setter="set_constraint_format" getter="get_constraint_format" enum="ChorusGenerationDefaults.ConstraintFormat" default="0">
+		</member>
+		<member name="constraint_source" type="String" setter="set_constraint_source" getter="get_constraint_source" default="&quot;&quot;">
+		</member>
+		<member name="frequency_penalty" type="float" setter="set_frequency_penalty" getter="get_frequency_penalty" default="0.0">
+		</member>
+		<member name="max_tokens" type="int" setter="set_max_tokens" getter="get_max_tokens" default="128">
+		</member>
+		<member name="override_constraint" type="bool" setter="set_override_constraint" getter="get_override_constraint" default="false">
+		</member>
+		<member name="override_frequency_penalty" type="bool" setter="set_override_frequency_penalty" getter="get_override_frequency_penalty" default="false">
+		</member>
+		<member name="override_max_tokens" type="bool" setter="set_override_max_tokens" getter="get_override_max_tokens" default="true">
+		</member>
+		<member name="override_presence_penalty" type="bool" setter="set_override_presence_penalty" getter="get_override_presence_penalty" default="false">
+		</member>
+		<member name="override_seed" type="bool" setter="set_override_seed" getter="get_override_seed" default="false">
+		</member>
+		<member name="override_stop" type="bool" setter="set_override_stop" getter="get_override_stop" default="false">
+		</member>
+		<member name="override_temperature" type="bool" setter="set_override_temperature" getter="get_override_temperature" default="false">
+		</member>
+		<member name="override_thinking" type="bool" setter="set_override_thinking" getter="get_override_thinking" default="false">
+		</member>
+		<member name="override_top_k" type="bool" setter="set_override_top_k" getter="get_override_top_k" default="false">
+		</member>
+		<member name="override_top_p" type="bool" setter="set_override_top_p" getter="get_override_top_p" default="false">
+		</member>
+		<member name="presence_penalty" type="float" setter="set_presence_penalty" getter="get_presence_penalty" default="0.0">
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+		</member>
+		<member name="stop" type="PackedStringArray" setter="set_stop" getter="get_stop" default="PackedStringArray()">
+		</member>
+		<member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="0.0">
+		</member>
+		<member name="thinking" type="bool" setter="set_thinking" getter="get_thinking" default="false">
+		</member>
+		<member name="top_k" type="int" setter="set_top_k" getter="get_top_k" default="0">
+		</member>
+		<member name="top_p" type="float" setter="set_top_p" getter="get_top_p" default="0.0">
+		</member>
+	</members>
+	<constants>
+		<constant name="CONSTRAINT_FORMAT_GBNF" value="0" enum="ConstraintFormat">
+		</constant>
+		<constant name="CONSTRAINT_FORMAT_JSON_SCHEMA" value="1" enum="ConstraintFormat">
+		</constant>
+		<constant name="CONSTRAINT_FORMAT_REGEX" value="2" enum="ConstraintFormat">
+		</constant>
+		<constant name="CONSTRAINT_FORMAT_LARK" value="3" enum="ConstraintFormat">
+		</constant>
+	</constants>
+</class>
