@@ -1,11 +1,31 @@
 default:
     @just --list
 
-build:
-    scons
+[arg('cpu', long, value='true')]
+build cpu='false':
+    if [ '{{cpu}}' = 'true' ]; then \
+        scons; \
+    else \
+        scons use_vulkan=yes; \
+    fi
 
-release:
-    scons target=template_release
+[arg('cpu', long, value='true')]
+release cpu='false':
+    if [ '{{cpu}}' = 'true' ]; then \
+        scons target=template_release; \
+    else \
+        scons target=template_release use_vulkan=yes; \
+    fi
+
+godot: build
+    rm -rf plugin/addons/chorus
+    mkdir -p plugin/addons/chorus/bin
+    cp plugin/chorus.gdextension plugin/plugin.cfg plugin/plugin.gd plugin/icon.png plugin/addons/chorus/
+    cp -r plugin/doc_classes plugin/addons/chorus/
+    cp bin/libgodot_chorus.so plugin/addons/chorus/bin/
+    rm -rf tests/godot/addons/chorus
+    mkdir -p tests/godot/addons
+    ln -s ../../../plugin/addons/chorus tests/godot/addons/chorus
 
 clean:
     scons -c

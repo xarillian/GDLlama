@@ -20,7 +20,6 @@ out/
 compile_commands.json
 /.cache
 
-
 # Compiled objects and libraries
 *.o
 *.os
@@ -35,7 +34,12 @@ compile_commands.json
 *.dylib
 *.dll
 *.dblite
+*.uid
 .sconsign.dblite
+/plugin/addons/
+/plugin/addons/chorus/
+/tests/godot/addons/
+/tests/godot/.godot/
 
 # Executables
 *.exe
