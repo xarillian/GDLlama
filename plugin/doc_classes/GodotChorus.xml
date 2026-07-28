@@ -117,27 +117,9 @@
 		</member>
 		<member name="chat_template" type="String" setter="set_chat_template" getter="get_chat_template" default="&quot;&quot;">
 		</member>
-		<member name="context_size" type="int" setter="set_context_size" getter="get_context_size" default="2048">
-		</member>
 		<member name="generation_defaults" type="ChorusGenerationDefaults" setter="set_generation_defaults" getter="get_generation_defaults">
 		</member>
-		<member name="gpu_layers" type="int" setter="set_gpu_layers" getter="get_gpu_layers" default="-1">
-		</member>
-		<member name="main_gpu" type="int" setter="set_main_gpu" getter="get_main_gpu" default="0">
-		</member>
 		<member name="model_path" type="String" setter="set_model_path" getter="get_model_path" default="&quot;&quot;">
-		</member>
-		<member name="n_batch" type="int" setter="set_n_batch" getter="get_n_batch" default="2048">
-		</member>
-		<member name="n_ubatch" type="int" setter="set_n_ubatch" getter="get_n_ubatch" default="512">
-		</member>
-		<member name="num_slots" type="int" setter="set_num_slots" getter="get_num_slots" default="1">
-		</member>
-		<member name="thread_count" type="int" setter="set_thread_count" getter="get_thread_count" default="4">
-		</member>
-		<member name="tokens_per_tick" type="int" setter="set_tokens_per_tick" getter="get_tokens_per_tick" default="512">
-		</member>
-		<member name="use_gpu" type="bool" setter="set_use_gpu" getter="get_use_gpu" default="true">
 		</member>
 	</members>
 	<signals>

@@ -70,9 +70,22 @@ struct GenerationConfigPatch {
     OptionalPatch<OutputConstraint> constraint;
     OptionalPatch<bool> thinking;
     OptionMap backend_options;
+    // Dotted namespaced paths ("llama.repeat_penalty") to remove from the
+    // inherited options, applied after the merge above. Merging alone can only
+    // add or replace, so without this a patch cannot say what a host request
+    // spells as an explicit null: drop what the layer below set. Erasing a path
+    // that is not present is a no-op.
+    std::vector<std::string> backend_option_erasures;
 };
 
 OptionMap merge_option_maps(const OptionMap& base, const OptionMap& overrides);
+
+// Removes one dotted path from a namespaced option map. Intermediate segments
+// must be maps; anything else means the path does not exist, which is not an
+// error. Nested maps left empty by the removal stay -- an empty namespace is a
+// backend's own business to accept or reject.
+void erase_option_path(OptionMap& options, const std::string& path);
+
 GenerationConfig apply_generation_patch(const GenerationConfig& base, const GenerationConfigPatch& patch);
 
 } // namespace Chorus

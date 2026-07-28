@@ -81,9 +81,65 @@ void test_three_layer_patch_composition() {
     ASSERT_EQ(std::get<int64_t>(llama.at("n_batch")), 1024);
 }
 
+void test_generation_patch_erases_inherited_backend_options() {
+    Chorus::GenerationConfig base;
+    base.backend_options = Chorus::OptionMap{
+        {"llama",
+         Chorus::OptionMap{
+             {"repeat_penalty", 1.1},
+             {"top_n_sigma", 2.0},
+             {"dry", Chorus::OptionMap{{"base", 1.75}, {"length", int64_t{2}}}},
+         }}
+    };
+
+    Chorus::GenerationConfigPatch patch;
+    patch.backend_option_erasures = {"llama.repeat_penalty", "llama.dry.base"};
+
+    const auto merged = Chorus::apply_generation_patch(base, patch);
+    const auto& llama = std::get<Chorus::OptionMap>(merged.backend_options.at("llama"));
+    ASSERT_TRUE(llama.find("repeat_penalty") == llama.end());
+    ASSERT_TRUE(std::get<double>(llama.at("top_n_sigma")) == 2.0); // siblings survive
+    const auto& dry = std::get<Chorus::OptionMap>(llama.at("dry"));
+    ASSERT_TRUE(dry.find("base") == dry.end());
+    ASSERT_EQ(std::get<int64_t>(dry.at("length")), int64_t{2});
+}
+
+void test_generation_patch_erasure_runs_after_the_merge() {
+    // Both spellings in one patch: the merge adds, the erasure removes. Order
+    // is what makes an explicit null mean "drop it" rather than "drop it
+    // unless something else in this same patch set it".
+    Chorus::GenerationConfig base;
+    Chorus::GenerationConfigPatch patch;
+    patch.backend_options = Chorus::OptionMap{{"llama", Chorus::OptionMap{{"repeat_penalty", 1.3}}}};
+    patch.backend_option_erasures = {"llama.repeat_penalty"};
+
+    const auto merged = Chorus::apply_generation_patch(base, patch);
+    const auto& llama = std::get<Chorus::OptionMap>(merged.backend_options.at("llama"));
+    ASSERT_TRUE(llama.find("repeat_penalty") == llama.end());
+}
+
+void test_erase_option_path_tolerates_missing_and_malformed_paths() {
+    Chorus::OptionMap options{
+        {"llama", Chorus::OptionMap{{"repeat_penalty", 1.1}}},
+        {"scalar", int64_t{3}},
+    };
+
+    Chorus::erase_option_path(options, "llama.not_here"); // missing leaf
+    Chorus::erase_option_path(options, "nowhere.at.all"); // missing namespace
+    Chorus::erase_option_path(options, "scalar.deeper");  // scalar where a map is expected
+    ASSERT_TRUE(std::get<double>(std::get<Chorus::OptionMap>(options.at("llama")).at("repeat_penalty")) == 1.1);
+    ASSERT_EQ(std::get<int64_t>(options.at("scalar")), int64_t{3});
+
+    Chorus::erase_option_path(options, "scalar"); // a top-level leaf
+    ASSERT_TRUE(options.find("scalar") == options.end());
+}
+
 int run_generation_config_tests() {
     run_test("Generation patch overrides and clears", test_generation_patch_overrides_and_clears_portable_fields);
     run_test("Generation patch deep merges namespaces", test_generation_patch_deep_merges_backend_namespaces);
     run_test("Three-layer patch composition", test_three_layer_patch_composition);
+    run_test("Generation patch erases inherited options", test_generation_patch_erases_inherited_backend_options);
+    run_test("Generation patch erasure runs after the merge", test_generation_patch_erasure_runs_after_the_merge);
+    run_test("Erase option path tolerates bad paths", test_erase_option_path_tolerates_missing_and_malformed_paths);
     return g_tests_failed;
 }

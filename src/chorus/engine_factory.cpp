@@ -13,4 +13,11 @@ std::unique_ptr<InferenceEngine> make_engine(Backend backend) {
     }
     return nullptr; // unreachable for valid enum values; silences -Wreturn-type
 }
+
+EngineCapabilities describe_backend(Backend backend) {
+    // Construction is cheap and side-effect free before initialize(); the
+    // contract already defines capabilities() pre-init as the backend envelope.
+    auto engine = make_engine(backend);
+    return engine ? engine->capabilities() : EngineCapabilities{};
+}
 } // namespace Chorus

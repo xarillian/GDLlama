@@ -46,6 +46,8 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     std::vector<int64_t> submitted_ids;
     std::vector<Chorus::RequestId> cancelled_ids;
     std::vector<Chorus::ChatMessage> last_messages; // messages of the last submitted request
+    std::string last_chat_template;                 // template of the last submitted request
+    Chorus::GenerationConfig last_config;           // resolved config of the last submitted request
 
     std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config) override {
         initialize_calls++;
@@ -115,6 +117,8 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     void submit_request(const Chorus::ChorusRequest& req) override {
         submitted_ids.push_back(req.id);
         last_messages = req.messages;
+        last_chat_template = req.chat_template;
+        last_config = req.gen_config;
         if (!req.on_event)
             return;
 

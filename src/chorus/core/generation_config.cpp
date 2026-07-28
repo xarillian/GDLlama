@@ -49,6 +49,25 @@ OptionMap merge_option_maps(const OptionMap& base, const OptionMap& overrides) {
     return merged;
 }
 
+void erase_option_path(OptionMap& options, const std::string& path) {
+    OptionMap* level = &options;
+    size_t start = 0;
+    while (true) {
+        const size_t dot = path.find('.', start);
+        if (dot == std::string::npos)
+            break;
+        const auto next = level->find(path.substr(start, dot - start));
+        if (next == level->end())
+            return;
+        auto* nested = std::get_if<OptionMap>(&next->second);
+        if (!nested)
+            return; // a scalar where the path expects a namespace
+        level = nested;
+        start = dot + 1;
+    }
+    level->erase(path.substr(start));
+}
+
 GenerationConfig apply_generation_patch(const GenerationConfig& base, const GenerationConfigPatch& patch) {
     GenerationConfig merged = base;
     apply_optional_patch(merged.common.max_tokens, patch.max_tokens);
@@ -62,6 +81,8 @@ GenerationConfig apply_generation_patch(const GenerationConfig& base, const Gene
     apply_optional_patch(merged.common.constraint, patch.constraint);
     apply_optional_patch(merged.common.thinking, patch.thinking);
     merged.backend_options = merge_option_maps(base.backend_options, patch.backend_options);
+    for (const auto& path : patch.backend_option_erasures)
+        erase_option_path(merged.backend_options, path);
     return merged;
 }
 

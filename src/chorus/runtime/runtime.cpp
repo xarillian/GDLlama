@@ -32,6 +32,31 @@ bool ChorusRuntime::is_loaded() const {
     return _engine && _engine->is_initialized();
 }
 
+void ChorusRuntime::set_host_defaults(HostDefaults defaults) {
+    assert_host_thread();
+    _host_defaults = std::move(defaults);
+}
+
+ChorusRuntime::ResolvedRequest ChorusRuntime::resolve_request(const GenerationRequest& request) const {
+    ResolvedRequest resolved{
+        request,
+        apply_generation_patch(apply_generation_patch(GenerationConfig{}, _host_defaults.config), request.overrides),
+        request.chat_template
+    };
+
+    if (!request.session_id) {
+        // Ambient chat controls are inapplicable here, not erroneous: a host's
+        // node-level thinking default must not make a raw-prompt call fail.
+        // A request that named the control itself keeps it, and meets the
+        // rejection below.
+        if (request.overrides.thinking.action == PatchAction::Inherit)
+            resolved.config.common.thinking.reset();
+    } else if (resolved.chat_template.empty()) {
+        resolved.chat_template = _host_defaults.chat_template;
+    }
+    return resolved;
+}
+
 SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
     assert_host_thread();
     if (!is_loaded())
@@ -47,10 +72,13 @@ SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
             -1, ChorusError::SessionBusy, "Session '" + *request.session_id + "' already has a live request."
         };
 
+    const ResolvedRequest resolved = resolve_request(request);
+
     // Chat-only controls are meaningless on a stateless raw-prompt request and
-    // must not be silently discarded (project no-silent-discard rule).
+    // must not be silently discarded (project no-silent-discard rule). By this
+    // point only controls the caller set deliberately survive.
     if (!request.session_id &&
-        (!request.inject.empty() || !request.chat_template.empty() || request.config.common.thinking.has_value()))
+        (!request.inject.empty() || !resolved.chat_template.empty() || resolved.config.common.thinking.has_value()))
         return SubmitResult{
             -1, ChorusError::InvalidRequest, "inject/chat_template/thinking are chat controls; they require a session."
         };
@@ -59,8 +87,8 @@ SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
     engine_request.session_id = request.session_id;
     engine_request.priority = request.priority;
     engine_request.prompt = request.prompt;
-    engine_request.gen_config = request.config;
-    engine_request.chat_template = request.chat_template;
+    engine_request.gen_config = resolved.config;
+    engine_request.chat_template = resolved.chat_template;
 
     if (request.session_id) {
         // Chat turn (#5): presence of a session means continuation. Build the
@@ -73,23 +101,24 @@ SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
         if (auto it = _histories.find(*request.session_id); it != _histories.end())
             prospective = it->second.messages;
         prospective.push_back({"user", request.prompt});
-        auto fitted = fit_turn_messages(request, std::move(prospective));
+        auto fitted = fit_turn_messages(resolved, std::move(prospective));
         if (std::holds_alternative<SubmitResult>(fitted))
             return std::get<SubmitResult>(fitted);
         auto& turn = std::get<FittedTurn>(fitted);
         engine_request.messages = std::move(turn.messages);
-        return submit_engine_request(request, std::move(engine_request), turn.dropped);
+        return submit_engine_request(resolved, std::move(engine_request), turn.dropped);
     }
 
-    return submit_engine_request(request, std::move(engine_request));
+    return submit_engine_request(resolved, std::move(engine_request));
 }
 
 SubmitResult ChorusRuntime::submit_engine_request(
-    const GenerationRequest& request,
+    const ResolvedRequest& resolved,
     ChorusRequest engine_request,
     int32_t dropped,
     std::optional<ChatMessage> replaced_reply
 ) {
+    const GenerationRequest& request = resolved.request;
     const int64_t id = _next_request_id.fetch_add(1);
     engine_request.id = id;
     engine_request.on_event = [this](ChorusSignal& sig) { enqueue_signal(sig); };

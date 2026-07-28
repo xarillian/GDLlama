@@ -41,6 +41,24 @@ std::optional<ChorusError> ChorusRuntime::clear_conversation_history(const Sessi
     return std::nullopt;
 }
 
+std::optional<ChorusError> ChorusRuntime::edit_message(const SessionId& session, int64_t index, std::string content) {
+    assert_host_thread();
+    if (_request_by_session.count(session))
+        return ChorusError::SessionBusy;
+    auto it = _histories.find(session);
+    if (it == _histories.end())
+        return ChorusError::InvalidRequest;
+
+    auto& messages = it->second.messages;
+    const int64_t size = (int64_t)messages.size();
+    const int64_t resolved = index < 0 ? size + index : index;
+    if (resolved < 0 || resolved >= size)
+        return ChorusError::InvalidRequest;
+
+    messages[(size_t)resolved].content = std::move(content);
+    return std::nullopt;
+}
+
 std::vector<SessionId> ChorusRuntime::list_conversations() const {
     assert_host_thread();
     std::vector<SessionId> sessions;
@@ -65,14 +83,15 @@ TurnOutcome ChorusRuntime::last_turn_outcome(const SessionId& session) const {
 }
 
 std::variant<ChorusRuntime::FittedTurn, SubmitResult>
-ChorusRuntime::fit_turn_messages(const GenerationRequest& request, std::vector<ChatMessage> prospective) const {
-    const bool thinking = request.config.common.thinking.value_or(true);
+ChorusRuntime::fit_turn_messages(const ResolvedRequest& resolved, std::vector<ChatMessage> prospective) const {
+    const GenerationRequest& request = resolved.request;
+    const bool thinking = resolved.config.common.thinking.value_or(true);
 
     auto info = _engine->loaded_model_info();
     if (!info || !info->per_request_context) // no budget known: fitting doesn't apply
         return FittedTurn{place_injections(std::move(prospective), request.inject), 0};
 
-    const auto& max_tokens = request.config.common.max_tokens;
+    const auto& max_tokens = resolved.config.common.max_tokens;
     const int32_t reservation =
         (max_tokens.has_value() && *max_tokens > 0) ? *max_tokens : kFallbackResponseReservation;
     // Clamp before the signed subtraction; a window over INT32_MAX would wrap
@@ -95,7 +114,7 @@ ChorusRuntime::fit_turn_messages(const GenerationRequest& request, std::vector<C
     // skipped fit can never pair stale text with a different message list.
     std::optional<std::string> last_render;
     RenderProbe probe = [&](const std::vector<ChatMessage>& candidate) -> std::optional<int32_t> {
-        auto rendered = _engine->render_chat_prompt(candidate, request.chat_template, thinking);
+        auto rendered = _engine->render_chat_prompt(candidate, resolved.chat_template, thinking);
         if (!rendered) {
             last_render.reset();
             return std::nullopt;
@@ -117,7 +136,7 @@ std::optional<std::string> ChorusRuntime::render_prompt(
     const SessionId& session,
     const std::string& template_override,
     const std::vector<InjectedMessage>& inject,
-    std::optional<GenerationConfig> config
+    const GenerationConfigPatch& overrides
 ) const {
     assert_host_thread();
     if (!_engine)
@@ -125,23 +144,25 @@ std::optional<std::string> ChorusRuntime::render_prompt(
     auto it = _histories.find(session);
     if (it == _histories.end())
         return std::nullopt;
-    // The SAME fitting a real turn would apply, so inspection == consumption:
-    // the caller supplies the effective GenerationConfig it generates with
-    // (reservation from max_tokens, thinking flag). Absent config falls back
-    // to the same defaults a config-less turn would get.
+    // The SAME fitting and the SAME layering a real turn would apply, so
+    // inspection == consumption: the caller passes the overrides it generates
+    // with, host defaults resolve underneath exactly as they would on submit,
+    // and the resolved max_tokens and thinking drive the reservation.
     GenerationRequest probe_request;
+    probe_request.session_id = session; // a render is a chat turn: ambient chat controls apply
     probe_request.chat_template = template_override;
     probe_request.inject = inject;
-    if (config)
-        probe_request.config = std::move(*config);
-    auto fitted = fit_turn_messages(probe_request, it->second.messages);
+    probe_request.overrides = overrides;
+    const ResolvedRequest resolved = resolve_request(probe_request);
+
+    auto fitted = fit_turn_messages(resolved, it->second.messages);
     if (std::holds_alternative<SubmitResult>(fitted))
         return std::nullopt;
     auto& turn = std::get<FittedTurn>(fitted);
     if (turn.rendered_text) // fitting already rendered the winning candidate
         return std::move(turn.rendered_text);
     auto rendered = _engine->render_chat_prompt(
-        turn.messages, template_override, probe_request.config.common.thinking.value_or(true)
+        turn.messages, resolved.chat_template, resolved.config.common.thinking.value_or(true)
     );
     return rendered ? std::optional<std::string>(std::move(rendered->text)) : std::nullopt;
 }
@@ -167,9 +188,11 @@ SubmitResult ChorusRuntime::regenerate(const GenerationRequest& request) {
             -1, ChorusError::InvalidRequest, "regenerate() needs a conversation ending in an assistant reply."
         };
 
+    const ResolvedRequest resolved = resolve_request(request);
+
     // Prospective list = history minus the trailing assistant reply.
     std::vector<ChatMessage> prospective(history_it->second.messages.begin(), history_it->second.messages.end() - 1);
-    auto fitted = fit_turn_messages(request, std::move(prospective));
+    auto fitted = fit_turn_messages(resolved, std::move(prospective));
     if (std::holds_alternative<SubmitResult>(fitted))
         return std::get<SubmitResult>(fitted);
     auto& turn = std::get<FittedTurn>(fitted);
@@ -177,13 +200,13 @@ SubmitResult ChorusRuntime::regenerate(const GenerationRequest& request) {
     ChorusRequest engine_request;
     engine_request.session_id = request.session_id;
     engine_request.priority = request.priority;
-    engine_request.gen_config = request.config;
-    engine_request.chat_template = request.chat_template;
+    engine_request.gen_config = resolved.config;
+    engine_request.chat_template = resolved.chat_template;
     engine_request.messages = std::move(turn.messages);
 
     // The pop itself happens inside submit_engine_request's commit point:
     // after validation, before dispatch (see Task 6's ordering note).
-    return submit_engine_request(request, std::move(engine_request), turn.dropped, history_it->second.messages.back());
+    return submit_engine_request(resolved, std::move(engine_request), turn.dropped, history_it->second.messages.back());
 }
 
 void ChorusRuntime::finish_turn(const LiveRequest& live, TurnOutcome outcome, const std::string& text) {

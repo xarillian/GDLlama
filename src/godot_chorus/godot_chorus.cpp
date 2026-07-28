@@ -44,6 +44,18 @@ static const char* chorus_error_name(Chorus::ChorusError e) {
     return "Unknown";
 }
 
+static Chorus::Backend to_chorus_backend(GodotChorus::BackendChoice backend) {
+    return backend == GodotChorus::BACKEND_ECHO ? Chorus::Backend::Echo : Chorus::Backend::Llama;
+}
+
+static bool gates_another_option(const godot_chorus::OptionDescriptors& descriptors, const std::string& key) {
+    for (const auto& descriptor : descriptors) {
+        if (descriptor.enabled_by && *descriptor.enabled_by == key)
+            return true;
+    }
+    return false;
+}
+
 int GodotChorus::to_godot(Chorus::TurnOutcome outcome) {
     switch (outcome) {
     case Chorus::TurnOutcome::None:
@@ -162,21 +174,14 @@ bool GodotChorus::load_model() {
         config.model.model_id = _model_path.get_file().get_basename().utf8().get_data();
         config.model.format = Chorus::ModelFormat::Gguf;
         config.model.assets.push_back({"weights", _model_path.utf8().get_data(), std::nullopt, std::nullopt});
-        Chorus::GodotAdapter::LlamaLoadOptions options;
-        options.context_size = _context_size;
-        options.thread_count = _thread_count;
-        options.use_gpu = _use_gpu;
-        options.gpu_layers = _gpu_layers;
-        options.num_slots = _num_slots;
-        options.tokens_per_tick = _tokens_per_tick;
-        options.n_batch = _n_batch;
-        options.n_ubatch = _n_ubatch;
-        options.main_gpu = _main_gpu;
-        config.backend_options["llama"] = Chorus::GodotAdapter::make_llama_load_options(options);
     }
-    // Echo: empty ModelSpec, no options (it rejects any it is given).
+    // Echo: empty ModelSpec, and it declares no load options, so the loop below
+    // contributes nothing rather than needing a special case.
+    const auto& caps = backend_capabilities();
+    if (!caps.load_options.empty())
+        config.backend_options[caps.backend_id] = Chorus::resolve_option_defaults(caps.load_options, _load_options);
 
-    auto engine = Chorus::make_engine(_backend == BACKEND_ECHO ? Chorus::Backend::Echo : Chorus::Backend::Llama);
+    auto engine = Chorus::make_engine(to_chorus_backend(_backend));
     auto err = _runtime.load_engine(std::move(engine), config);
     if (err.has_value()) {
         UtilityFunctions::push_error(String("[Chorus] Model load failed: ") + chorus_error_name(err.value()));
@@ -194,25 +199,15 @@ bool GodotChorus::is_loaded() const {
 }
 
 int64_t GodotChorus::generate(const Dictionary& request) {
-    const Chorus::GenerationConfig defaults =
-        Chorus::apply_generation_patch(Chorus::GenerationConfig{}, effective_generation_defaults()->to_patch());
+    push_host_defaults();
 
-    auto normalized = godot_chorus::normalize_generation_request(request, defaults);
+    auto normalized = godot_chorus::normalize_generation_request(request);
     if (std::holds_alternative<String>(normalized)) {
         UtilityFunctions::push_error(std::get<String>(normalized));
         return -1;
     }
 
     auto& gen_request = std::get<Chorus::GenerationRequest>(normalized);
-    // Ambient chat controls apply to chat turns only: the node template and a
-    // defaults-resource thinking value must not turn a stateless raw-prompt
-    // call into an InvalidRequest (the runtime rejects stateless chat
-    // controls). Explicit request keys still flow through and earn the
-    // runtime's honest rejection.
-    if (gen_request.session_id.has_value())
-        gen_request.chat_template = resolve_chat_template(std::move(gen_request.chat_template));
-    else if (!request.has("thinking"))
-        gen_request.config.common.thinking.reset();
     auto result = _runtime.submit(gen_request);
     if (!result.ok()) {
         String message = String("[Chorus] generate() rejected: ") + chorus_error_name(result.error);
@@ -227,10 +222,9 @@ int64_t GodotChorus::generate(const Dictionary& request) {
 }
 
 int64_t GodotChorus::regenerate(const String& session, const Dictionary& overrides) {
-    const Chorus::GenerationConfig defaults =
-        Chorus::apply_generation_patch(Chorus::GenerationConfig{}, effective_generation_defaults()->to_patch());
+    push_host_defaults();
 
-    auto normalized = godot_chorus::normalize_generation_overrides(overrides, defaults);
+    auto normalized = godot_chorus::normalize_generation_overrides(overrides);
     if (std::holds_alternative<String>(normalized)) {
         UtilityFunctions::push_error(std::get<String>(normalized));
         return -1;
@@ -238,7 +232,6 @@ int64_t GodotChorus::regenerate(const String& session, const Dictionary& overrid
 
     auto& gen_request = std::get<Chorus::GenerationRequest>(normalized);
     gen_request.session_id = std::string(session.utf8().get_data());
-    gen_request.chat_template = resolve_chat_template(std::move(gen_request.chat_template));
     auto result = _runtime.regenerate(gen_request);
     if (!result.ok()) {
         String message = String("[Chorus] regenerate() rejected: ") + chorus_error_name(result.error);
@@ -329,19 +322,8 @@ bool GodotChorus::clear_conversation_history(const String& session) {
 }
 
 bool GodotChorus::edit_message(const String& session, int64_t index, const String& content) {
-    const std::string session_id(session.utf8().get_data());
-    auto history = _runtime.export_conversation_history(session_id);
-    if (history.empty()) {
-        UtilityFunctions::push_error("[Chorus] edit_message: unknown session or empty history.");
-        return false;
-    }
-    const int64_t resolved = index < 0 ? (int64_t)history.size() + index : index;
-    if (resolved < 0 || resolved >= (int64_t)history.size()) {
-        UtilityFunctions::push_error("[Chorus] edit_message: index out of range.");
-        return false;
-    }
-    history[resolved].content = std::string(content.utf8().get_data());
-    auto err = _runtime.import_conversation_history(session_id, std::move(history));
+    auto err =
+        _runtime.edit_message(std::string(session.utf8().get_data()), index, std::string(content.utf8().get_data()));
     if (err.has_value()) {
         UtilityFunctions::push_error(String("[Chorus] edit_message failed: ") + chorus_error_name(*err));
         return false;
@@ -379,13 +361,11 @@ String GodotChorus::render_chat_prompt(const String& session, const String& temp
         return String();
     }
 
-    const Chorus::GenerationConfig defaults =
-        Chorus::apply_generation_patch(Chorus::GenerationConfig{}, effective_generation_defaults()->to_patch());
+    push_host_defaults();
     auto rendered = _runtime.render_prompt(
         std::string(session.utf8().get_data()),
-        resolve_chat_template(std::string(template_override.utf8().get_data())),
-        std::get<std::vector<Chorus::InjectedMessage>>(parsed),
-        defaults
+        std::string(template_override.utf8().get_data()),
+        std::get<std::vector<Chorus::InjectedMessage>>(parsed)
     );
     return rendered.has_value() ? String(rendered->c_str()) : String();
 }
@@ -401,67 +381,79 @@ String GodotChorus::get_model_path() const {
     return _model_path;
 }
 
-void GodotChorus::set_context_size(int32_t size) {
-    _context_size = size;
-}
-int32_t GodotChorus::get_context_size() const {
-    return _context_size;
+// ---------------------------------------------------------------------------
+// Backend load options
+//
+// The selected provider declares its own option schema; these hooks render it.
+// Nothing here names an option, a default, or a range: swap the backend and the
+// inspector follows without a line of adapter code changing.
+// ---------------------------------------------------------------------------
+
+const Chorus::EngineCapabilities& GodotChorus::backend_capabilities() const {
+    if (_cached_capabilities_backend != _backend) {
+        _cached_capabilities = Chorus::describe_backend(to_chorus_backend(_backend));
+        _cached_capabilities_backend = _backend;
+    }
+    return _cached_capabilities;
 }
 
-void GodotChorus::set_thread_count(int32_t count) {
-    _thread_count = count;
-}
-int32_t GodotChorus::get_thread_count() const {
-    return _thread_count;
+const godot_chorus::OptionDescriptors& GodotChorus::load_option_descriptors() const {
+    return backend_capabilities().load_options;
 }
 
-void GodotChorus::set_use_gpu(bool use) {
-    _use_gpu = use;
-}
-bool GodotChorus::get_use_gpu() const {
-    return _use_gpu;
+const Chorus::OptionDescriptor* GodotChorus::find_load_option(const StringName& name) const {
+    return Chorus::find_option_descriptor(load_option_descriptors(), std::string(String(name).utf8().get_data()));
 }
 
-void GodotChorus::set_gpu_layers(int32_t layers) {
-    _gpu_layers = layers;
-}
-int32_t GodotChorus::get_gpu_layers() const {
-    return _gpu_layers;
-}
-
-void GodotChorus::set_num_slots(int32_t count) {
-    _num_slots = count;
-}
-int32_t GodotChorus::get_num_slots() const {
-    return _num_slots;
-}
-
-void GodotChorus::set_tokens_per_tick(int32_t count) {
-    _tokens_per_tick = count;
-}
-int32_t GodotChorus::get_tokens_per_tick() const {
-    return _tokens_per_tick;
+bool GodotChorus::_set(const StringName& name, const Variant& value) {
+    const auto* descriptor = find_load_option(name);
+    if (!descriptor)
+        return false;
+    auto coerced = godot_chorus::coerce_to_descriptor(*descriptor, value);
+    if (!coerced) {
+        UtilityFunctions::push_error(
+            String("[Chorus] ") + String(descriptor->key.c_str()) + String(": wrong value type for this option.")
+        );
+        return true; // handled: the property exists, the value did not fit
+    }
+    _load_options[descriptor->key] = std::move(*coerced);
+    if (gates_another_option(load_option_descriptors(), descriptor->key))
+        notify_property_list_changed(); // the options it governs just changed state
+    return true;
 }
 
-void GodotChorus::set_n_batch(int32_t count) {
-    _n_batch = count;
-}
-int32_t GodotChorus::get_n_batch() const {
-    return _n_batch;
-}
-
-void GodotChorus::set_n_ubatch(int32_t count) {
-    _n_ubatch = count;
-}
-int32_t GodotChorus::get_n_ubatch() const {
-    return _n_ubatch;
+bool GodotChorus::_get(const StringName& name, Variant& ret) const {
+    const auto* descriptor = find_load_option(name);
+    if (!descriptor)
+        return false;
+    const auto stored = _load_options.find(descriptor->key);
+    ret = godot_chorus::option_value_to_variant(
+        stored != _load_options.end() ? stored->second : descriptor->default_value
+    );
+    return true;
 }
 
-void GodotChorus::set_main_gpu(int32_t index) {
-    _main_gpu = index;
+void GodotChorus::_get_property_list(List<PropertyInfo>* list) const {
+    const auto& descriptors = load_option_descriptors();
+    if (descriptors.empty())
+        return;
+    list->push_back(PropertyInfo(Variant::NIL, "Backend Options", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_GROUP));
+    for (const auto& descriptor : descriptors) {
+        const bool enabled = Chorus::option_is_enabled(descriptors, descriptor, _load_options);
+        list->push_back(godot_chorus::property_info_for(descriptor, enabled));
+    }
 }
-int32_t GodotChorus::get_main_gpu() const {
-    return _main_gpu;
+
+bool GodotChorus::_property_can_revert(const StringName& name) const {
+    return find_load_option(name) != nullptr;
+}
+
+bool GodotChorus::_property_get_revert(const StringName& name, Variant& ret) const {
+    const auto* descriptor = find_load_option(name);
+    if (!descriptor)
+        return false;
+    ret = godot_chorus::option_value_to_variant(descriptor->default_value);
+    return true;
 }
 
 void GodotChorus::set_backend(BackendChoice backend) {
@@ -469,6 +461,7 @@ void GodotChorus::set_backend(BackendChoice backend) {
         UtilityFunctions::push_warning("[Chorus] backend changed while loaded; takes effect on the next load_model().");
     }
     _backend = backend;
+    notify_property_list_changed(); // a different provider declares different options
 }
 
 GodotChorus::BackendChoice GodotChorus::get_backend() const {
@@ -498,10 +491,13 @@ String GodotChorus::get_chat_template() const {
     return _chat_template;
 }
 
-std::string GodotChorus::resolve_chat_template(std::string request_template) const {
-    if (request_template.empty() && !_chat_template.is_empty())
-        return std::string(_chat_template.utf8().get_data());
-    return request_template;
+void GodotChorus::push_host_defaults() {
+    // Rebuilt per call rather than pushed from the setters: the assigned
+    // ChorusGenerationDefaults is a Resource a script may edit in place, and
+    // the node gets no notification when it does.
+    _runtime.set_host_defaults(
+        {effective_generation_defaults()->to_patch(), std::string(_chat_template.utf8().get_data())}
+    );
 }
 
 // ===========================================================================
@@ -622,61 +618,9 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::STRING, "model_path", PROPERTY_HINT_FILE, "*.gguf"), "set_model_path", "get_model_path"
     );
 
-    ClassDB::bind_method(D_METHOD("set_context_size", "size"), &GodotChorus::set_context_size);
-    ClassDB::bind_method(D_METHOD("get_context_size"), &GodotChorus::get_context_size);
-    ADD_PROPERTY(
-        PropertyInfo(Variant::INT, "context_size", PROPERTY_HINT_RANGE, "128,65536,128"),
-        "set_context_size",
-        "get_context_size"
-    );
-
-    ClassDB::bind_method(D_METHOD("set_thread_count", "count"), &GodotChorus::set_thread_count);
-    ClassDB::bind_method(D_METHOD("get_thread_count"), &GodotChorus::get_thread_count);
-    ADD_PROPERTY(
-        PropertyInfo(Variant::INT, "thread_count", PROPERTY_HINT_RANGE, "1,32,1"),
-        "set_thread_count",
-        "get_thread_count"
-    );
-
-    ClassDB::bind_method(D_METHOD("set_use_gpu", "use"), &GodotChorus::set_use_gpu);
-    ClassDB::bind_method(D_METHOD("get_use_gpu"), &GodotChorus::get_use_gpu);
-    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_gpu"), "set_use_gpu", "get_use_gpu");
-
-    ClassDB::bind_method(D_METHOD("set_gpu_layers", "layers"), &GodotChorus::set_gpu_layers);
-    ClassDB::bind_method(D_METHOD("get_gpu_layers"), &GodotChorus::get_gpu_layers);
-    ADD_PROPERTY(
-        PropertyInfo(Variant::INT, "gpu_layers", PROPERTY_HINT_RANGE, Chorus::GodotAdapter::GPU_LAYERS_PROPERTY_HINT),
-        "set_gpu_layers",
-        "get_gpu_layers"
-    );
-
-    ClassDB::bind_method(D_METHOD("set_num_slots", "count"), &GodotChorus::set_num_slots);
-    ClassDB::bind_method(D_METHOD("get_num_slots"), &GodotChorus::get_num_slots);
-    ADD_PROPERTY(
-        PropertyInfo(Variant::INT, "num_slots", PROPERTY_HINT_RANGE, "1,32,1"), "set_num_slots", "get_num_slots"
-    );
-
-    ClassDB::bind_method(D_METHOD("set_tokens_per_tick", "count"), &GodotChorus::set_tokens_per_tick);
-    ClassDB::bind_method(D_METHOD("get_tokens_per_tick"), &GodotChorus::get_tokens_per_tick);
-    ADD_PROPERTY(
-        PropertyInfo(Variant::INT, "tokens_per_tick", PROPERTY_HINT_RANGE, "1,4096,1"),
-        "set_tokens_per_tick",
-        "get_tokens_per_tick"
-    );
-
-    ClassDB::bind_method(D_METHOD("set_n_batch", "count"), &GodotChorus::set_n_batch);
-    ClassDB::bind_method(D_METHOD("get_n_batch"), &GodotChorus::get_n_batch);
-    ADD_PROPERTY(PropertyInfo(Variant::INT, "n_batch", PROPERTY_HINT_RANGE, "1,65536,1"), "set_n_batch", "get_n_batch");
-
-    ClassDB::bind_method(D_METHOD("set_n_ubatch", "count"), &GodotChorus::set_n_ubatch);
-    ClassDB::bind_method(D_METHOD("get_n_ubatch"), &GodotChorus::get_n_ubatch);
-    ADD_PROPERTY(
-        PropertyInfo(Variant::INT, "n_ubatch", PROPERTY_HINT_RANGE, "1,65536,1"), "set_n_ubatch", "get_n_ubatch"
-    );
-
-    ClassDB::bind_method(D_METHOD("set_main_gpu", "index"), &GodotChorus::set_main_gpu);
-    ClassDB::bind_method(D_METHOD("get_main_gpu"), &GodotChorus::get_main_gpu);
-    ADD_PROPERTY(PropertyInfo(Variant::INT, "main_gpu", PROPERTY_HINT_RANGE, "0,15,1"), "set_main_gpu", "get_main_gpu");
+    // Backend load options (context_size, use_gpu, ...) are not bound here:
+    // the selected provider declares them and _get_property_list renders that
+    // declaration, so the adapter never restates a backend's option schema.
 
     ClassDB::bind_method(D_METHOD("set_backend", "backend"), &GodotChorus::set_backend);
     ClassDB::bind_method(D_METHOD("get_backend"), &GodotChorus::get_backend);

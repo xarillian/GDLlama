@@ -30,11 +30,28 @@ struct GenerationRequest {
 
     int priority = 0;
     bool stream = false; // false: suppress Token events, deliver only Complete
-    GenerationConfig config;
+
+    // An overlay on the runtime's host defaults, not a finished config. Keeping
+    // it a patch is what lets the runtime tell a value the caller asked for
+    // from one that merely drifted down from a host's ambient settings.
+    GenerationConfigPatch overrides;
 
     // #5: per-request ephemeral injections (fitted copy only) and an optional
     // chat-template override. Only meaningful on sessioned (chat) requests.
     std::vector<InjectedMessage> inject;
+    std::string chat_template;
+};
+
+// A host's ambient settings: the layer every request overlays.
+//
+// Chat-only controls here (thinking, chat_template) apply to sessioned
+// requests and are dropped from stateless ones. That asymmetry is the point:
+// an ambient default must not turn a raw-prompt call into a rejection, while
+// the same control set deliberately on a request still earns one. Resolving it
+// here rather than in an adapter is what keeps every host from re-deriving the
+// same workaround.
+struct HostDefaults {
+    GenerationConfigPatch config;
     std::string chat_template;
 };
 
@@ -82,6 +99,11 @@ class ChorusRuntime {
 
     bool is_loaded() const;
 
+    // Installs the ambient layer every subsequent request overlays. Hosts that
+    // expose node- or project-level settings push them here instead of folding
+    // them into each request, so the runtime can distinguish the two.
+    void set_host_defaults(HostDefaults defaults);
+
     [[nodiscard]] SubmitResult submit(const GenerationRequest& request);
 
     // Reroll the session's last assistant line (#5-C). request.prompt must be
@@ -101,19 +123,26 @@ class ChorusRuntime {
     std::optional<ChorusError> import_conversation_history(const SessionId& session, std::vector<ChatMessage> history);
     std::vector<ChatMessage> export_conversation_history(const SessionId& session) const;
     std::optional<ChorusError> clear_conversation_history(const SessionId& session);
+    // Rewrites one message's content in place, any role. A negative index
+    // counts from the end (-1 = newest). InvalidRequest for an unknown session
+    // or an out-of-range index; SessionBusy while the lane has a live request.
+    // The lane's last_turn_outcome is untouched: editing what a turn said does
+    // not change how it ended.
+    std::optional<ChorusError> edit_message(const SessionId& session, int64_t index, std::string content);
     std::vector<SessionId> list_conversations() const;
     std::optional<ChorusError> reset_context();
     TurnOutcome last_turn_outcome(const SessionId& session) const;
 
     // The exact fitted prompt generation would consume for this session right
-    // now, without generating. Pass the SAME effective config you generate
-    // with -- it drives the fitting reservation (max_tokens) and thinking.
+    // now, without generating. Pass the SAME overrides you generate with -- the
+    // host defaults apply underneath either way, and the resolved max_tokens
+    // and thinking drive the fitting reservation.
     // nullopt: unknown session, no engine, or no backend rendering.
     std::optional<std::string> render_prompt(
         const SessionId& session,
         const std::string& template_override = "",
         const std::vector<InjectedMessage>& inject = {},
-        std::optional<GenerationConfig> config = std::nullopt
+        const GenerationConfigPatch& overrides = {}
     ) const;
 
     // Drains pending engine signals into host-facing events.
@@ -130,6 +159,17 @@ class ChorusRuntime {
     void cancel_live_requests();
     void retire_request(RequestId id);
 
+    // A request with its layers already collapsed: host defaults overlaid by
+    // the request's own overrides, with ambient chat controls dropped where
+    // they cannot apply. Everything below submit() works on this, so the
+    // resolution rule has exactly one home.
+    struct ResolvedRequest {
+        const GenerationRequest& request;
+        GenerationConfig config;
+        std::string chat_template;
+    };
+    ResolvedRequest resolve_request(const GenerationRequest& request) const;
+
     struct LiveRequest; // fwd for the chat-turn helpers below
     // Shared submit tail: id assignment, validation, live-state install,
     // durable history commit, dispatch. dropped > 0 queues a HistoryTruncated
@@ -138,7 +178,7 @@ class ChorusRuntime {
     // user message, and the popped reply rides the live record for
     // restore-on-cancel.
     [[nodiscard]] SubmitResult submit_engine_request(
-        const GenerationRequest& request,
+        const ResolvedRequest& resolved,
         ChorusRequest engine_request,
         int32_t dropped = 0,
         std::optional<ChatMessage> replaced_reply = std::nullopt
@@ -158,7 +198,7 @@ class ChorusRuntime {
         std::optional<std::string> rendered_text;
     };
     std::variant<FittedTurn, SubmitResult>
-    fit_turn_messages(const GenerationRequest& request, std::vector<ChatMessage> prospective) const;
+    fit_turn_messages(const ResolvedRequest& resolved, std::vector<ChatMessage> prospective) const;
 
     struct LiveRequest {
         bool streaming = false;
@@ -174,6 +214,8 @@ class ChorusRuntime {
     };
 
     std::unique_ptr<InferenceEngine> _engine;
+
+    HostDefaults _host_defaults;
 
     std::atomic<int64_t> _next_request_id{0};
 

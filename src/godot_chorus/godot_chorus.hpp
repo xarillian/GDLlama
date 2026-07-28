@@ -1,16 +1,20 @@
 #pragma once
 
+#include <optional>
+
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/templates/list.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/variant/string_name.hpp>
 
 #include "chorus/core/common.hpp"
 #include "chorus/runtime/runtime.hpp"
+#include "godot_chorus/backend_option_properties.hpp"
 #include "godot_chorus/chorus_generation_defaults.hpp"
-#include "godot_chorus/llama_load_options.hpp"
 
 class GodotChorus : public godot::Node {
     GDCLASS(GodotChorus, godot::Node);
@@ -18,6 +22,16 @@ class GodotChorus : public godot::Node {
   protected:
     static void _bind_methods();
     void _notification(int p_what);
+
+    // --- Backend load options, rendered from the provider's declared schema ---
+    // The selected backend owns its option names, types, defaults, and bounds;
+    // these hooks restate that declaration as inspector properties so the node
+    // never hard-codes a backend's configuration surface.
+    bool _set(const godot::StringName& name, const godot::Variant& value);
+    bool _get(const godot::StringName& name, godot::Variant& ret) const;
+    void _get_property_list(godot::List<godot::PropertyInfo>* list) const;
+    bool _property_can_revert(const godot::StringName& name) const;
+    bool _property_get_revert(const godot::StringName& name, godot::Variant& ret) const;
 
   public:
     enum ErrorCode {
@@ -122,11 +136,10 @@ class GodotChorus : public godot::Node {
     // Array of {role, content} Dictionaries; empty for an unknown session.
     godot::Array export_conversation_history(const godot::String& session) const;
     bool clear_conversation_history(const godot::String& session);
-    // Rewrites one message's content in place (any role); sugar over the
-    // export -> mutate -> import roundtrip, so it inherits import's semantics
-    // (SessionBusy guard, last_turn_outcome reset to TURN_NONE). Negative
-    // index counts from the end (-1 = newest). Role edits and insert/delete
-    // stay on the full roundtrip.
+    // Rewrites one message's content in place (any role). A negative index
+    // counts from the end (-1 = newest); an unknown session or out-of-range
+    // index fails, as does a busy session. Role edits and insert/delete stay
+    // on the export -> mutate -> import roundtrip.
     bool edit_message(const godot::String& session, int64_t index, const godot::String& content);
     godot::PackedStringArray list_conversations() const;
     bool reset_context();
@@ -149,24 +162,6 @@ class GodotChorus : public godot::Node {
 
     void set_model_path(const godot::String& path);
     godot::String get_model_path() const;
-    void set_context_size(int32_t size);
-    int32_t get_context_size() const;
-    void set_thread_count(int32_t count);
-    int32_t get_thread_count() const;
-    void set_use_gpu(bool use);
-    bool get_use_gpu() const;
-    void set_gpu_layers(int32_t layers);
-    int32_t get_gpu_layers() const;
-    void set_num_slots(int32_t count);
-    int32_t get_num_slots() const;
-    void set_tokens_per_tick(int32_t count);
-    int32_t get_tokens_per_tick() const;
-    void set_n_batch(int32_t count);
-    int32_t get_n_batch() const;
-    void set_n_ubatch(int32_t count);
-    int32_t get_n_ubatch() const;
-    void set_main_gpu(int32_t index);
-    int32_t get_main_gpu() const;
     void set_backend(BackendChoice backend);
     BackendChoice get_backend() const;
     void set_generation_defaults(const godot::Ref<ChorusGenerationDefaults>& defaults);
@@ -186,25 +181,32 @@ class GodotChorus : public godot::Node {
     // contributes a generation default even with the property unset.
     godot::Ref<ChorusGenerationDefaults> effective_generation_defaults();
 
-    // Precedence for the chat_template node default: a per-request override
-    // wins; otherwise the node property (when non-empty). One rule, three
-    // entry points: generate, regenerate, render_chat_prompt.
-    std::string resolve_chat_template(std::string request_template) const;
+    // Hands this node's ambient settings to the runtime, which resolves them
+    // against each request. Called from every entry point that submits or
+    // renders, so the node never has to decide where an ambient value applies.
+    void push_host_defaults();
+
+    // The selected backend's self-description, fetched from the factory and
+    // cached because the inspector asks for the property list constantly.
+    const Chorus::EngineCapabilities& backend_capabilities() const;
+    const godot_chorus::OptionDescriptors& load_option_descriptors() const;
+    const Chorus::OptionDescriptor* find_load_option(const godot::StringName& name) const;
 
     Chorus::ChorusRuntime _runtime;
 
     godot::String _model_path;
-    int32_t _context_size = 2048;
-    int32_t _thread_count = 4;
-    bool _use_gpu = true;
-    int32_t _gpu_layers = Chorus::GodotAdapter::DEFAULT_GPU_LAYERS;
-    int32_t _num_slots = 1;
-    int32_t _tokens_per_tick = 512;
-    int32_t _n_batch = 2048;
-    int32_t _n_ubatch = 512;
-    int32_t _main_gpu = 0;
 
     BackendChoice _backend = BACKEND_LLAMA;
+
+    // Only the options the user actually set; everything else resolves from
+    // the backend's declared defaults at load time. Keys belonging to a
+    // backend that is not currently selected are inert, so switching back and
+    // forth in a session keeps a configuration. A scene save does not: only
+    // the selected backend's options are listed as properties, so only they
+    // persist.
+    Chorus::OptionMap _load_options;
+    mutable Chorus::EngineCapabilities _cached_capabilities;
+    mutable std::optional<BackendChoice> _cached_capabilities_backend;
 
     // Node-default jinja chat template; "" = the model's embedded template.
     godot::String _chat_template;

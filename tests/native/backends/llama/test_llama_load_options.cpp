@@ -1,0 +1,119 @@
+#include "chorus/backends/llama/llama_generation.hpp"
+#include "chorus/backends/llama/llama_load_config.hpp"
+
+#include "test_utils.hpp"
+
+#include <algorithm>
+#include <cstdint>
+#include <iostream>
+#include <optional>
+#include <string>
+#include <utility>
+#include <variant>
+
+namespace {
+
+std::variant<Chorus::LlamaLoadConfig, Chorus::RequestRejection> parse(Chorus::OptionMap options) {
+    Chorus::ChorusConfig config;
+    config.model.format = Chorus::ModelFormat::Gguf;
+    config.model.assets.push_back({"weights", "model.gguf", std::nullopt, std::nullopt});
+    config.backend_options["llama"] = std::move(options);
+    return Chorus::parse_llama_load_config(config);
+}
+
+// One option set to `value`, every other at its declared default -- the shape a
+// host produces when the user touches a single control.
+std::variant<Chorus::LlamaLoadConfig, Chorus::RequestRejection>
+parse_with(const std::string& key, Chorus::OptionValue value) {
+    const auto& descriptors = Chorus::llama_load_option_descriptors();
+    Chorus::OptionMap stored{{key, std::move(value)}};
+    return parse(Chorus::resolve_option_defaults(descriptors, stored));
+}
+
+// The declared defaults must be exactly what the backend falls back to when a
+// host sends nothing. This is the check that keeps a schema entry from drifting
+// away from the LlamaLoadConfig member it advertises.
+void test_llama_descriptor_defaults_match_the_parsed_defaults() {
+    const auto parsed = parse(Chorus::resolve_option_defaults(Chorus::llama_load_option_descriptors(), {}));
+    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaLoadConfig>(parsed));
+    const auto& got = std::get<Chorus::LlamaLoadConfig>(parsed);
+    const Chorus::LlamaLoadConfig want{};
+
+    ASSERT_EQ(got.context_size, want.context_size);
+    ASSERT_EQ(got.thread_count, want.thread_count);
+    ASSERT_TRUE(got.use_gpu == want.use_gpu);
+    ASSERT_EQ(got.gpu_layers, want.gpu_layers);
+    ASSERT_EQ(got.num_slots, want.num_slots);
+    ASSERT_EQ(got.tokens_per_tick, want.tokens_per_tick);
+    ASSERT_EQ(got.n_batch, want.n_batch);
+    ASSERT_EQ(got.n_ubatch, want.n_ubatch);
+    ASSERT_EQ(got.main_gpu, want.main_gpu);
+}
+
+// The contract's half of a widget bound: whatever a host lets a user pick
+// inside the declared range, the backend accepts. A hint tightened past the
+// backend's own limits, or a limit tightened past the hint, fails here rather
+// than in a game at load time.
+void test_llama_descriptor_bounds_are_accepted() {
+    for (const auto& descriptor : Chorus::llama_load_option_descriptors()) {
+        if (!descriptor.minimum || !descriptor.maximum)
+            continue;
+        for (const double bound : {*descriptor.minimum, *descriptor.maximum}) {
+            const auto parsed = parse_with(descriptor.key, int64_t(bound));
+            if (!std::holds_alternative<Chorus::LlamaLoadConfig>(parsed)) {
+                std::cout << "    rejected " << descriptor.key << " = " << bound << ": "
+                          << std::get<Chorus::RequestRejection>(parsed).message << "\n";
+                ASSERT_TRUE(false);
+            }
+        }
+    }
+}
+
+void test_llama_rejects_options_outside_the_declaration() {
+    const auto unknown = parse({{"not_a_real_option", int64_t{1}}});
+    ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(unknown));
+    ASSERT_TRUE(std::get<Chorus::RequestRejection>(unknown).error == Chorus::ChorusError::UnsupportedOption);
+
+    const auto mistyped = parse({{"context_size", std::string("large")}});
+    ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(mistyped));
+    ASSERT_TRUE(std::get<Chorus::RequestRejection>(mistyped).error == Chorus::ChorusError::UnsupportedOption);
+}
+
+// The gate is advice to hosts, not enforcement: a host that ignores it and
+// sends a gated-off option still gets an honest rejection.
+void test_llama_gated_options_still_reject_when_sent() {
+    const auto parsed = parse({{"use_gpu", false}, {"main_gpu", int64_t{2}}});
+    ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(parsed));
+
+    // ... and the declared gate is what keeps a host from sending them.
+    const auto resolved =
+        Chorus::resolve_option_defaults(Chorus::llama_load_option_descriptors(), {{"use_gpu", false}});
+    ASSERT_TRUE(resolved.find("main_gpu") == resolved.end());
+    ASSERT_TRUE(resolved.find("gpu_layers") == resolved.end());
+    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaLoadConfig>(parse(resolved)));
+}
+
+// The Godot request normalizer promotes 'repeat_penalty' to a top-level
+// convenience key over backend_options["llama"]. That spelling only works
+// while llama still declares the option it forwards to.
+void test_normalizer_convenience_keys_exist_in_the_backend_declaration() {
+    const auto& names = Chorus::llama_backend_generation_option_names();
+    ASSERT_TRUE(std::find(names.begin(), names.end(), "repeat_penalty") != names.end());
+}
+
+} // namespace
+
+int run_llama_load_option_tests() {
+    std::cout << "\n--- Llama Load Option Schema Tests ---\n";
+    run_test(
+        "Llama descriptor defaults match the parsed defaults", test_llama_descriptor_defaults_match_the_parsed_defaults
+    );
+    run_test("Llama descriptor bounds are accepted", test_llama_descriptor_bounds_are_accepted);
+    run_test("Llama rejects options outside the declaration", test_llama_rejects_options_outside_the_declaration);
+    run_test("Llama gated options still reject when sent", test_llama_gated_options_still_reject_when_sent);
+    run_test(
+        "Normalizer convenience keys exist in the backend declaration",
+        test_normalizer_convenience_keys_exist_in_the_backend_declaration
+    );
+    return 0;
+}

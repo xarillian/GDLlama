@@ -176,18 +176,27 @@ else:
         )
 
 
-env.Append(CPPPATH=[
-    "include",
-    "src",
-    # Llama Paths
+env.Append(CPPPATH=["include", "src"])
+
+# Vendor headers reach only the objects allowed to see them: the llama provider
+# and the llama tests. An #include of <llama.h> from the core, the runtime, the
+# factory, or a host adapter fails to compile rather than waiting on review
+# (ARCHITECTURE.md, include discipline). The matching link seam -- an
+# inner-layer target that builds with no llama.cpp artifacts present -- is
+# heavier and lands with #11, where a second heavyweight backend pays for it.
+llama_cpppath = [
     "external/llama.cpp/include",
     "external/llama.cpp/common",
     "external/llama.cpp/src",
     "external/llama.cpp/ggml/include",
     "external/llama.cpp/ggml/src",
-    # Dependencies
-    "external/llama.cpp/vendor"
-])
+    "external/llama.cpp/vendor",  # nlohmann/json, vendored inside llama.cpp
+]
+
+def with_llama_includes(base_env):
+    scoped = base_env.Clone()
+    scoped.Append(CPPPATH=llama_cpppath)
+    return scoped
 
 # ----------------------------------------------------------------------
 # SOURCE DEFINITIONS
@@ -198,6 +207,7 @@ VariantDir("bin/obj/chorus",       "src/chorus",       duplicate=0)
 VariantDir("bin/obj/godot_chorus", "src/godot_chorus", duplicate=0)
 VariantDir("bin/obj/tests",        "tests",            duplicate=0)
 
+sources_core    = Glob("bin/obj/chorus/core/*.cpp")
 sources_factory = Glob("bin/obj/chorus/*.cpp")
 sources_runtime = Glob("bin/obj/chorus/runtime/*.cpp")
 sources_echo    = Glob("bin/obj/chorus/backends/echo/*.cpp")
@@ -209,11 +219,12 @@ sources_tests   = (
     Glob("bin/obj/tests/native/wlib/*.cpp") +
     Glob("bin/obj/tests/native/core/*.cpp") +
     Glob("bin/obj/tests/native/factory/*.cpp") +
-    Glob("bin/obj/tests/native/godot_chorus/*.cpp") +
     Glob("bin/obj/tests/native/backends/echo/*.cpp") +
-    Glob("bin/obj/tests/native/backends/llama/*.cpp") +
     Glob("bin/obj/tests/native/runtime/*.cpp")
 )
+# Kept apart from the rest: these are the only test objects that may see a
+# vendor header, so they compile under the scoped env alongside the provider.
+sources_tests_llama = Glob("bin/obj/tests/native/backends/llama/*.cpp")
 
 # Tests compile under their own env. Built by one helper so the compiledb section
 # below mirrors the exact flags the real test build uses (clangd needs them too).
@@ -258,8 +269,11 @@ cmake_target = env.Command(
 if "compiledb" in COMMAND_LINE_TARGETS:
     env.Tool("compilation_db")
     compiledb = env.CompilationDatabase("compile_commands.json")
-    env.Object(sources_factory + sources_runtime + sources_echo + sources_llama + sources_godot)
-    make_test_env(env).Object(sources_tests)
+    env.Object(sources_core + sources_factory + sources_runtime + sources_echo + sources_godot)
+    with_llama_includes(env).Object(sources_llama)
+    compiledb_test_env = make_test_env(env)
+    compiledb_test_env.Object(sources_tests)
+    with_llama_includes(compiledb_test_env).Object(sources_tests_llama)
     Alias("compiledb", compiledb)
     Default(compiledb)
 
@@ -273,9 +287,11 @@ if "test" in COMMAND_LINE_TARGETS:
 
     test_env.Append(LIBS=llama_libs)
 
+    llama_test_objects = with_llama_includes(test_env).Object(sources_llama + sources_tests_llama)
+
     test_program = test_env.Program(
         target="bin/run_tests",
-        source=sources_echo + sources_llama + sources_factory + sources_runtime + sources_tests,
+        source=sources_echo + sources_core + sources_factory + sources_runtime + sources_tests + llama_test_objects,
     )
 
     test_env.Depends(test_program, cmake_target)
@@ -295,9 +311,11 @@ else:
     if sys.platform.startswith("linux"):
         env.Append(LINKFLAGS=["-Wl,--exclude-libs,ALL"])
 
+    llama_objects = with_llama_includes(env).SharedObject(sources_llama)
+
     library = env.SharedLibrary(
         target="bin/libgodot_chorus",
-        source=sources_echo + sources_llama + sources_factory + sources_runtime + sources_godot
+        source=sources_echo + sources_core + sources_factory + sources_runtime + sources_godot + llama_objects
     )
     env.Depends(library, cmake_target)
     Default(library)

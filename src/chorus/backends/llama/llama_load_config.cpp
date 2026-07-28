@@ -1,6 +1,7 @@
 #include "chorus/backends/llama/llama_load_config.hpp"
 
 #include <limits>
+#include <optional>
 #include <utility>
 
 namespace Chorus {
@@ -10,14 +11,117 @@ RequestRejection unsupported(std::string message) {
     return RequestRejection{ChorusError::UnsupportedOption, std::move(message)};
 }
 
-const int64_t* require_int64(const std::string& key, const OptionValue& value, RequestRejection& rejection) {
-    const auto* integer = std::get_if<int64_t>(&value);
-    if (!integer)
-        rejection = unsupported("Llama load option '" + key + "' must be an int64.");
-    return integer;
+const char* value_shape(const OptionValue& value) {
+    if (std::holds_alternative<bool>(value))
+        return "a bool";
+    if (std::holds_alternative<int64_t>(value))
+        return "an int64";
+    if (std::holds_alternative<double>(value))
+        return "a double";
+    if (std::holds_alternative<std::string>(value))
+        return "a string";
+    if (std::holds_alternative<OptionList>(value))
+        return "a list";
+    return "a map";
+}
+
+// Name and type agreement between the declared schema and what the parser
+// below will consume. Running it first means the value checks never see an
+// undeclared key, so a descriptor removed without its parse arm (or the
+// reverse) surfaces as a rejection rather than a silently ignored option.
+std::optional<RequestRejection> check_against_schema(const std::string& key, const OptionValue& value) {
+    for (const auto& descriptor : llama_load_option_descriptors()) {
+        if (descriptor.key != key)
+            continue;
+        if (value.index() != descriptor.default_value.index())
+            return unsupported(
+                "Llama load option '" + key + "' must be " + value_shape(descriptor.default_value) + "."
+            );
+        return std::nullopt;
+    }
+    return unsupported("Unknown llama load option '" + key + "'");
 }
 
 } // namespace
+
+const std::vector<OptionDescriptor>& llama_load_option_descriptors() {
+    static const std::vector<OptionDescriptor> descriptors = [] {
+        const LlamaLoadConfig d{};
+        return std::vector<OptionDescriptor>{
+            {"context_size",
+             "Context Size",
+             "Total context window in tokens, shared by all slots.",
+             int64_t{d.context_size},
+             128,
+             65536,
+             128,
+             std::nullopt},
+            {"thread_count",
+             "Thread Count",
+             "CPU threads available to inference.",
+             int64_t{d.thread_count},
+             1,
+             32,
+             1,
+             std::nullopt},
+            {"use_gpu",
+             "Use GPU",
+             "Allow GPU acceleration. Off guarantees CPU-only execution.",
+             d.use_gpu,
+             std::nullopt,
+             std::nullopt,
+             std::nullopt,
+             std::nullopt},
+            {"gpu_layers",
+             "GPU Layers",
+             "Model layers offloaded to the GPU. Zero means none, -1 means all.",
+             int64_t{d.gpu_layers},
+             -1,
+             999,
+             1,
+             "use_gpu"},
+            {"num_slots",
+             "Slots",
+             "Maximum number of concurrent conversations.",
+             int64_t{d.num_slots},
+             1,
+             32,
+             1,
+             std::nullopt},
+            {"tokens_per_tick",
+             "Tokens Per Tick",
+             "Prompt tokens consumed from each active conversation per scheduler pass.",
+             int64_t{d.tokens_per_tick},
+             1,
+             4096,
+             1,
+             std::nullopt},
+            // These two constrain each other -- n_ubatch must not exceed
+            // n_batch -- and a widget bound cannot depend on a sibling option's
+            // live value. So each bound tracks the other's default: the pair is
+            // freely adjustable within the declared ranges, and moving one past
+            // the other is a deliberate act that earns the backend's rejection.
+            {"n_batch",
+             "Batch Size",
+             "Maximum total tokens combined into one inference batch.",
+             int64_t{d.n_batch},
+             int64_t{d.n_ubatch},
+             65536,
+             1,
+             std::nullopt},
+            {"n_ubatch",
+             "Micro-Batch Size",
+             "Maximum physical sub-batch size. Must not exceed the batch size.",
+             int64_t{d.n_ubatch},
+             1,
+             int64_t{d.n_batch},
+             1,
+             std::nullopt},
+            {"main_gpu", "Main GPU", "Zero-based index of the primary GPU.", int64_t{d.main_gpu}, 0, 15, 1, "use_gpu"},
+        };
+    }();
+    return descriptors;
+}
 
 std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const ChorusConfig& config) {
     LlamaLoadConfig out;
@@ -41,6 +145,8 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
             return unsupported("'llama' options must be a map.");
 
         for (const auto& [key, option] : *opts) {
+            if (auto rejection = check_against_schema(key, option))
+                return *rejection;
             const auto* as_int = std::get_if<int64_t>(&option);
             const auto* as_bool = std::get_if<bool>(&option);
             if (key == "context_size" && as_int)
@@ -56,31 +162,19 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
                 out.num_slots = static_cast<uint32_t>(*as_int);
             else if (key == "tokens_per_tick" && as_int)
                 out.tokens_per_tick = static_cast<int32_t>(*as_int);
-            else if (key == "n_batch") {
-                RequestRejection rejection;
-                as_int = require_int64(key, option, rejection);
-                if (!as_int)
-                    return rejection;
+            else if (key == "n_batch" && as_int) {
                 if (*as_int <= 0)
                     return unsupported("Llama load option 'n_batch' must be greater than zero.");
                 if (*as_int > std::numeric_limits<int32_t>::max())
                     return unsupported("Llama load option 'n_batch' does not fit llama_batch_init's capacity.");
                 out.n_batch = static_cast<uint32_t>(*as_int);
-            } else if (key == "n_ubatch") {
-                RequestRejection rejection;
-                as_int = require_int64(key, option, rejection);
-                if (!as_int)
-                    return rejection;
+            } else if (key == "n_ubatch" && as_int) {
                 if (*as_int <= 0)
                     return unsupported("Llama load option 'n_ubatch' must be greater than zero.");
                 if (static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
                     return unsupported("Llama load option 'n_ubatch' does not fit llama_context_params::n_ubatch.");
                 out.n_ubatch = static_cast<uint32_t>(*as_int);
-            } else if (key == "main_gpu") {
-                RequestRejection rejection;
-                as_int = require_int64(key, option, rejection);
-                if (!as_int)
-                    return rejection;
+            } else if (key == "main_gpu" && as_int) {
                 if (*as_int < 0)
                     return unsupported("Llama load option 'main_gpu' must not be negative.");
                 if (*as_int > std::numeric_limits<int32_t>::max())
@@ -88,7 +182,10 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
                 out.main_gpu = static_cast<int32_t>(*as_int);
                 out.main_gpu_explicit = true;
             } else {
-                return unsupported("Unknown or mistyped llama load option '" + key + "'");
+                // The schema check settled name and type, so reaching here
+                // means a descriptor was declared without a parse arm. Never
+                // silently discard a control the schema advertises.
+                return unsupported("Llama load option '" + key + "' is declared but not applied; this is a bug.");
             }
         }
     }

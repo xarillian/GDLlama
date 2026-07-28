@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include <llama.h>
 
@@ -64,6 +65,15 @@ struct LlamaLoadConfig {
  * that list as "use no offload devices"; the storage must survive the model-load call.
  */
 using LlamaOffloadDeviceList = std::array<ggml_backend_dev_t, 1>;
+
+/**
+ * @brief Declares every load option this backend accepts, for hosts to render.
+ *
+ * Defaults come from a default-constructed LlamaLoadConfig, so the member
+ * initializers above stay the single source of truth. parse_llama_load_config
+ * rejects any key absent from this table, so the two cannot disagree on names.
+ */
+const std::vector<OptionDescriptor>& llama_load_option_descriptors();
 
 std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const ChorusConfig& config);
 llama_model_params make_llama_model_params(const LlamaLoadConfig& config, LlamaOffloadDeviceList& no_offload_devices);

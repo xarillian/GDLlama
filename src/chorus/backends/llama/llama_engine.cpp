@@ -113,6 +113,7 @@ EngineCapabilities LlamaEngine::capabilities() const {
     // native_sessions arrives with #9, embeddings with #6.
     caps.portable_generation_options = llama_portable_generation_option_names();
     caps.backend_generation_options = llama_backend_generation_option_names();
+    caps.load_options = llama_load_option_descriptors();
     return caps;
 }
 

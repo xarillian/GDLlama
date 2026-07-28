@@ -1898,16 +1898,16 @@ void test_multi_turn_conversation_stays_contextual() {
     Chorus::GenerationRequest turn1;
     turn1.prompt = "My name is Trebor. Remember my name.";
     turn1.session_id = "npc_1";
-    turn1.config.common.max_tokens = 48;
-    turn1.config.common.temperature = 0.0f; // greedy: deterministic recall
+    turn1.overrides.max_tokens = Chorus::OptionalPatch<int32_t>::set(48);
+    turn1.overrides.temperature = Chorus::OptionalPatch<float>::set(0.0f); // greedy: deterministic recall
     ASSERT_TRUE(runtime.submit(turn1).ok());
     ASSERT_TRUE(drain_runtime_until_terminal(runtime).terminal_kind == Chorus::RuntimeEvent::Kind::Complete);
 
     Chorus::GenerationRequest turn2;
     turn2.prompt = "What is my name? Answer with just the name.";
     turn2.session_id = "npc_1";
-    turn2.config.common.max_tokens = 24;
-    turn2.config.common.temperature = 0.0f;
+    turn2.overrides.max_tokens = Chorus::OptionalPatch<int32_t>::set(24);
+    turn2.overrides.temperature = Chorus::OptionalPatch<float>::set(0.0f);
     ASSERT_TRUE(runtime.submit(turn2).ok());
     auto drained = drain_runtime_until_terminal(runtime);
     ASSERT_TRUE(drained.terminal_kind == Chorus::RuntimeEvent::Kind::Complete);
@@ -1932,8 +1932,8 @@ void test_model_truncation_preserves_system_message() {
     }
     ASSERT_TRUE(!runtime.import_conversation_history("npc_1", std::move(history)).has_value());
 
-    Chorus::GenerationConfig gen;
-    gen.common.max_tokens = 64;
+    Chorus::GenerationConfigPatch gen;
+    gen.max_tokens = Chorus::OptionalPatch<int32_t>::set(64);
     auto fitted = runtime.render_prompt("npc_1", "", {}, gen);
     ASSERT_TRUE(fitted.has_value());
     ASSERT_TRUE(fitted->find("Brunn the blacksmith") != std::string::npos); // system pinned
@@ -1942,7 +1942,7 @@ void test_model_truncation_preserves_system_message() {
     Chorus::GenerationRequest turn;
     turn.prompt = "Who are you?";
     turn.session_id = "npc_1";
-    turn.config = gen;
+    turn.overrides = gen;
     ASSERT_TRUE(runtime.submit(turn).ok());
     auto drained = drain_runtime_until_terminal(runtime);
     ASSERT_TRUE(drained.terminal_kind == Chorus::RuntimeEvent::Kind::Complete);

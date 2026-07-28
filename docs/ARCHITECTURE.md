@@ -230,31 +230,6 @@ convention.
 change flow outward through the layers. Core changes are the most expensive
 kind; they are made deliberately and reviewed as contract changes.
 
-## Known deviations
-
-Places where the code has not caught up with this document. Each is product
-knowledge living in the Godot adapter that any second host would have to
-re-implement rather than merely translate:
-
-1. **Provider option schemas are hand-written in the host.**
-   `src/godot_chorus/llama_load_options.hpp` encodes llama's load-option
-   names, defaults, and editor ranges, which the configuration-metadata rule
-   above assigns to the provider's self-description. Resolution: extend
-   self-description to cover full option metadata; adapters then render
-   their settings surfaces from the declaration.
-2. **Ambient-defaults policy lives in the adapter.** The Godot node resolves
-   its ambient chat template only for sessioned requests, and strips an
-   ambient `thinking` default from stateless requests to avoid the
-   runtime's chat-controls rejection. Resolution: give the runtime a
-   host-defaults concept (the patch machinery already exists in core) so
-   ambient-versus-explicit resolution happens below the API.
-3. **`edit_message` is composed in the adapter.** The Godot adapter builds
-   it from export, mutate, and import. It is product vocabulary and belongs
-   on the runtime.
-
-The exit test for this list: a small CLI host over `ChorusRuntime`, written
-as pure translation with no policy, by reference to the public API alone.
-
 ## Source tree map
 
 Where each part of the graph lives:
