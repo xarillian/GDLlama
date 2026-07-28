@@ -1,54 +1,51 @@
-# Workflow Ignores
+# Local workflow and tooling
+/.cache/
+/.vscode/
+/AGENTS.md
+/CLAUDE.md
+/compile_commands.json
+/TODO.md
+
+# Build and generated directories
+/bin/
+/build/
+/build_release/
+/install/
+/out/
+
+# Excluded repository trees
 /demo/
 /old_src/
-TODO.md
-AGENTS.md
-CLAUDE.md
-
-# Test Models
+/plugin/addons/
+/tests/godot/.godot/
+/tests/godot/addons/
 /tests/models/
 
-# Build directories
-build/
-bin/
-build_release/
-install/
-out/
-
-# Editor & IDE specific files + Linter stuff
-.vscode/
-compile_commands.json
-/.cache
-
-# Compiled objects and libraries
-*.o
-*.os
-*.obj
-*.lo
-*.slo
-*.a
-*.lib
-*.la
-*.lai
-*.so
-*.dylib
-*.dll
-*.dblite
-*.uid
-.sconsign.dblite
-/plugin/addons/
-/plugin/addons/chorus/
-/tests/godot/addons/
-/tests/godot/.godot/
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Intermediate and language-specific files
+# Generated build artifacts
 *.d
 *.gch
-*.pch
 *.mod
+*.pch
 *.smod
+
+*.lo
+*.o
+*.obj
+*.os
+*.slo
+
+*.a
+*.la
+*.lai
+*.lib
+
+*.dll
+*.dylib
+*.so
+
+*.app/
+*.exe
+*.out
+
+*.dblite
+*.uid

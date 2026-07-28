@@ -58,7 +58,7 @@ struct HostDefaults {
 // What poll() returns. Post-policy, host-thread-safe.
 struct RuntimeEvent {
     enum class Kind { Token, ReasoningToken, Complete, Error, HistoryTruncated };
-    int64_t request_id;
+    RequestId request_id;
     std::optional<SessionId> session_id; // absent for stateless requests
     Kind kind;
     // A Token carries a safe text chunk and need not correspond to exactly one model token.
@@ -71,7 +71,7 @@ struct RuntimeEvent {
 // Synchronous submit outcome. error != None means no request was created and
 // request_id is -1.
 struct SubmitResult {
-    int64_t request_id = -1;
+    RequestId request_id = -1;
     ChorusError error = ChorusError::None;
     std::string message; // Human-readable rejection detail; empty on success.
     bool ok() const { return error == ChorusError::None; }
@@ -217,7 +217,7 @@ class ChorusRuntime {
 
     HostDefaults _host_defaults;
 
-    std::atomic<int64_t> _next_request_id{0};
+    std::atomic<RequestId> _next_request_id{0};
 
     // Written by engine threads via enqueue_signal, drained by poll().
     std::mutex _pending_mutex;

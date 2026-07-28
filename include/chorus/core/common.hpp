@@ -1,5 +1,4 @@
 #pragma once
-
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -13,8 +12,14 @@
 
 namespace Chorus {
 
+using RequestId = int64_t;
+using SessionId = std::string;
+
+// ---- Errors -----------------------------------------------------------------
+
 enum class ChorusError {
-    None,                   // No error
+    None,
+    Unknown,                // Catch-all for unexpected failures
     ModelLoad,              // Failed to load model file
     ContextInit,            // Failed to create inference context
     Decode,                 // Inference decode step failed
@@ -26,13 +31,28 @@ enum class ChorusError {
     UnsupportedFeature,     // Requested capability (constraint, modality, ...) not supported
     UnsupportedOption,      // A set option is unknown or not honored; never silently dropped
     SessionBusy,            // Session already has a live request
-    Unknown,                // Catch-all for unexpected failures
 };
 
+// Everything needed to bring an engine up: the model artifact to load and the
+// provider-specific options to load it with.
 struct ChorusConfig {
     ModelSpec model;
-    OptionMap backend_options; // engine-wide options, namespaced: backend_options["llama"]
-    LogCallback log_callback;  // optional; falls back to stderr if not set
+    OptionMap backend_options; // Engine-wide options, namespaced: backend_options["llama"]
+    LogCallback log_callback;  // Optional; falls back to stderr if not set
+};
+
+// An individual turn of a conversation.
+struct ChatMessage {
+    std::string role;
+    std::string content;
+};
+
+// A message spliced into a conversation at a fixed distance from its end.
+// depth == 0 lands after the last message, depth == N lands N messages earlier.
+// @todo this is a code smell. It should live deeper in the arch.
+struct InjectedMessage {
+    ChatMessage message;
+    int32_t depth = 0;
 };
 
 enum class EventType {
@@ -42,31 +62,15 @@ enum class EventType {
     Error,
 };
 
-enum class RequestType { Generate, Embedding };
-
-// OpenAI-style chat content (spec #5-A). Plain data; the engine renders it.
-struct ChatMessage {
-    std::string role;
-    std::string content;
-};
-
-// Per-request ephemeral message: placed into the fitted copy only, never
-// durable history. depth counts messages from the end (0 = just before the
-// assistant generation prefix).
-struct InjectedMessage {
-    ChatMessage message;
-    int32_t depth = 0;
-};
-
-// Reasoning pass-through (spec #5-B): thinking content is never merged into
-// response text. Engines tag Token signals with the channel they belong to.
 enum class TokenChannel { Content, Reasoning };
 
+// A single event in a request's lifetime.
 struct ChorusSignal {
-    int64_t request_id;
+    RequestId request_id;
     EventType type;
+    TokenChannel channel = TokenChannel::Content;
+
     ChorusError error_code = ChorusError::None;
-    TokenChannel channel = TokenChannel::Content; // meaningful on Token signals
 
     std::string text;
     std::vector<float> embedding;
@@ -75,28 +79,27 @@ struct ChorusSignal {
     bool is_embedding() const { return type == EventType::Embedding; }
 };
 
-using RequestId = int64_t;
-using SessionId = std::string;
+// ---- Requests ---------------------------------------------------------------
 
+enum class RequestType { Generate, Embedding };
+
+// One unit of work handed to an engine.
 struct ChorusRequest {
-    int64_t id;
-    int priority = 0;
-
-    // Caller-owned continuity lane. Engines must preserve it as request
-    // identity; they may use it only per declared native_sessions capability.
+    RequestId id;
     std::optional<SessionId> session_id;
 
-    RequestType type = RequestType::Generate; // Replaces 'bool is_embedding'
-
+    RequestType type = RequestType::Generate;
     std::string prompt;
-    // Non-empty => the engine renders these via chat template and ignores
-    // `prompt`. chat_template: optional override; empty = model's embedded.
+
+    int priority = 0;
+
     std::vector<ChatMessage> messages;
     std::string chat_template;
     GenerationConfig gen_config;
 
     std::function<void(ChorusSignal&)> on_event;
 
+    // Priority-queue ordering: higher priority is served first.
     bool operator<(const ChorusRequest& other) const { return priority < other.priority; }
 };
 } // namespace Chorus
