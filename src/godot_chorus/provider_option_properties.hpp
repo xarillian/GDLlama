@@ -8,7 +8,7 @@
 #include <godot_cpp/variant/variant.hpp>
 
 #include "chorus/core/capabilities.hpp"
-#include "chorus/core/options.hpp"
+#include "chorus/core/provider_option_value.hpp"
 
 // Godot's half of the option-schema seam: PropertyInfo and Variant translation
 // only. The provider owns option names, types, defaults, and bounds
@@ -23,10 +23,10 @@ using OptionDescriptors = std::vector<Chorus::OptionDescriptor>;
 // option that vanishes reads as a bug, one that greys out reads as a gate.
 godot::PropertyInfo property_info_for(const Chorus::OptionDescriptor& descriptor, bool enabled);
 
-godot::Variant option_value_to_variant(const Chorus::OptionValue& value);
+godot::Variant option_value_to_variant(const Chorus::ProviderOptionValue& value);
 
 // nullopt when the Variant cannot be the shape the descriptor declares.
-std::optional<Chorus::OptionValue>
+std::optional<Chorus::ProviderOptionValue>
 coerce_to_descriptor(const Chorus::OptionDescriptor& descriptor, const godot::Variant& value);
 
 } // namespace godot_chorus

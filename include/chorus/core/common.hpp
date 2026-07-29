@@ -8,7 +8,7 @@
 #include "chorus/core/generation_config.hpp"
 #include "chorus/core/log.hpp"
 #include "chorus/core/model_spec.hpp"
-#include "chorus/core/options.hpp"
+#include "chorus/core/provider_option_value.hpp"
 
 namespace Chorus {
 
@@ -37,8 +37,8 @@ enum class ChorusError {
  */
 struct ChorusConfig {
     InitialModelSpec model;
-    OptionMap provider_options; // Engine-wide options, namespaced: provider_options["llama"]
-    LogCallback log_callback;   // Optional; falls back to stderr if not set
+    ProviderOptionMap provider_options; // Engine-wide options, namespaced: provider_options["llama"]
+    LogCallback log_callback;           // Optional; falls back to stderr if not set
 };
 
 /// An individual turn of a conversation.

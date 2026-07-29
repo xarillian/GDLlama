@@ -23,7 +23,7 @@ String range_hint(const Chorus::OptionDescriptor& descriptor) {
     return hint + ",or_greater";
 }
 
-Variant::Type variant_type_for(const Chorus::OptionValue& value) {
+Variant::Type variant_type_for(const Chorus::ProviderOptionValue& value) {
     if (std::holds_alternative<bool>(value))
         return Variant::BOOL;
     if (std::holds_alternative<int64_t>(value))
@@ -32,7 +32,7 @@ Variant::Type variant_type_for(const Chorus::OptionValue& value) {
         return Variant::FLOAT;
     if (std::holds_alternative<std::string>(value))
         return Variant::STRING;
-    if (std::holds_alternative<Chorus::OptionList>(value))
+    if (std::holds_alternative<Chorus::ProviderOptionList>(value))
         return Variant::ARRAY;
     return Variant::DICTIONARY;
 }
@@ -54,7 +54,7 @@ PropertyInfo property_info_for(const Chorus::OptionDescriptor& descriptor, bool 
     );
 }
 
-Variant option_value_to_variant(const Chorus::OptionValue& value) {
+Variant option_value_to_variant(const Chorus::ProviderOptionValue& value) {
     if (const auto* as_bool = std::get_if<bool>(&value))
         return Variant(*as_bool);
     if (const auto* as_int = std::get_if<int64_t>(&value))
@@ -69,27 +69,27 @@ Variant option_value_to_variant(const Chorus::OptionValue& value) {
     return Variant();
 }
 
-std::optional<Chorus::OptionValue>
+std::optional<Chorus::ProviderOptionValue>
 coerce_to_descriptor(const Chorus::OptionDescriptor& descriptor, const Variant& value) {
     switch (variant_type_for(descriptor.default_value)) {
     case Variant::BOOL:
         if (value.get_type() != Variant::BOOL)
             return std::nullopt;
-        return Chorus::OptionValue{(bool)value};
+        return Chorus::ProviderOptionValue{(bool)value};
     case Variant::INT:
         // GDScript writes a float for any literal carrying a decimal point;
         // through the inspector an int option always arrives as INT.
         if (value.get_type() != Variant::INT && value.get_type() != Variant::FLOAT)
             return std::nullopt;
-        return Chorus::OptionValue{(int64_t)value};
+        return Chorus::ProviderOptionValue{(int64_t)value};
     case Variant::FLOAT:
         if (value.get_type() != Variant::INT && value.get_type() != Variant::FLOAT)
             return std::nullopt;
-        return Chorus::OptionValue{(double)value};
+        return Chorus::ProviderOptionValue{(double)value};
     case Variant::STRING:
         if (value.get_type() != Variant::STRING)
             return std::nullopt;
-        return Chorus::OptionValue{std::string(((String)value).utf8().get_data())};
+        return Chorus::ProviderOptionValue{std::string(((String)value).utf8().get_data())};
     default:
         return std::nullopt;
     }

@@ -1,5 +1,5 @@
-#include "chorus/providers/echo/echo_engine.hpp"
 #include "chorus/core/common.hpp"
+#include "chorus/providers/echo/echo_engine.hpp"
 #include "test_utils.hpp"
 
 #include <atomic>
@@ -130,7 +130,7 @@ void test_echo_ignores_content_controls_with_one_warning() {
     req.prompt = "hi";
     req.gen_config.temperature = 0.5f;
     req.gen_config.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= \"x\""};
-    req.gen_config.provider_options["llama"] = Chorus::OptionMap{{"repeat_penalty", 1.1}};
+    req.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"repeat_penalty", 1.1}};
     ASSERT_TRUE(!engine.validate_request(req).has_value());
 
     // Second sighting stays quiet: one warning per engine lifetime.
@@ -141,7 +141,7 @@ void test_echo_ignores_content_controls_with_one_warning() {
     req = {};
     req.id = 3;
     req.prompt = "hi";
-    req.gen_config.provider_options["echo"] = Chorus::OptionMap{{"volume", int64_t{11}}};
+    req.gen_config.provider_options["echo"] = Chorus::ProviderOptionMap{{"volume", int64_t{11}}};
     auto rejection = engine.validate_request(req);
     ASSERT_TRUE(rejection.has_value());
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);

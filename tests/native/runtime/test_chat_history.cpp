@@ -512,7 +512,8 @@ void test_request_overrides_layer_onto_host_defaults() {
     Chorus::HostDefaults defaults;
     defaults.config.max_tokens = Chorus::ConfigPatch<int32_t>::set(128);
     defaults.config.temperature = Chorus::ConfigPatch<float>::set(0.7f);
-    defaults.config.provider_options = Chorus::OptionMap{{"llama", Chorus::OptionMap{{"repeat_penalty", 1.1}}}};
+    defaults.config.provider_options =
+        Chorus::ProviderOptionMap{{"llama", Chorus::ProviderOptionMap{{"repeat_penalty", 1.1}}}};
     runtime.set_host_defaults(defaults);
 
     Chorus::GenerationRequest request;
@@ -525,7 +526,7 @@ void test_request_overrides_layer_onto_host_defaults() {
     ASSERT_EQ(*config.max_tokens, 32);
     ASSERT_TRUE(config.temperature.has_value()); // untouched default survives
     ASSERT_TRUE(*config.temperature == 0.7f);
-    const auto& llama = std::get<Chorus::OptionMap>(config.provider_options.at("llama"));
+    const auto& llama = std::get<Chorus::ProviderOptionMap>(config.provider_options.at("llama"));
     ASSERT_TRUE(llama.find("repeat_penalty") == llama.end());
 }
 

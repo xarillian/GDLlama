@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chorus/core/options.hpp"
+#include "chorus/core/provider_option_value.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -49,7 +49,7 @@ struct InitialModelSpec {
     std::string model_id; // Caller-selected model name, e.g. "gpt-3.5-turbo"
     ModelFormat format = ModelFormat::Auto;
     std::vector<ModelAsset> assets;
-    OptionMap provider_options;
+    ProviderOptionMap provider_options;
 };
 
 } // namespace Chorus

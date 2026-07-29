@@ -17,7 +17,7 @@
 namespace Chorus {
 namespace {
 
-enum class OptionValueKind { Int64, Double, Bool, StringList, Map };
+enum class ProviderOptionValueKind { Int64, Double, Bool, StringList, Map };
 
 enum class RangePolicy {
     Boolean,
@@ -61,7 +61,7 @@ enum class TargetMember {
 
 struct OptionDescriptor {
     const char* public_key;
-    OptionValueKind value_kind;
+    ProviderOptionValueKind value_kind;
     RangePolicy range_policy;
     TargetMember target_member;
 };
@@ -80,54 +80,60 @@ constexpr std::array<const char*, 10> kCommonOptions{
 };
 
 constexpr std::array<OptionDescriptor, 23> kProviderOptions{{
-    {"min_keep", OptionValueKind::Int64, RangePolicy::NonnegativeInt32, TargetMember::MinKeep},
-    {"min_p", OptionValueKind::Double, RangePolicy::Probability, TargetMember::MinP},
-    {"typical_p", OptionValueKind::Double, RangePolicy::Probability, TargetMember::TypicalP},
+    {"min_keep", ProviderOptionValueKind::Int64, RangePolicy::NonnegativeInt32, TargetMember::MinKeep},
+    {"min_p", ProviderOptionValueKind::Double, RangePolicy::Probability, TargetMember::MinP},
+    {"typical_p", ProviderOptionValueKind::Double, RangePolicy::Probability, TargetMember::TypicalP},
     {"dynamic_temperature_range",
-     OptionValueKind::Double,
+     ProviderOptionValueKind::Double,
      RangePolicy::NonnegativeFloat,
      TargetMember::DynamicTemperatureRange},
     {"dynamic_temperature_exponent",
-     OptionValueKind::Double,
+     ProviderOptionValueKind::Double,
      RangePolicy::FiniteFloat,
      TargetMember::DynamicTemperatureExponent},
-    {"penalty_last_n", OptionValueKind::Int64, RangePolicy::SentinelInt32, TargetMember::PenaltyLastN},
-    {"repeat_penalty", OptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::RepeatPenalty},
-    {"ignore_eos", OptionValueKind::Bool, RangePolicy::Boolean, TargetMember::IgnoreEos},
-    {"mirostat", OptionValueKind::Int64, RangePolicy::Mirostat, TargetMember::Mirostat},
-    {"mirostat_tau", OptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::MirostatTau},
-    {"mirostat_eta", OptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::MirostatEta},
-    {"xtc_probability", OptionValueKind::Double, RangePolicy::Probability, TargetMember::XtcProbability},
-    {"xtc_threshold", OptionValueKind::Double, RangePolicy::Probability, TargetMember::XtcThreshold},
-    {"dry_multiplier", OptionValueKind::Double, RangePolicy::NonnegativeFloat, TargetMember::DryMultiplier},
-    {"dry_base", OptionValueKind::Double, RangePolicy::DryBase, TargetMember::DryBase},
-    {"dry_allowed_length", OptionValueKind::Int64, RangePolicy::NonnegativeInt32, TargetMember::DryAllowedLength},
-    {"dry_penalty_last_n", OptionValueKind::Int64, RangePolicy::SentinelInt32, TargetMember::DryPenaltyLastN},
-    {"dry_sequence_breakers", OptionValueKind::StringList, RangePolicy::StringList, TargetMember::DrySequenceBreakers},
-    {"sampler_order", OptionValueKind::StringList, RangePolicy::StringList, TargetMember::SamplerOrder},
-    {"logit_bias", OptionValueKind::Map, RangePolicy::FiniteFloat, TargetMember::LogitBias},
-    {"top_n_sigma", OptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::TopNSigma},
-    {"adaptive_target", OptionValueKind::Double, RangePolicy::AdaptiveTarget, TargetMember::AdaptiveTarget},
-    {"adaptive_decay", OptionValueKind::Double, RangePolicy::AdaptiveDecay, TargetMember::AdaptiveDecay},
+    {"penalty_last_n", ProviderOptionValueKind::Int64, RangePolicy::SentinelInt32, TargetMember::PenaltyLastN},
+    {"repeat_penalty", ProviderOptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::RepeatPenalty},
+    {"ignore_eos", ProviderOptionValueKind::Bool, RangePolicy::Boolean, TargetMember::IgnoreEos},
+    {"mirostat", ProviderOptionValueKind::Int64, RangePolicy::Mirostat, TargetMember::Mirostat},
+    {"mirostat_tau", ProviderOptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::MirostatTau},
+    {"mirostat_eta", ProviderOptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::MirostatEta},
+    {"xtc_probability", ProviderOptionValueKind::Double, RangePolicy::Probability, TargetMember::XtcProbability},
+    {"xtc_threshold", ProviderOptionValueKind::Double, RangePolicy::Probability, TargetMember::XtcThreshold},
+    {"dry_multiplier", ProviderOptionValueKind::Double, RangePolicy::NonnegativeFloat, TargetMember::DryMultiplier},
+    {"dry_base", ProviderOptionValueKind::Double, RangePolicy::DryBase, TargetMember::DryBase},
+    {"dry_allowed_length",
+     ProviderOptionValueKind::Int64,
+     RangePolicy::NonnegativeInt32,
+     TargetMember::DryAllowedLength},
+    {"dry_penalty_last_n", ProviderOptionValueKind::Int64, RangePolicy::SentinelInt32, TargetMember::DryPenaltyLastN},
+    {"dry_sequence_breakers",
+     ProviderOptionValueKind::StringList,
+     RangePolicy::StringList,
+     TargetMember::DrySequenceBreakers},
+    {"sampler_order", ProviderOptionValueKind::StringList, RangePolicy::StringList, TargetMember::SamplerOrder},
+    {"logit_bias", ProviderOptionValueKind::Map, RangePolicy::FiniteFloat, TargetMember::LogitBias},
+    {"top_n_sigma", ProviderOptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::TopNSigma},
+    {"adaptive_target", ProviderOptionValueKind::Double, RangePolicy::AdaptiveTarget, TargetMember::AdaptiveTarget},
+    {"adaptive_decay", ProviderOptionValueKind::Double, RangePolicy::AdaptiveDecay, TargetMember::AdaptiveDecay},
 }};
 
-const char* expected_type(OptionValueKind kind) {
+const char* expected_type(ProviderOptionValueKind kind) {
     switch (kind) {
-    case OptionValueKind::Int64:
+    case ProviderOptionValueKind::Int64:
         return "int64";
-    case OptionValueKind::Double:
+    case ProviderOptionValueKind::Double:
         return "double";
-    case OptionValueKind::Bool:
+    case ProviderOptionValueKind::Bool:
         return "bool";
-    case OptionValueKind::StringList:
+    case ProviderOptionValueKind::StringList:
         return "string list";
-    case OptionValueKind::Map:
+    case ProviderOptionValueKind::Map:
         return "map";
     }
     return "unknown";
 }
 
-std::string received_type(const OptionValue& value) {
+std::string received_type(const ProviderOptionValue& value) {
     if (std::holds_alternative<bool>(value))
         return "bool";
     if (std::holds_alternative<int64_t>(value))
@@ -136,7 +142,7 @@ std::string received_type(const OptionValue& value) {
         return "double";
     if (std::holds_alternative<std::string>(value))
         return "string";
-    if (std::holds_alternative<OptionList>(value))
+    if (std::holds_alternative<ProviderOptionList>(value))
         return "list";
     return "map";
 }
@@ -191,16 +197,16 @@ const OptionDescriptor* find_descriptor(const std::string& key) {
     return nullptr;
 }
 
-bool matches_kind(const OptionValue& value, OptionValueKind kind) {
+bool matches_kind(const ProviderOptionValue& value, ProviderOptionValueKind kind) {
     switch (kind) {
-    case OptionValueKind::Int64:
+    case ProviderOptionValueKind::Int64:
         return std::holds_alternative<int64_t>(value);
-    case OptionValueKind::Double:
+    case ProviderOptionValueKind::Double:
         return std::holds_alternative<double>(value);
-    case OptionValueKind::Bool:
+    case ProviderOptionValueKind::Bool:
         return std::holds_alternative<bool>(value);
-    case OptionValueKind::StringList: {
-        const auto* list = std::get_if<OptionList>(&value);
+    case ProviderOptionValueKind::StringList: {
+        const auto* list = std::get_if<ProviderOptionList>(&value);
         if (!list)
             return false;
         for (const auto& item : *list) {
@@ -209,8 +215,8 @@ bool matches_kind(const OptionValue& value, OptionValueKind kind) {
         }
         return true;
     }
-    case OptionValueKind::Map:
-        return std::holds_alternative<OptionMap>(value);
+    case ProviderOptionValueKind::Map:
+        return std::holds_alternative<ProviderOptionMap>(value);
     }
     return false;
 }
@@ -235,7 +241,7 @@ std::optional<common_sampler_type> sampler_type_for_name(const std::string& name
     return std::nullopt;
 }
 
-std::optional<RequestRejection> apply_sampler_order(common_params_sampling& sampling, const OptionList& order) {
+std::optional<RequestRejection> apply_sampler_order(common_params_sampling& sampling, const ProviderOptionList& order) {
     if (order.empty())
         return std::nullopt;
 
@@ -270,7 +276,7 @@ std::optional<RequestRejection> apply_sampler_order(common_params_sampling& samp
     return std::nullopt;
 }
 
-std::optional<RequestRejection> apply_logit_bias(common_params_sampling& sampling, const OptionMap& values) {
+std::optional<RequestRejection> apply_logit_bias(common_params_sampling& sampling, const ProviderOptionMap& values) {
     std::vector<llama_logit_bias> biases;
     biases.reserve(values.size());
     for (const auto& [token_text, value] : values) {
@@ -433,8 +439,9 @@ void assign_bool(common_params_sampling& sampling, TargetMember target, bool val
     }
 }
 
-std::optional<RequestRejection>
-apply_provider_option(ResolvedLlamaGeneration& resolved, const OptionDescriptor& descriptor, const OptionValue& value) {
+std::optional<RequestRejection> apply_provider_option(
+    ResolvedLlamaGeneration& resolved, const OptionDescriptor& descriptor, const ProviderOptionValue& value
+) {
     if (!matches_kind(value, descriptor.value_kind)) {
         return option_rejection(
             "llama",
@@ -446,12 +453,12 @@ apply_provider_option(ResolvedLlamaGeneration& resolved, const OptionDescriptor&
     }
 
     if (descriptor.target_member == TargetMember::SamplerOrder)
-        return apply_sampler_order(resolved.sampling, std::get<OptionList>(value));
+        return apply_sampler_order(resolved.sampling, std::get<ProviderOptionList>(value));
     if (descriptor.target_member == TargetMember::LogitBias)
-        return apply_logit_bias(resolved.sampling, std::get<OptionMap>(value));
+        return apply_logit_bias(resolved.sampling, std::get<ProviderOptionMap>(value));
 
     switch (descriptor.value_kind) {
-    case OptionValueKind::Int64: {
+    case ProviderOptionValueKind::Int64: {
         const auto integer = std::get<int64_t>(value);
         if (!integer_in_range(integer, descriptor.range_policy)) {
             return option_rejection(
@@ -465,7 +472,7 @@ apply_provider_option(ResolvedLlamaGeneration& resolved, const OptionDescriptor&
         assign_integer(resolved.sampling, descriptor.target_member, static_cast<int32_t>(integer));
         return std::nullopt;
     }
-    case OptionValueKind::Double: {
+    case ProviderOptionValueKind::Double: {
         const auto number = std::get<double>(value);
         if (!double_in_range(number, descriptor.range_policy)) {
             return option_rejection(
@@ -479,17 +486,17 @@ apply_provider_option(ResolvedLlamaGeneration& resolved, const OptionDescriptor&
         assign_double(resolved.sampling, descriptor.target_member, static_cast<float>(number));
         return std::nullopt;
     }
-    case OptionValueKind::Bool:
+    case ProviderOptionValueKind::Bool:
         assign_bool(resolved.sampling, descriptor.target_member, std::get<bool>(value));
         return std::nullopt;
-    case OptionValueKind::StringList: {
+    case ProviderOptionValueKind::StringList: {
         std::vector<std::string> breakers;
-        for (const auto& item : std::get<OptionList>(value))
+        for (const auto& item : std::get<ProviderOptionList>(value))
             breakers.push_back(std::get<std::string>(item));
         resolved.sampling.dry_sequence_breakers = std::move(breakers);
         return std::nullopt;
     }
-    case OptionValueKind::Map:
+    case ProviderOptionValueKind::Map:
         return std::nullopt;
     }
     return std::nullopt;
@@ -586,7 +593,7 @@ std::variant<ResolvedLlamaGeneration, RequestRejection> resolve_llama_generation
                 "catalogued namespace"
             );
         }
-        const auto* options = std::get_if<OptionMap>(&namespace_value);
+        const auto* options = std::get_if<ProviderOptionMap>(&namespace_value);
         if (!options) {
             return option_rejection(
                 "llama", "<namespace>", "map", received_type(namespace_value), "map of catalogued options"
@@ -601,7 +608,7 @@ std::variant<ResolvedLlamaGeneration, RequestRejection> resolve_llama_generation
             }
             if (auto rejection = apply_provider_option(resolved, *descriptor, value))
                 return *rejection;
-            if (key == "sampler_order" && !std::get<OptionList>(value).empty())
+            if (key == "sampler_order" && !std::get<ProviderOptionList>(value).empty())
                 has_custom_sampler_order = true;
         }
     }

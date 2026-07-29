@@ -39,7 +39,7 @@ void test_option_schema_fills_declared_defaults() {
 
 void test_option_schema_stored_value_beats_default() {
     const auto descriptors = schema();
-    Chorus::OptionMap stored{{"threads", int64_t{16}}};
+    Chorus::ProviderOptionMap stored{{"threads", int64_t{16}}};
 
     const auto resolved = Chorus::resolve_option_defaults(descriptors, stored);
     ASSERT_EQ(std::get<int64_t>(resolved.at("threads")), int64_t{16});
@@ -48,7 +48,7 @@ void test_option_schema_stored_value_beats_default() {
 
 void test_option_schema_drops_gated_off_options() {
     const auto descriptors = schema();
-    Chorus::OptionMap stored{{"use_gpu", false}, {"gpu_index", int64_t{3}}};
+    Chorus::ProviderOptionMap stored{{"use_gpu", false}, {"gpu_index", int64_t{3}}};
 
     const auto resolved = Chorus::resolve_option_defaults(descriptors, stored);
     ASSERT_TRUE(resolved.find("gpu_index") == resolved.end());
@@ -67,7 +67,7 @@ void test_option_schema_gate_naming_unknown_option_disables() {
 
 void test_option_schema_ignores_keys_outside_the_declaration() {
     const auto descriptors = schema();
-    Chorus::OptionMap stored{{"threads", int64_t{8}}, {"leftover_from_another_provider", int64_t{1}}};
+    Chorus::ProviderOptionMap stored{{"threads", int64_t{8}}, {"leftover_from_another_provider", int64_t{1}}};
 
     const auto resolved = Chorus::resolve_option_defaults(descriptors, stored);
     ASSERT_EQ(std::get<int64_t>(resolved.at("threads")), int64_t{8});

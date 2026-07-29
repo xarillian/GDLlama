@@ -204,7 +204,7 @@ class GodotChorus : public godot::Node {
     // forth in a session keeps a configuration. A scene save does not: only
     // the selected provider's options are listed as properties, so only they
     // persist.
-    Chorus::OptionMap _load_options;
+    Chorus::ProviderOptionMap _load_options;
     mutable Chorus::EngineCapabilities _cached_capabilities;
     mutable std::optional<ProviderChoice> _cached_capabilities_provider;
 

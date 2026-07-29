@@ -139,9 +139,9 @@ std::optional<String> apply_constraint_overlay(const Dictionary& request, Chorus
 }
 
 // ===========================================================================
-// provider_options: recursive namespace merge into the patch's OptionMap. A
+// provider_options: recursive namespace merge into the patch's ProviderOptionMap. A
 // nested Dictionary deep-merges; any other value overwrites the leaf via
-// option_conversion's Variant->OptionValue. A null leaf records a dotted
+// option_conversion's Variant->ProviderOptionValue. A null leaf records a dotted
 // erasure path instead of a value: the layer it has to remove lives below the
 // patch, in the runtime's host defaults, so the removal travels as an
 // instruction rather than happening here.
@@ -149,7 +149,7 @@ std::optional<String> apply_constraint_overlay(const Dictionary& request, Chorus
 
 std::optional<String> merge_provider_dictionary_overrides(
     Chorus::GenerationConfigPatch& patch,
-    Chorus::OptionMap& target,
+    Chorus::ProviderOptionMap& target,
     const std::string& prefix,
     const Dictionary& overrides
 ) {
@@ -169,12 +169,12 @@ std::optional<String> merge_provider_dictionary_overrides(
 
         if (value.get_type() == Variant::DICTIONARY) {
             const auto existing = target.find(key);
-            Chorus::OptionMap* nested;
-            if (existing != target.end() && std::holds_alternative<Chorus::OptionMap>(existing->second)) {
-                nested = &std::get<Chorus::OptionMap>(existing->second);
+            Chorus::ProviderOptionMap* nested;
+            if (existing != target.end() && std::holds_alternative<Chorus::ProviderOptionMap>(existing->second)) {
+                nested = &std::get<Chorus::ProviderOptionMap>(existing->second);
             } else {
-                const auto [it, inserted] = target.insert_or_assign(key, Chorus::OptionMap{});
-                nested = &std::get<Chorus::OptionMap>(it->second);
+                const auto [it, inserted] = target.insert_or_assign(key, Chorus::ProviderOptionMap{});
+                nested = &std::get<Chorus::ProviderOptionMap>(it->second);
             }
             if (auto error = merge_provider_dictionary_overrides(patch, *nested, path, (Dictionary)value))
                 return error;
@@ -202,12 +202,12 @@ void drop_erasure(Chorus::GenerationConfigPatch& patch, const std::string& path)
     paths.erase(std::remove(paths.begin(), paths.end(), path), paths.end());
 }
 
-Chorus::OptionMap& llama_namespace(Chorus::OptionMap& provider) {
+Chorus::ProviderOptionMap& llama_namespace(Chorus::ProviderOptionMap& provider) {
     const auto existing = provider.find("llama");
-    if (existing != provider.end() && std::holds_alternative<Chorus::OptionMap>(existing->second))
-        return std::get<Chorus::OptionMap>(existing->second);
-    const auto [it, inserted] = provider.insert_or_assign("llama", Chorus::OptionMap{});
-    return std::get<Chorus::OptionMap>(it->second);
+    if (existing != provider.end() && std::holds_alternative<Chorus::ProviderOptionMap>(existing->second))
+        return std::get<Chorus::ProviderOptionMap>(existing->second);
+    const auto [it, inserted] = provider.insert_or_assign("llama", Chorus::ProviderOptionMap{});
+    return std::get<Chorus::ProviderOptionMap>(it->second);
 }
 
 std::optional<String>

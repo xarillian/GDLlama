@@ -11,7 +11,7 @@ RequestRejection unsupported(std::string message) {
     return RequestRejection{ChorusError::UnsupportedOption, std::move(message)};
 }
 
-const char* value_shape(const OptionValue& value) {
+const char* value_shape(const ProviderOptionValue& value) {
     if (std::holds_alternative<bool>(value))
         return "a bool";
     if (std::holds_alternative<int64_t>(value))
@@ -20,7 +20,7 @@ const char* value_shape(const OptionValue& value) {
         return "a double";
     if (std::holds_alternative<std::string>(value))
         return "a string";
-    if (std::holds_alternative<OptionList>(value))
+    if (std::holds_alternative<ProviderOptionList>(value))
         return "a list";
     return "a map";
 }
@@ -29,7 +29,7 @@ const char* value_shape(const OptionValue& value) {
 // below will consume. Running it first means the value checks never see an
 // undeclared key, so a descriptor removed without its parse arm (or the
 // reverse) surfaces as a rejection rather than a silently ignored option.
-std::optional<RequestRejection> check_against_schema(const std::string& key, const OptionValue& value) {
+std::optional<RequestRejection> check_against_schema(const std::string& key, const ProviderOptionValue& value) {
     for (const auto& descriptor : llama_load_option_descriptors()) {
         if (descriptor.key != key)
             continue;
@@ -140,7 +140,7 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
     for (const auto& [ns, value] : config.provider_options) {
         if (ns != "llama")
             return unsupported("Unknown option namespace '" + ns + "'");
-        const auto* opts = std::get_if<OptionMap>(&value);
+        const auto* opts = std::get_if<ProviderOptionMap>(&value);
         if (!opts)
             return unsupported("'llama' options must be a map.");
 

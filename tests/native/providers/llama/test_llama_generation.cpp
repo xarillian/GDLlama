@@ -40,18 +40,18 @@ template <typename Configure, typename Check> void check_resolution(Configure co
 }
 
 template <typename Check>
-void check_provider_resolution(const std::string& key, Chorus::OptionValue value, Check check) {
+void check_provider_resolution(const std::string& key, Chorus::ProviderOptionValue value, Check check) {
     check_resolution(
         [&](Chorus::GenerationConfig& config) {
-            config.provider_options["llama"] = Chorus::OptionMap{{key, std::move(value)}};
+            config.provider_options["llama"] = Chorus::ProviderOptionMap{{key, std::move(value)}};
         },
         check
     );
 }
 
-Chorus::RequestRejection rejection_for(const std::string& key, Chorus::OptionValue value) {
+Chorus::RequestRejection rejection_for(const std::string& key, Chorus::ProviderOptionValue value) {
     Chorus::GenerationConfig config;
-    config.provider_options["llama"] = Chorus::OptionMap{{key, std::move(value)}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{key, std::move(value)}};
     auto result = Chorus::resolve_llama_generation(config);
     if (!std::holds_alternative<Chorus::RequestRejection>(result)) {
         std::cerr << RED << "[FAILED] expected rejection for " << key << RESET << std::endl;
@@ -177,7 +177,7 @@ void test_llama_generation_resolves_provider_floats() {
 }
 
 void test_llama_generation_resolves_string_list() {
-    Chorus::OptionList breakers{std::string("\n\n"), std::string("###")};
+    Chorus::ProviderOptionList breakers{std::string("\n\n"), std::string("###")};
     check_provider_resolution("dry_sequence_breakers", breakers, [](const auto& v) {
         ASSERT_TRUE(v.sampling.dry_sequence_breakers == std::vector<std::string>({"\n\n", "###"}));
     });
@@ -258,7 +258,7 @@ void test_llama_generation_rejects_wrong_type_and_unknown_key() {
     ASSERT_TRUE(unknown.message.find("llama") != std::string::npos);
     ASSERT_TRUE(unknown.message.find("warp_factor") != std::string::npos);
 
-    Chorus::OptionList mixed{std::string("ok"), int64_t{2}};
+    Chorus::ProviderOptionList mixed{std::string("ok"), int64_t{2}};
     auto list = rejection_for("dry_sequence_breakers", mixed);
     ASSERT_TRUE(list.message.find("string list") != std::string::npos);
     ASSERT_TRUE(list.message.find("list containing only strings") != std::string::npos);
@@ -269,7 +269,7 @@ void test_llama_generation_rejects_wrong_type_and_unknown_key() {
 
 void test_llama_generation_rejects_namespace_errors() {
     Chorus::GenerationConfig config;
-    config.provider_options["alpaca"] = Chorus::OptionMap{};
+    config.provider_options["alpaca"] = Chorus::ProviderOptionMap{};
     auto unknown = Chorus::resolve_llama_generation(config);
     ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(unknown));
     ASSERT_TRUE(std::get<Chorus::RequestRejection>(unknown).message.find("alpaca") != std::string::npos);
@@ -323,7 +323,7 @@ void test_llama_generation_rejects_nonfinite_scalars() {
 }
 
 void test_llama_generation_resolves_canonical_sampler_order() {
-    Chorus::OptionList order{
+    Chorus::ProviderOptionList order{
         "penalties",
         "dry",
         "top_n_sigma",
@@ -357,30 +357,32 @@ void test_llama_generation_preserves_default_sampler_order_when_absent_or_empty(
     check_resolution(
         [](auto&) {}, [&](const auto& value) { ASSERT_TRUE(value.sampling.samplers == defaults.samplers); }
     );
-    check_provider_resolution("sampler_order", Chorus::OptionList{}, [&](const auto& value) {
+    check_provider_resolution("sampler_order", Chorus::ProviderOptionList{}, [&](const auto& value) {
         ASSERT_TRUE(value.sampling.samplers == defaults.samplers);
     });
 }
 
 void test_llama_generation_rejects_invalid_sampler_order() {
     for (const std::string& name : {"top-k", "topk", "nucleus", "temp", "infill", "TOP_K", "warp"}) {
-        auto rejection = rejection_for("sampler_order", Chorus::OptionList{name});
+        auto rejection = rejection_for("sampler_order", Chorus::ProviderOptionList{name});
         ASSERT_TRUE(rejection.message.find(name) != std::string::npos);
     }
 
     auto duplicate = rejection_for(
-        "sampler_order", Chorus::OptionList{std::string("top_k"), std::string("top_k"), std::string("temperature")}
+        "sampler_order",
+        Chorus::ProviderOptionList{std::string("top_k"), std::string("top_k"), std::string("temperature")}
     );
     ASSERT_TRUE(duplicate.message.find("duplicate") != std::string::npos);
 
-    auto adaptive_not_last =
-        rejection_for("sampler_order", Chorus::OptionList{std::string("adaptive_p"), std::string("temperature")});
+    auto adaptive_not_last = rejection_for(
+        "sampler_order", Chorus::ProviderOptionList{std::string("adaptive_p"), std::string("temperature")}
+    );
     ASSERT_TRUE(adaptive_not_last.message.find("last") != std::string::npos);
 
     Chorus::GenerationConfig mirostat_config;
-    mirostat_config.provider_options["llama"] = Chorus::OptionMap{
+    mirostat_config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"mirostat", int64_t{1}},
-        {"sampler_order", Chorus::OptionList{std::string("temperature")}},
+        {"sampler_order", Chorus::ProviderOptionList{std::string("temperature")}},
     };
     auto mirostat = Chorus::resolve_llama_generation(mirostat_config);
     ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(mirostat));
@@ -388,7 +390,7 @@ void test_llama_generation_rejects_invalid_sampler_order() {
 }
 
 void test_llama_generation_resolves_decimal_logit_bias() {
-    Chorus::OptionMap biases{{"0", 1.25}, {"17", -2.5}, {"2147483647", 0.0}};
+    Chorus::ProviderOptionMap biases{{"0", 1.25}, {"17", -2.5}, {"2147483647", 0.0}};
     check_provider_resolution("logit_bias", biases, [](const auto& value) {
         ASSERT_EQ(value.sampling.logit_bias.size(), size_t{3});
         const auto* zero = find_logit_bias(value.sampling, 0);
@@ -405,14 +407,15 @@ void test_llama_generation_resolves_decimal_logit_bias() {
 
 void test_llama_generation_rejects_invalid_logit_bias() {
     for (const std::string& key : {"-1", "2147483648", "1.0", "1x", "+1", " 1", "0x10", ""}) {
-        auto rejection = rejection_for("logit_bias", Chorus::OptionMap{{key, 0.5}});
+        auto rejection = rejection_for("logit_bias", Chorus::ProviderOptionMap{{key, 0.5}});
         ASSERT_TRUE(rejection.message.find(key) != std::string::npos);
     }
 
-    auto wrong_value = rejection_for("logit_bias", Chorus::OptionMap{{"1", int64_t{2}}});
+    auto wrong_value = rejection_for("logit_bias", Chorus::ProviderOptionMap{{"1", int64_t{2}}});
     ASSERT_TRUE(wrong_value.message.find("double") != std::string::npos);
 
-    auto nonfinite = rejection_for("logit_bias", Chorus::OptionMap{{"1", std::numeric_limits<double>::infinity()}});
+    auto nonfinite =
+        rejection_for("logit_bias", Chorus::ProviderOptionMap{{"1", std::numeric_limits<double>::infinity()}});
     ASSERT_TRUE(nonfinite.message.find("finite") != std::string::npos);
 }
 
@@ -425,8 +428,8 @@ void test_llama_generation_rejects_logit_bias_outside_model_vocabulary() {
     const auto outside = llama_vocab_n_tokens(vocab);
 
     Chorus::GenerationConfig config;
-    config.provider_options["llama"] = Chorus::OptionMap{
-        {"logit_bias", Chorus::OptionMap{{std::to_string(outside), 1.0}}},
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
+        {"logit_bias", Chorus::ProviderOptionMap{{std::to_string(outside), 1.0}}},
     };
     auto resolved = Chorus::resolve_llama_generation(config);
     ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(resolved));
@@ -445,10 +448,10 @@ void test_llama_generation_constructs_common_sampler() {
     LlamaModelFixture fixture;
     ASSERT_TRUE(fixture.load());
     Chorus::GenerationConfig config;
-    config.provider_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"ignore_eos", true},
-        {"logit_bias", Chorus::OptionMap{{"0", 1.0}}},
-        {"sampler_order", Chorus::OptionList{std::string("temperature")}},
+        {"logit_bias", Chorus::ProviderOptionMap{{"0", 1.0}}},
+        {"sampler_order", Chorus::ProviderOptionList{std::string("temperature")}},
     };
     auto resolved = Chorus::resolve_llama_generation(config);
     ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(resolved));
@@ -571,96 +574,118 @@ void test_llama_generation_conformance_matrix() {
     // Provider options: each namespaced key maps to a distinct resolved field.
     cases.push_back(
         {"min_keep",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"min_keep", int64_t{3}}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"min_keep", int64_t{3}}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_EQ(r.sampling.min_keep, 3); }}
     );
     cases.push_back(
         {"min_p",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"min_p", 0.12}}; },
+         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::ProviderOptionMap{{"min_p", 0.12}}; },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.min_p == 0.12f); }}
     );
     cases.push_back(
         {"typical_p",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"typical_p", 0.83}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"typical_p", 0.83}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.typ_p == 0.83f); }}
     );
     cases.push_back(
         {"dynamic_temperature_range",
          [](Chorus::GenerationConfig& c) {
-             c.provider_options["llama"] = Chorus::OptionMap{{"dynamic_temperature_range", 0.4}};
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"dynamic_temperature_range", 0.4}};
          },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.dynatemp_range == 0.4f); }}
     );
     cases.push_back(
         {"dynamic_temperature_exponent",
          [](Chorus::GenerationConfig& c) {
-             c.provider_options["llama"] = Chorus::OptionMap{{"dynamic_temperature_exponent", 1.6}};
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"dynamic_temperature_exponent", 1.6}};
          },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.dynatemp_exponent == 1.6f); }}
     );
     cases.push_back(
         {"penalty_last_n",
          [](Chorus::GenerationConfig& c) {
-             c.provider_options["llama"] = Chorus::OptionMap{{"penalty_last_n", int64_t{33}}};
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"penalty_last_n", int64_t{33}}};
          },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_EQ(r.sampling.penalty_last_n, 33); }}
     );
     cases.push_back(
         {"repeat_penalty",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"repeat_penalty", 1.15}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"repeat_penalty", 1.15}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.penalty_repeat == 1.15f); }}
     );
     cases.push_back(
         {"ignore_eos",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.ignore_eos); }}
     );
     cases.push_back(
         {"mirostat",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"mirostat", int64_t{2}}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"mirostat", int64_t{2}}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_EQ(r.sampling.mirostat, 2); }}
     );
     cases.push_back(
         {"mirostat_tau",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"mirostat_tau", 4.5}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"mirostat_tau", 4.5}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.mirostat_tau == 4.5f); }}
     );
     cases.push_back(
         {"mirostat_eta",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"mirostat_eta", 0.2}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"mirostat_eta", 0.2}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.mirostat_eta == 0.2f); }}
     );
     cases.push_back(
         {"xtc_probability",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"xtc_probability", 0.3}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"xtc_probability", 0.3}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.xtc_probability == 0.3f); }}
     );
     cases.push_back(
         {"xtc_threshold",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"xtc_threshold", 0.45}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"xtc_threshold", 0.45}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.xtc_threshold == 0.45f); }}
     );
     cases.push_back(
         {"dry_multiplier",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"dry_multiplier", 0.7}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"dry_multiplier", 0.7}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.dry_multiplier == 0.7f); }}
     );
     cases.push_back(
         {"dry_base",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"dry_base", 2.0}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"dry_base", 2.0}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.dry_base == 2.0f); }}
     );
     cases.push_back(
         {"dry_allowed_length",
          [](Chorus::GenerationConfig& c) {
-             c.provider_options["llama"] = Chorus::OptionMap{{"dry_allowed_length", int64_t{5}}};
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"dry_allowed_length", int64_t{5}}};
          },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_EQ(r.sampling.dry_allowed_length, 5); }}
     );
     cases.push_back(
         {"dry_penalty_last_n",
          [](Chorus::GenerationConfig& c) {
-             c.provider_options["llama"] = Chorus::OptionMap{{"dry_penalty_last_n", int64_t{81}}};
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"dry_penalty_last_n", int64_t{81}}};
          },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_EQ(r.sampling.dry_penalty_last_n, 81); }}
     );
@@ -668,7 +693,7 @@ void test_llama_generation_conformance_matrix() {
         {"dry_sequence_breakers",
          [](Chorus::GenerationConfig& c) {
              c.provider_options["llama"] =
-                 Chorus::OptionMap{{"dry_sequence_breakers", Chorus::OptionList{std::string("###")}}};
+                 Chorus::ProviderOptionMap{{"dry_sequence_breakers", Chorus::ProviderOptionList{std::string("###")}}};
          },
          [](const Chorus::ResolvedLlamaGeneration& r) {
              ASSERT_TRUE(r.sampling.dry_sequence_breakers == std::vector<std::string>({"###"}));
@@ -678,7 +703,7 @@ void test_llama_generation_conformance_matrix() {
         {"sampler_order",
          [](Chorus::GenerationConfig& c) {
              c.provider_options["llama"] =
-                 Chorus::OptionMap{{"sampler_order", Chorus::OptionList{std::string("temperature")}}};
+                 Chorus::ProviderOptionMap{{"sampler_order", Chorus::ProviderOptionList{std::string("temperature")}}};
          },
          [](const Chorus::ResolvedLlamaGeneration& r) {
              ASSERT_TRUE(r.sampling.samplers == std::vector<common_sampler_type>({COMMON_SAMPLER_TYPE_TEMPERATURE}));
@@ -687,7 +712,8 @@ void test_llama_generation_conformance_matrix() {
     cases.push_back(
         {"logit_bias",
          [](Chorus::GenerationConfig& c) {
-             c.provider_options["llama"] = Chorus::OptionMap{{"logit_bias", Chorus::OptionMap{{"0", 1.25}}}};
+             c.provider_options["llama"] =
+                 Chorus::ProviderOptionMap{{"logit_bias", Chorus::ProviderOptionMap{{"0", 1.25}}}};
          },
          [](const Chorus::ResolvedLlamaGeneration& r) {
              const auto* bias = find_logit_bias(r.sampling, 0);
@@ -697,17 +723,23 @@ void test_llama_generation_conformance_matrix() {
     );
     cases.push_back(
         {"top_n_sigma",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"top_n_sigma", -1.5}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"top_n_sigma", -1.5}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.top_n_sigma == -1.5f); }}
     );
     cases.push_back(
         {"adaptive_target",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"adaptive_target", 0.6}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"adaptive_target", 0.6}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.adaptive_target == 0.6f); }}
     );
     cases.push_back(
         {"adaptive_decay",
-         [](Chorus::GenerationConfig& c) { c.provider_options["llama"] = Chorus::OptionMap{{"adaptive_decay", 0.95}}; },
+         [](Chorus::GenerationConfig& c) {
+             c.provider_options["llama"] = Chorus::ProviderOptionMap{{"adaptive_decay", 0.95}};
+         },
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.adaptive_decay == 0.95f); }}
     );
     cases.push_back(
@@ -794,11 +826,11 @@ int run_llama_generation_tests() {
     );
     run_test("Llama generation resolves common scalars", test_llama_generation_resolves_common_scalars);
     run_test(
-        "Llama generation resolves common penalties and stop",
-        test_llama_generation_resolves_common_penalties_and_stop
+        "Llama generation resolves common penalties and stop", test_llama_generation_resolves_common_penalties_and_stop
     );
     run_test(
-        "Llama generation resolves provider integers and bool", test_llama_generation_resolves_provider_integers_and_bool
+        "Llama generation resolves provider integers and bool",
+        test_llama_generation_resolves_provider_integers_and_bool
     );
     run_test("Llama generation resolves provider floats", test_llama_generation_resolves_provider_floats);
     run_test("Llama generation resolves string list", test_llama_generation_resolves_string_list);

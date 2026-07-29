@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "chorus/core/options.hpp"
+#include "chorus/core/provider_option_value.hpp"
 
 namespace Chorus {
 
@@ -63,7 +63,7 @@ struct GenerationConfig {
     // Reasoning-model thinking toggle.
     std::optional<bool> thinking;
     // Options only one provider understands, keyed by its namespace.
-    OptionMap provider_options;
+    ProviderOptionMap provider_options;
 };
 
 enum class PatchAction { Inherit, Set, Clear };
@@ -98,7 +98,7 @@ struct GenerationConfigPatch {
     ConfigPatch<OutputConstraint> constraint;
     ConfigPatch<bool> thinking;
 
-    OptionMap provider_options;
+    ProviderOptionMap provider_options;
 
     std::vector<std::string> provider_option_erasures;
 };
@@ -110,7 +110,7 @@ struct GenerationConfigPatch {
  * any other collision the override replaces wholesale. A merge *only* adds or
  * replaces: removal is erase_option_path's job.
  */
-OptionMap merge_option_maps(const OptionMap& base, const OptionMap& overrides);
+ProviderOptionMap merge_option_maps(const ProviderOptionMap& base, const ProviderOptionMap& overrides);
 
 /*
  * Removes one dotted path ("llama.repeat_penalty") from a namespaced option map.
@@ -119,7 +119,7 @@ OptionMap merge_option_maps(const OptionMap& base, const OptionMap& overrides);
  * exist, which is not an error. Nested maps left empty by the removal stay:
  * an empty namespace is a provider's own business to accept or reject.
  */
-void erase_option_path(OptionMap& options, const std::string& path);
+void erase_option_path(ProviderOptionMap& options, const std::string& path);
 
 /*
  * Folds one config layer onto the config below it.

@@ -1,7 +1,7 @@
+#include "chorus/core/common.hpp"
 #include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
-#include "chorus/core/common.hpp"
 #include "test_utils.hpp"
 
 #include <atomic>
@@ -43,7 +43,7 @@ void test_load_option_defaults() {
 
 void test_load_option_accepts_exact_int64_values() {
     auto config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"n_batch", int64_t{96}},
         {"n_ubatch", int64_t{32}},
         {"main_gpu", int64_t{2}},
@@ -57,9 +57,9 @@ void test_load_option_accepts_exact_int64_values() {
 }
 
 void test_load_option_rejects_wrong_scalar_alternatives() {
-    auto expect_rejection = [](const std::string& key, Chorus::OptionValue value) {
+    auto expect_rejection = [](const std::string& key, Chorus::ProviderOptionValue value) {
         auto config = make_gguf_config(MODEL_PATH);
-        config.provider_options["llama"] = Chorus::OptionMap{{key, std::move(value)}};
+        config.provider_options["llama"] = Chorus::ProviderOptionMap{{key, std::move(value)}};
         auto result = Chorus::parse_llama_load_config(config);
         const auto* rejection = std::get_if<Chorus::RequestRejection>(&result);
         return rejection && rejection->error == Chorus::ChorusError::UnsupportedOption &&
@@ -76,7 +76,7 @@ void test_load_option_rejects_invalid_batch_sizes() {
              {"n_batch", 0}, {"n_batch", -1}, {"n_ubatch", 0}, {"n_ubatch", -1}
          }) {
         auto config = make_gguf_config(MODEL_PATH);
-        config.provider_options["llama"] = Chorus::OptionMap{{key, value}};
+        config.provider_options["llama"] = Chorus::ProviderOptionMap{{key, value}};
         const auto rejection = load_rejection(config);
         ASSERT_TRUE(rejection.has_value());
         ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
@@ -86,7 +86,7 @@ void test_load_option_rejects_invalid_batch_sizes() {
 
 void test_load_option_rejects_microbatch_larger_than_batch() {
     auto config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::OptionMap{{"n_batch", int64_t{32}}, {"n_ubatch", int64_t{33}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"n_batch", int64_t{32}}, {"n_ubatch", int64_t{33}}};
     const auto rejection = load_rejection(config);
     ASSERT_TRUE(rejection.has_value());
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
@@ -95,7 +95,7 @@ void test_load_option_rejects_microbatch_larger_than_batch() {
 
 void test_load_option_rejects_negative_main_gpu() {
     auto config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::OptionMap{{"main_gpu", int64_t{-1}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"main_gpu", int64_t{-1}}};
     const auto rejection = load_rejection(config);
     ASSERT_TRUE(rejection.has_value());
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
@@ -105,7 +105,7 @@ void test_load_option_rejects_negative_main_gpu() {
 void test_load_option_rejects_narrowing_overflow() {
     auto expect_rejection = [](const std::string& key, int64_t value) {
         auto config = make_gguf_config(MODEL_PATH);
-        config.provider_options["llama"] = Chorus::OptionMap{{key, value}};
+        config.provider_options["llama"] = Chorus::ProviderOptionMap{{key, value}};
         auto result = Chorus::parse_llama_load_config(config);
         const auto* rejection = std::get_if<Chorus::RequestRejection>(&result);
         return rejection && rejection->error == Chorus::ChorusError::UnsupportedOption &&
@@ -119,7 +119,7 @@ void test_load_option_rejects_narrowing_overflow() {
 
 void test_load_option_still_rejects_unknown_keys() {
     auto config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::OptionMap{{"warp_factor", int64_t{9}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"warp_factor", int64_t{9}}};
     const auto rejection = load_rejection(config);
     ASSERT_TRUE(rejection.has_value());
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
@@ -129,7 +129,7 @@ void test_load_option_still_rejects_unknown_keys() {
 void test_load_option_rejects_cpu_with_explicit_gpu_controls() {
     auto expect_rejection = [](const std::string& key, int64_t value) {
         auto config = make_gguf_config(MODEL_PATH);
-        config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {key, value}};
+        config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {key, value}};
         const auto rejection = load_rejection(config);
         return rejection.has_value() && rejection->error == Chorus::ChorusError::UnsupportedOption &&
                rejection->message.find(key) != std::string::npos;
@@ -142,7 +142,7 @@ void test_load_option_rejects_cpu_with_explicit_gpu_controls() {
 
 void test_load_option_accepts_cpu_with_explicit_zero_gpu_layers() {
     auto config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"gpu_layers", int64_t{0}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"gpu_layers", int64_t{0}}};
     auto result = Chorus::parse_llama_load_config(config);
     ASSERT_TRUE(std::holds_alternative<Chorus::LlamaLoadConfig>(result));
     const auto& load = std::get<Chorus::LlamaLoadConfig>(result);
@@ -219,7 +219,7 @@ void test_resolve_generation_set_fields_override() {
     config.top_k = 5;
     config.top_p = 0.5f;
     config.seed = uint64_t{7};
-    config.provider_options["llama"] = Chorus::OptionMap{{"repeat_penalty", 1.3}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"repeat_penalty", 1.3}};
     auto result = Chorus::resolve_llama_generation(config);
     ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(result));
     const auto& r = std::get<Chorus::ResolvedLlamaGeneration>(result);
@@ -235,7 +235,7 @@ void test_transient_decode_failure_recovers() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
         {"context_size", int64_t{64}}, // tiny unified KV cache
         {"n_batch", int64_t{64}},      // keep decode-failure setup independent from the larger default batch
@@ -307,7 +307,7 @@ void test_higher_priority_request_served_first() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
         {"num_slots",
          int64_t{1}}, // one slot serializes execution; the priority_queue decides who runs first, not submit order
@@ -372,7 +372,7 @@ void test_slot_reusable_after_request_completes() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
         {"num_slots", int64_t{1}}, // force the second request to reuse the first slot
     };
@@ -423,7 +423,7 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
         {"context_size", int64_t{64}},
         {"n_batch", int64_t{64}}, // explicit logical batch capacity

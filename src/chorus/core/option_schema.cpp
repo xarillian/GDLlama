@@ -14,7 +14,9 @@ find_option_descriptor(const std::vector<OptionDescriptor>& descriptors, const s
 }
 
 bool option_is_enabled(
-    const std::vector<OptionDescriptor>& descriptors, const OptionDescriptor& descriptor, const OptionMap& stored
+    const std::vector<OptionDescriptor>& descriptors,
+    const OptionDescriptor& descriptor,
+    const ProviderOptionMap& stored
 ) {
     if (!descriptor.enabled_by)
         return true;
@@ -30,8 +32,9 @@ bool option_is_enabled(
     return false; // a gate naming an option the provider does not declare
 }
 
-OptionMap resolve_option_defaults(const std::vector<OptionDescriptor>& descriptors, const OptionMap& stored) {
-    OptionMap resolved;
+ProviderOptionMap
+resolve_option_defaults(const std::vector<OptionDescriptor>& descriptors, const ProviderOptionMap& stored) {
+    ProviderOptionMap resolved;
     for (const auto& descriptor : descriptors) {
         if (!option_is_enabled(descriptors, descriptor, stored))
             continue;

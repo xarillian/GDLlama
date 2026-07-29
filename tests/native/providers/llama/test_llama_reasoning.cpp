@@ -1,5 +1,5 @@
-#include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/core/common.hpp"
+#include "chorus/providers/llama/llama_engine.hpp"
 #include "test_utils.hpp"
 
 #include <atomic>
@@ -16,7 +16,8 @@ static Chorus::ChorusConfig make_reasoning_config() {
     config.model.model_id = "qwen3-0.6b";
     config.model.format = Chorus::ModelFormat::Gguf;
     config.model.assets.push_back({Chorus::AssetRole::Weights, kReasoningModelPath, std::nullopt, std::nullopt});
-    config.provider_options["llama"] = Chorus::OptionMap{{"context_size", int64_t{2048}}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] =
+        Chorus::ProviderOptionMap{{"context_size", int64_t{2048}}, {"num_slots", int64_t{1}}};
     return config;
 }
 

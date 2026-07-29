@@ -46,7 +46,7 @@ extern "C" {
  * ======================================================================== */
 
 typedef struct chorus_runtime chorus_runtime; /* wraps Chorus::ChorusRuntime  */
-typedef struct chorus_options chorus_options; /* wraps Chorus::OptionMap      */
+typedef struct chorus_options chorus_options; /* wraps Chorus::ProviderOptionMap      */
 typedef struct chorus_request chorus_request; /* wraps Chorus::GenerationRequest */
 
 typedef int64_t chorus_request_id; /* -1 = invalid / none */

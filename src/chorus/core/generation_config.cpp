@@ -20,14 +20,14 @@ template <typename Target, typename T> void apply_patch(Target& target, const Co
 
 } // namespace
 
-OptionMap merge_option_maps(const OptionMap& base, const OptionMap& overrides) {
-    OptionMap merged = base;
+ProviderOptionMap merge_option_maps(const ProviderOptionMap& base, const ProviderOptionMap& overrides) {
+    ProviderOptionMap merged = base;
 
     for (const auto& [key, override_value] : overrides) {
         const auto inherited = merged.find(key);
-        const auto* override_map = std::get_if<OptionMap>(&override_value);
+        const auto* override_map = std::get_if<ProviderOptionMap>(&override_value);
         if (inherited != merged.end() && override_map != nullptr) {
-            if (const auto* inherited_map = std::get_if<OptionMap>(&inherited->second)) {
+            if (const auto* inherited_map = std::get_if<ProviderOptionMap>(&inherited->second)) {
                 inherited->second = merge_option_maps(*inherited_map, *override_map);
                 continue;
             }
@@ -38,8 +38,8 @@ OptionMap merge_option_maps(const OptionMap& base, const OptionMap& overrides) {
     return merged;
 }
 
-void erase_option_path(OptionMap& options, const std::string& path) {
-    OptionMap* level = &options;
+void erase_option_path(ProviderOptionMap& options, const std::string& path) {
+    ProviderOptionMap* level = &options;
     size_t start = 0;
     while (true) {
         const size_t dot = path.find('.', start);
@@ -48,7 +48,7 @@ void erase_option_path(OptionMap& options, const std::string& path) {
         const auto next = level->find(path.substr(start, dot - start));
         if (next == level->end())
             return;
-        auto* nested = std::get_if<OptionMap>(&next->second);
+        auto* nested = std::get_if<ProviderOptionMap>(&next->second);
         if (!nested)
             return; // a scalar where the path expects a namespace
         level = nested;

@@ -13,7 +13,7 @@
 
 namespace {
 
-std::variant<Chorus::LlamaLoadConfig, Chorus::RequestRejection> parse(Chorus::OptionMap options) {
+std::variant<Chorus::LlamaLoadConfig, Chorus::RequestRejection> parse(Chorus::ProviderOptionMap options) {
     Chorus::ChorusConfig config;
     config.model.format = Chorus::ModelFormat::Gguf;
     config.model.assets.push_back({Chorus::AssetRole::Weights, "model.gguf", std::nullopt, std::nullopt});
@@ -24,9 +24,9 @@ std::variant<Chorus::LlamaLoadConfig, Chorus::RequestRejection> parse(Chorus::Op
 // One option set to `value`, every other at its declared default -- the shape a
 // host produces when the user touches a single control.
 std::variant<Chorus::LlamaLoadConfig, Chorus::RequestRejection>
-parse_with(const std::string& key, Chorus::OptionValue value) {
+parse_with(const std::string& key, Chorus::ProviderOptionValue value) {
     const auto& descriptors = Chorus::llama_load_option_descriptors();
-    Chorus::OptionMap stored{{key, std::move(value)}};
+    Chorus::ProviderOptionMap stored{{key, std::move(value)}};
     return parse(Chorus::resolve_option_defaults(descriptors, stored));
 }
 
