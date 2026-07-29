@@ -15,7 +15,7 @@ static Chorus::ChorusConfig make_reasoning_config() {
     Chorus::ChorusConfig config;
     config.model.model_id = "qwen3-0.6b";
     config.model.format = Chorus::ModelFormat::Gguf;
-    config.model.assets.push_back({Chorus::AssetRole::Weights, kReasoningModelPath, std::nullopt, std::nullopt});
+    config.model.assets.push_back({Chorus::AssetRole::Weights, kReasoningModelPath});
     config.provider_options["llama"] =
         Chorus::ProviderOptionMap{{"context_size", int64_t{2048}}, {"num_slots", int64_t{1}}};
     return config;

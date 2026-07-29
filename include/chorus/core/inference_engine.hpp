@@ -35,7 +35,7 @@ class InferenceEngine {
 
     virtual void stop() = 0;
 
-    // --- 3c capability contract (all three are host-thread-only, like
+    // --- Capability self-description (all three are host-thread-only, like
     // initialize/stop: they read state those methods mutate; they are never
     // called from engine workers) ---
 
@@ -52,7 +52,7 @@ class InferenceEngine {
     // cannot fail later.
     virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
 
-    // --- #5 optional prompt rendering (host-thread-only, like capabilities) ---
+    // --- Optional prompt rendering (host-thread-only, like capabilities) ---
 
     // The exact templated prompt this provider would feed the model for
     // `messages`, plus its token count (the runtime's fitting loop budgets

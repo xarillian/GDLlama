@@ -16,7 +16,7 @@ namespace {
 std::variant<Chorus::LlamaLoadConfig, Chorus::RequestRejection> parse(Chorus::ProviderOptionMap options) {
     Chorus::ChorusConfig config;
     config.model.format = Chorus::ModelFormat::Gguf;
-    config.model.assets.push_back({Chorus::AssetRole::Weights, "model.gguf", std::nullopt, std::nullopt});
+    config.model.assets.push_back({Chorus::AssetRole::Weights, "model.gguf"});
     config.provider_options["llama"] = std::move(options);
     return Chorus::parse_llama_load_config(config);
 }

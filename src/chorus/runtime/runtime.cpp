@@ -224,7 +224,7 @@ std::vector<RuntimeEvent> ChorusRuntime::poll() {
             retire_request(id);
             break;
         default:
-            break; // EventType::Embedding et al.: not consumed pre-#6
+            break; // EventType::Embedding et al.: no consumer yet
         }
     }
     return events;

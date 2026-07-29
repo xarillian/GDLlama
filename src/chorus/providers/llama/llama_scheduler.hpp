@@ -1,12 +1,12 @@
 #pragma once
 
+#include "chorus/core/capabilities.hpp"
+#include "chorus/core/common.hpp"
+#include "chorus/core/inference_engine.hpp"
 #include "chorus/providers/llama/llama_chat.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
 #include "chorus/providers/llama/stop_sequence_filter.hpp"
-#include "chorus/core/capabilities.hpp"
-#include "chorus/core/common.hpp"
-#include "chorus/core/inference_engine.hpp"
 #include "wlib/utf8.hpp"
 
 #include <atomic>
@@ -108,9 +108,10 @@ class LlamaScheduler {
 
     using PendingRequestPtr = std::shared_ptr<PendingRequest>;
 
+    // Higher priority is served first.
     struct PendingRequestCompare {
         bool operator()(const PendingRequestPtr& left, const PendingRequestPtr& right) const {
-            return left->request < right->request;
+            return left->request.priority < right->request.priority;
         }
     };
 

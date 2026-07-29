@@ -32,6 +32,12 @@ enum class ChorusError {
     SessionBusy,            // Session already has a live request
 };
 
+/// Why an engine refused a request up front (see InferenceEngine::validate_request).
+struct RequestRejection {
+    ChorusError error = ChorusError::Unknown;
+    std::string message;
+};
+
 /*
  * Engine-wide configuration, fixed for the life of one engine instance.
  */
@@ -114,8 +120,5 @@ struct ChorusRequest {
     // Receives every signal for this request, possibly from an engine worker thread;
     // must be thread-safe.
     std::function<void(ChorusSignal&)> on_event;
-
-    // Priority-queue ordering: higher priority is served first.
-    bool operator<(const ChorusRequest& other) const { return priority < other.priority; }
 };
 } // namespace Chorus

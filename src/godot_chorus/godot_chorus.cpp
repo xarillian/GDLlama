@@ -174,9 +174,7 @@ bool GodotChorus::load_model() {
     if (_provider != PROVIDER_ECHO) {
         config.model.model_id = _model_path.get_file().get_basename().utf8().get_data();
         config.model.format = Chorus::ModelFormat::Gguf;
-        config.model.assets.push_back(
-            {Chorus::AssetRole::Weights, _model_path.utf8().get_data(), std::nullopt, std::nullopt}
-        );
+        config.model.assets.push_back({Chorus::AssetRole::Weights, _model_path.utf8().get_data()});
     }
     // Echo: empty InitialModelSpec, and it declares no load options, so the loop below
     // contributes nothing rather than needing a special case.

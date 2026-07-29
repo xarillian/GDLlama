@@ -20,7 +20,7 @@ static Chorus::ChorusConfig make_gguf_config(const std::string& path) {
     Chorus::ChorusConfig config;
     config.model.model_id = "test-model";
     config.model.format = Chorus::ModelFormat::Gguf;
-    config.model.assets.push_back({Chorus::AssetRole::Weights, path, std::nullopt, std::nullopt});
+    config.model.assets.push_back({Chorus::AssetRole::Weights, path});
     return config;
 }
 

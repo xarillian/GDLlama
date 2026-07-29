@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chorus/core/common.hpp"
+#include "chorus/core/generation_config.hpp"
 #include "chorus/core/model_spec.hpp"
 #include "chorus/core/provider_option_value.hpp"
 
@@ -80,11 +80,6 @@ struct LoadedModelInfo {
     std::optional<uint32_t> per_request_context;
     std::optional<uint64_t> model_bytes;
     bool has_speculative_assets = false;
-};
-
-struct RequestRejection {
-    ChorusError error = ChorusError::Unknown;
-    std::string message;
 };
 
 } // namespace Chorus

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chorus/core/capabilities.hpp"
+#include "chorus/core/common.hpp"
 #include "wlib/utf8.hpp"
 
 #include <optional>

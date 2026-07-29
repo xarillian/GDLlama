@@ -2,8 +2,6 @@
 
 #include "chorus/core/provider_option_value.hpp"
 
-#include <cstdint>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -21,21 +19,19 @@ enum class AssetRole {
     Weights,
     Projector, // multimodal projector (e.g. mmproj)
     Tokenizer,
-    Drafter, // dratft model for speculative decoding
-    Package, // bundled archive carrying serveral roles
+    Drafter, // draft model for speculative decoding
+    Package, // bundled archive carrying several roles
 };
 
 /*
  * One artifact of a model.
  *
- * Models can be sets of artifcts. The provider loads them all and uses them
+ * Models can be sets of artifacts. The provider loads them all and uses them
  * according to their role.
  */
 struct ModelAsset {
     AssetRole role = AssetRole::Weights;
     std::string source; // local path, URI, repository reference, provider identifier
-    std::optional<uint64_t> declared_size_bytes;
-    std::optional<std::string> checksum;
 };
 
 /*
