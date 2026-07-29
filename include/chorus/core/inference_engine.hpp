@@ -7,11 +7,6 @@
 
 namespace Chorus {
 
-struct RenderedPrompt {
-    std::string text;
-    int32_t token_count = 0;
-};
-
 // The provider port. Implementations must honor the callback contract:
 //
 // - ChorusRequest::on_event may be invoked from an engine worker thread, or
@@ -43,7 +38,6 @@ class InferenceEngine {
     // of provider, model, and load configuration.
     virtual EngineCapabilities capabilities() const = 0;
 
-    // Populated after successful initialization; never reports ModelFormat::Auto.
     virtual std::optional<LoadedModelInfo> loaded_model_info() const = 0;
 
     // Lightweight, side-effect-free synchronous check: readiness, request

@@ -32,6 +32,17 @@ enum class ChorusError {
     SessionBusy,            // Session already has a live request
 };
 
+enum class RequestType { Generate, Embedding };
+
+enum class EventType {
+    Token,
+    Embedding,
+    Stop,
+    Error,
+};
+
+enum class TokenChannel { Content, Reasoning };
+
 /// Why an engine refused a request up front (see InferenceEngine::validate_request).
 struct RequestRejection {
     ChorusError error = ChorusError::Unknown;
@@ -53,6 +64,12 @@ struct ChatMessage {
     std::string content;
 };
 
+/// A provider's render of a conversation (see, e.g., InferenceEngine::render_chat_prompt).
+struct RenderedPrompt {
+    std::string text;
+    int32_t token_count = 0;
+};
+
 /*
  * A message spliced into a conversation at a fixed distance from its end.
  *
@@ -63,15 +80,6 @@ struct InjectedMessage {
     ChatMessage message;
     int32_t depth = 0;
 };
-
-enum class EventType {
-    Token,
-    Embedding,
-    Stop,
-    Error,
-};
-
-enum class TokenChannel { Content, Reasoning };
 
 /*
  * One event in a request's lifetime.
@@ -92,8 +100,6 @@ struct ChorusSignal {
     bool is_error() const { return type == EventType::Error; }
     bool is_embedding() const { return type == EventType::Embedding; }
 };
-
-enum class RequestType { Generate, Embedding };
 
 /*
  * One unit of work handed to an engine.
