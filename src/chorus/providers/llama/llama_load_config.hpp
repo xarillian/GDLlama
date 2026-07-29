@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <string>
 #include <variant>
-#include <vector>
 
 #include <llama.h>
 
@@ -73,7 +72,7 @@ using LlamaOffloadDeviceList = std::array<ggml_backend_dev_t, 1>;
  * initializers above stay the single source of truth. parse_llama_load_config
  * rejects any key absent from this table, so the two cannot disagree on names.
  */
-const std::vector<OptionDescriptor>& llama_load_option_descriptors();
+const ProviderOptionDescriptors& llama_load_option_descriptors();
 
 std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const ChorusConfig& config);
 llama_model_params make_llama_model_params(const LlamaLoadConfig& config, LlamaOffloadDeviceList& no_offload_devices);

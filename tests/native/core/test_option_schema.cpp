@@ -6,11 +6,10 @@
 #include <iostream>
 #include <string>
 #include <variant>
-#include <vector>
 
 namespace {
 
-std::vector<Chorus::OptionDescriptor> schema() {
+Chorus::ProviderOptionDescriptors schema() {
     return {
         {"use_gpu", "Use GPU", "", true, std::nullopt, std::nullopt, std::nullopt, std::nullopt},
         {"threads", "Threads", "", int64_t{4}, 1, 32, 1, std::nullopt},

@@ -13,7 +13,7 @@ namespace {
 // while a script may still ask for more and earn the provider's own answer.
 // Bounds render as whole numbers; the first float option with fractional
 // bounds or step needs this to stop truncating.
-String range_hint(const Chorus::OptionDescriptor& descriptor) {
+String range_hint(const Chorus::ProviderOptionDescriptor& descriptor) {
     if (!descriptor.minimum || !descriptor.maximum)
         return String();
     String hint =
@@ -39,7 +39,7 @@ Variant::Type variant_type_for(const Chorus::ProviderOptionValue& value) {
 
 } // namespace
 
-PropertyInfo property_info_for(const Chorus::OptionDescriptor& descriptor, bool enabled) {
+PropertyInfo property_info_for(const Chorus::ProviderOptionDescriptor& descriptor, bool enabled) {
     const Variant::Type type = variant_type_for(descriptor.default_value);
     const String hint_string = (type == Variant::INT || type == Variant::FLOAT) ? range_hint(descriptor) : String();
     uint32_t usage = PROPERTY_USAGE_DEFAULT;
@@ -70,7 +70,7 @@ Variant option_value_to_variant(const Chorus::ProviderOptionValue& value) {
 }
 
 std::optional<Chorus::ProviderOptionValue>
-coerce_to_descriptor(const Chorus::OptionDescriptor& descriptor, const Variant& value) {
+coerce_to_descriptor(const Chorus::ProviderOptionDescriptor& descriptor, const Variant& value) {
     switch (variant_type_for(descriptor.default_value)) {
     case Variant::BOOL:
         if (value.get_type() != Variant::BOOL)

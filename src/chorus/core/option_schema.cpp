@@ -4,9 +4,9 @@
 
 namespace Chorus {
 
-const OptionDescriptor*
-find_option_descriptor(const std::vector<OptionDescriptor>& descriptors, const std::string& key) {
-    for (const auto& descriptor : descriptors) {
+const ProviderOptionDescriptor*
+find_option_descriptor(const ProviderOptionDescriptors& schema, const std::string& key) {
+    for (const auto& descriptor : schema) {
         if (descriptor.key == key)
             return &descriptor;
     }
@@ -14,9 +14,7 @@ find_option_descriptor(const std::vector<OptionDescriptor>& descriptors, const s
 }
 
 bool option_is_enabled(
-    const std::vector<OptionDescriptor>& descriptors,
-    const OptionDescriptor& descriptor,
-    const ProviderOptionMap& stored
+    const ProviderOptionDescriptors& schema, const ProviderOptionDescriptor& descriptor, const ProviderOptionMap& stored
 ) {
     if (!descriptor.enabled_by)
         return true;
@@ -25,18 +23,17 @@ bool option_is_enabled(
         const auto* as_bool = std::get_if<bool>(&it->second);
         return as_bool && *as_bool;
     }
-    if (const auto* gate = find_option_descriptor(descriptors, *descriptor.enabled_by)) {
+    if (const auto* gate = find_option_descriptor(schema, *descriptor.enabled_by)) {
         const auto* as_bool = std::get_if<bool>(&gate->default_value);
         return as_bool && *as_bool;
     }
     return false; // a gate naming an option the provider does not declare
 }
 
-ProviderOptionMap
-resolve_option_defaults(const std::vector<OptionDescriptor>& descriptors, const ProviderOptionMap& stored) {
+ProviderOptionMap resolve_option_defaults(const ProviderOptionDescriptors& schema, const ProviderOptionMap& stored) {
     ProviderOptionMap resolved;
-    for (const auto& descriptor : descriptors) {
-        if (!option_is_enabled(descriptors, descriptor, stored))
+    for (const auto& descriptor : schema) {
+        if (!option_is_enabled(schema, descriptor, stored))
             continue;
         const auto it = stored.find(descriptor.key);
         resolved[descriptor.key] = it != stored.end() ? it->second : descriptor.default_value;

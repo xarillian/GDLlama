@@ -6,6 +6,7 @@
 
 #include "chorus/engine_factory.hpp"
 #include "godot_chorus/generation_request_normalizer.hpp"
+#include "godot_chorus/provider_option_properties.hpp"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -48,8 +49,8 @@ static Chorus::Provider to_chorus_provider(GodotChorus::ProviderChoice provider)
     return provider == GodotChorus::PROVIDER_ECHO ? Chorus::Provider::Echo : Chorus::Provider::Llama;
 }
 
-static bool gates_another_option(const godot_chorus::OptionDescriptors& descriptors, const std::string& key) {
-    for (const auto& descriptor : descriptors) {
+static bool gates_another_option(const Chorus::ProviderOptionDescriptors& schema, const std::string& key) {
+    for (const auto& descriptor : schema) {
         if (descriptor.enabled_by && *descriptor.enabled_by == key)
             return true;
     }
@@ -399,11 +400,11 @@ const Chorus::EngineCapabilities& GodotChorus::provider_capabilities() const {
     return _cached_capabilities;
 }
 
-const godot_chorus::OptionDescriptors& GodotChorus::load_option_descriptors() const {
+const Chorus::ProviderOptionDescriptors& GodotChorus::load_option_descriptors() const {
     return provider_capabilities().load_options;
 }
 
-const Chorus::OptionDescriptor* GodotChorus::find_load_option(const StringName& name) const {
+const Chorus::ProviderOptionDescriptor* GodotChorus::find_load_option(const StringName& name) const {
     return Chorus::find_option_descriptor(load_option_descriptors(), std::string(String(name).utf8().get_data()));
 }
 

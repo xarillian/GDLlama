@@ -11,10 +11,10 @@
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/string_name.hpp>
 
+#include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 #include "chorus/runtime/runtime.hpp"
 #include "godot_chorus/chorus_generation_defaults.hpp"
-#include "godot_chorus/provider_option_properties.hpp"
 
 class GodotChorus : public godot::Node {
     GDCLASS(GodotChorus, godot::Node);
@@ -189,8 +189,8 @@ class GodotChorus : public godot::Node {
     // The selected provider's self-description, fetched from the factory and
     // cached because the inspector asks for the property list constantly.
     const Chorus::EngineCapabilities& provider_capabilities() const;
-    const godot_chorus::OptionDescriptors& load_option_descriptors() const;
-    const Chorus::OptionDescriptor* find_load_option(const godot::StringName& name) const;
+    const Chorus::ProviderOptionDescriptors& load_option_descriptors() const;
+    const Chorus::ProviderOptionDescriptor* find_load_option(const godot::StringName& name) const;
 
     Chorus::ChorusRuntime _runtime;
 

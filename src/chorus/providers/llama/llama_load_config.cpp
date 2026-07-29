@@ -44,10 +44,10 @@ std::optional<RequestRejection> check_against_schema(const std::string& key, con
 
 } // namespace
 
-const std::vector<OptionDescriptor>& llama_load_option_descriptors() {
-    static const std::vector<OptionDescriptor> descriptors = [] {
+const ProviderOptionDescriptors& llama_load_option_descriptors() {
+    static const ProviderOptionDescriptors descriptors = [] {
         const LlamaLoadConfig d{};
-        return std::vector<OptionDescriptor>{
+        return ProviderOptionDescriptors{
             {"context_size",
              "Context Size",
              "Total context window in tokens, shared by all slots.",
