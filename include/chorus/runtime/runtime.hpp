@@ -57,7 +57,14 @@ struct HostDefaults {
 
 // What poll() returns. Post-policy, host-thread-safe.
 struct RuntimeEvent {
-    enum class Kind { Token, ReasoningToken, Complete, Error, HistoryTruncated };
+    // EngineFailed reports an engine that died on its own rather than being
+    // unloaded: request_id is -1, session_id absent, error EngineNotReady with
+    // a generic message (the specific cause reaches the host through each dying
+    // request's own Error terminal). It is not a "nothing further" marker.
+    // Requests the engine had already queued may still terminate on a later
+    // poll, so a host tears down on each request's own terminal, exactly as it
+    // otherwise would.
+    enum class Kind { Token, ReasoningToken, Complete, Error, HistoryTruncated, EngineFailed };
     RequestId request_id;
     std::optional<SessionId> session_id; // absent for stateless requests
     Kind kind;
@@ -159,6 +166,10 @@ class ChorusRuntime {
     void cancel_live_requests();
     void retire_request(RequestId id);
 
+    // The EngineNotReady rejection every entry point shares, worded for which
+    // kind of not-ready it is: no engine at all, or one that has failed.
+    SubmitResult not_ready() const;
+
     // A request with its layers already collapsed: host defaults overlaid by
     // the request's own overrides, with ambient chat controls dropped where
     // they cannot apply. Everything below submit() works on this, so the
@@ -214,6 +225,11 @@ class ChorusRuntime {
     };
 
     std::unique_ptr<InferenceEngine> _engine;
+
+    // Host-thread-only. Set once poll() has told the host that the current
+    // engine died, so the report happens exactly once per engine instance.
+    // Whether the engine is dead is never cached: that is asked of the engine.
+    bool _engine_failure_reported = false;
 
     HostDefaults _host_defaults;
 

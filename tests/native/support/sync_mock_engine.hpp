@@ -217,6 +217,28 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         _initialized = false;
     }
 
+    /*
+     * Dies mid-flight, the way the llama worker does on a fatal decode.
+     *
+     * Held requests get their Decode terminals first, then the engine stops
+     * being able to take work. stop() is never called, so nothing fences the
+     * callbacks and nothing announces the death: it is visible only to whoever
+     * asks is_initialized() next.
+     */
+    void die() {
+        for (auto& req : _held)
+            if (req.on_event)
+                send(
+                    req.on_event,
+                    req.id,
+                    Chorus::EventType::Error,
+                    "Inference decode failed.",
+                    Chorus::ChorusError::Decode
+                );
+        _held.clear();
+        _initialized = false;
+    }
+
   private:
     static void send(
         const std::function<void(Chorus::ChorusSignal&)>& cb,

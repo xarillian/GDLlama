@@ -387,6 +387,87 @@ void test_failed_replacement_cancels_live_requests_and_unloads() {
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Cancelled);
 }
 
+void test_engine_death_yields_one_EngineFailed_on_next_poll() {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    SyncMockEngine* mock = engine.get();
+    auto load_err = runtime.load_engine(std::move(engine), make_config());
+    ASSERT_TRUE(!load_err.has_value());
+    ASSERT_TRUE(runtime.is_loaded());
+
+    mock->die();
+    auto events = runtime.poll();
+    ASSERT_EQ(events.size(), 1);
+    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::EngineFailed);
+    ASSERT_EQ(events[0].request_id, -1);
+    ASSERT_TRUE(!events[0].session_id.has_value());
+}
+
+void test_engine_death_is_reported_once_across_polls() {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    SyncMockEngine* mock = engine.get();
+    auto load_err = runtime.load_engine(std::move(engine), make_config());
+    ASSERT_TRUE(!load_err.has_value());
+
+    mock->die();
+    ASSERT_EQ(runtime.poll().size(), 1);
+    ASSERT_EQ(runtime.poll().size(), 0);
+    ASSERT_EQ(runtime.poll().size(), 0);
+}
+
+void test_ordinary_unload_emits_no_EngineFailed() {
+    Chorus::ChorusRuntime runtime;
+    auto load_err = runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
+    ASSERT_TRUE(!load_err.has_value());
+
+    // stop_all() also takes is_initialized() true -> false; only a death speaks.
+    runtime.stop_all();
+    ASSERT_EQ(runtime.poll().size(), 0);
+
+    // Nor does replacing a healthy engine.
+    ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
+    ASSERT_EQ(runtime.poll().size(), 0);
+}
+
+void test_dying_request_terminal_precedes_EngineFailed() {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    engine->hold_requests = true;
+    SyncMockEngine* mock = engine.get();
+    auto load_err = runtime.load_engine(std::move(engine), make_config());
+    ASSERT_TRUE(!load_err.has_value());
+
+    auto held = runtime.submit(make_request("held"));
+    ASSERT_TRUE(held.ok());
+
+    mock->die();
+    auto events = runtime.poll();
+    ASSERT_EQ(events.size(), 2);
+    ASSERT_EQ(events[0].request_id, held.request_id);
+    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
+    ASSERT_TRUE(events[0].error == Chorus::ChorusError::Decode);
+    ASSERT_TRUE(events[1].kind == Chorus::RuntimeEvent::Kind::EngineFailed);
+}
+
+void test_submit_after_engine_death_is_EngineNotReady_and_says_so() {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    SyncMockEngine* mock = engine.get();
+    auto load_err = runtime.load_engine(std::move(engine), make_config());
+    ASSERT_TRUE(!load_err.has_value());
+
+    mock->die();
+    ASSERT_TRUE(!runtime.is_loaded());
+
+    auto result = runtime.submit(make_request("hi"));
+    ASSERT_TRUE(!result.ok());
+    ASSERT_TRUE(result.error == Chorus::ChorusError::EngineNotReady);
+    ASSERT_EQ(result.request_id, -1);
+    // A dead engine is not an absent one; the host is told which it is.
+    ASSERT_TRUE(result.message != "No engine is loaded.");
+}
+
 void test_engine_error_during_stop_wins_over_synthesized_Cancelled() {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
@@ -583,6 +664,14 @@ int run_runtime_tests() {
     );
     run_test(
         "Runtime_failed_replacement_cancels_and_unloads", test_failed_replacement_cancels_live_requests_and_unloads
+    );
+    run_test("Runtime_engine_death_yields_one_EngineFailed", test_engine_death_yields_one_EngineFailed_on_next_poll);
+    run_test("Runtime_engine_death_reported_once", test_engine_death_is_reported_once_across_polls);
+    run_test("Runtime_ordinary_unload_emits_no_EngineFailed", test_ordinary_unload_emits_no_EngineFailed);
+    run_test("Runtime_dying_terminal_precedes_EngineFailed", test_dying_request_terminal_precedes_EngineFailed);
+    run_test(
+        "Runtime_submit_after_engine_death_is_EngineNotReady",
+        test_submit_after_engine_death_is_EngineNotReady_and_says_so
     );
     run_test(
         "Runtime_engine_error_during_stop_wins_over_Cancelled",

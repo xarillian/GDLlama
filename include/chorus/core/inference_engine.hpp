@@ -23,8 +23,9 @@ class InferenceEngine {
     /// `ChorusConfig::log_callback` may be written from any engine thread.
     virtual std::optional<ChorusError> initialize(const Chorus::ChorusConfig& config) = 0;
 
-    virtual bool is_initialized() const = 0; // @todo maybe an enum? true / false / error. Error doesn't feed anything
-                                             // rn, but could be useful
+    /// Whether the engine can take work now. An engine that came up and later
+    /// failed answers false, the same as one that never initialized.
+    virtual bool is_initialized() const = 0;
 
     /// Takes the request on. `on_event` fires from an engine worker, or inline
     /// before this returns when the engine rejects the request outright.

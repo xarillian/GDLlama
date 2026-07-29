@@ -83,6 +83,7 @@ typedef enum chorus_event_kind {
     CHORUS_EVENT_COMPLETE = 2,
     CHORUS_EVENT_ERROR = 3,
     CHORUS_EVENT_HISTORY_TRUNCATED = 4,
+    CHORUS_EVENT_ENGINE_FAILED = 5,
 } chorus_event_kind;
 
 typedef enum chorus_turn_outcome {

@@ -123,6 +123,13 @@
 		</member>
 	</members>
 	<signals>
+		<signal name="engine_failed">
+			<param index="0" name="error_code" type="int" />
+			<param index="1" name="message" type="String" />
+			<description>
+				Emitted when the engine fails on its own rather than being unloaded, after which [method is_loaded] is false and requests are rejected until the model is loaded again. Requests the engine had already taken may still emit their own terminal signal afterwards, so keep handling those as usual.
+			</description>
+		</signal>
 		<signal name="generation_complete">
 			<param index="0" name="request_id" type="int" />
 			<param index="1" name="session" type="String" />

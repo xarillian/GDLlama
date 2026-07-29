@@ -25,6 +25,7 @@ ChorusRuntime::load_engine(std::unique_ptr<InferenceEngine> engine, const Chorus
         return err; // engine destroyed on scope exit; runtime stays unloaded
 
     _engine = std::move(engine);
+    _engine_failure_reported = false;
     return std::nullopt;
 }
 
@@ -57,10 +58,15 @@ ChorusRuntime::ResolvedRequest ChorusRuntime::resolve_request(const GenerationRe
     return resolved;
 }
 
+SubmitResult ChorusRuntime::not_ready() const {
+    return _engine ? SubmitResult{-1, ChorusError::EngineNotReady, "The engine has failed; load it again."}
+                   : SubmitResult{-1, ChorusError::EngineNotReady, "No engine is loaded."};
+}
+
 SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
     assert_host_thread();
     if (!is_loaded())
-        return SubmitResult{-1, ChorusError::EngineNotReady, "No engine is loaded."};
+        return not_ready();
     if (request.session_id && request.session_id->empty())
         return SubmitResult{
             -1,
@@ -227,6 +233,17 @@ std::vector<RuntimeEvent> ChorusRuntime::poll() {
             break; // EventType::Embedding et al.: no consumer yet
         }
     }
+
+    // Last, so the terminals of the requests that died with the engine lead the
+    // batch. An engine that dies on its own announces nothing, so this is the
+    // only moment the host can learn of it.
+    if (_engine && !_engine_failure_reported && !_engine->is_initialized()) {
+        _engine_failure_reported = true;
+        RuntimeEvent failure{
+            -1, std::nullopt, RuntimeEvent::Kind::EngineFailed, "The engine has failed.", ChorusError::EngineNotReady
+        };
+        events.push_back(std::move(failure));
+    }
     return events;
 }
 
@@ -243,6 +260,8 @@ void ChorusRuntime::unload_engine() {
         _engine->stop();
         _engine.reset();
     }
+    // An unload is not a death, and there is no longer an engine to report on.
+    _engine_failure_reported = false;
 }
 
 void ChorusRuntime::cancel_live_requests() {

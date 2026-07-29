@@ -169,7 +169,7 @@ std::optional<std::string> ChorusRuntime::render_prompt(
 SubmitResult ChorusRuntime::regenerate(const GenerationRequest& request) {
     assert_host_thread();
     if (!is_loaded())
-        return SubmitResult{-1, ChorusError::EngineNotReady, "No engine is loaded."};
+        return not_ready();
     if (!request.session_id || request.session_id->empty())
         return SubmitResult{-1, ChorusError::InvalidRequest, "regenerate() requires a session."};
     if (!request.prompt.empty())

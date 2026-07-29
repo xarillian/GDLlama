@@ -140,6 +140,9 @@ void GodotChorus::_process(double /*delta*/) {
                 "generation_error", event.request_id, session, to_godot(event.error), String(event.text.c_str())
             );
             break;
+        case Chorus::RuntimeEvent::Kind::EngineFailed:
+            emit_signal("engine_failed", to_godot(event.error), String(event.text.c_str()));
+            break;
         }
     }
 }
@@ -558,6 +561,9 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::INT, "error_code"),
         PropertyInfo(Variant::STRING, "message")
     ));
+    ADD_SIGNAL(
+        MethodInfo("engine_failed", PropertyInfo(Variant::INT, "error_code"), PropertyInfo(Variant::STRING, "message"))
+    );
 
     // --- ErrorCode enum ---
     BIND_ENUM_CONSTANT(ERR_NONE);

@@ -1,7 +1,7 @@
 #include "chorus/providers/llama/llama_engine.hpp"
+#include "chorus/core/common.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_scheduler.hpp"
-#include "chorus/core/common.hpp"
 
 namespace Chorus {
 
@@ -17,15 +17,20 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config) {
     _log = config.log_callback;
 
     bool already_initialized = false;
+    bool holds_dead_scheduler = false;
     {
         std::lock_guard<std::mutex> lock(_lifecycle_mutex);
         already_initialized = _initialized && scheduler && scheduler->is_healthy();
+        // Deliberately the raw flag, not is_initialized(): a failed engine
+        // reports itself uninitialized, and this is the branch that frees what
+        // it still holds.
+        holds_dead_scheduler = _initialized && !already_initialized;
     }
     if (already_initialized) {
         chorus_log(_log, LogLevel::Warn, "LlamaEngine is already initialized.");
         return std::nullopt;
     }
-    if (is_initialized()) {
+    if (holds_dead_scheduler) {
         chorus_log(_log, LogLevel::Warn, "Re-initializing LlamaEngine after engine failure.");
         stop();
     }
@@ -96,7 +101,10 @@ void LlamaEngine::stop() {
 
 bool LlamaEngine::is_initialized() const {
     std::lock_guard<std::mutex> lock(_lifecycle_mutex);
-    return _initialized;
+    // A worker that hit a fatal decode stops its scheduler without touching
+    // _initialized, so the flag alone would keep claiming readiness for an
+    // engine that rejects everything sent to it.
+    return _initialized && scheduler && scheduler->is_healthy();
 }
 
 EngineCapabilities LlamaEngine::capabilities() const {
