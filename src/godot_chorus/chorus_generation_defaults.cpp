@@ -46,7 +46,7 @@ PackedStringArray to_packed_string_array(const std::vector<std::string>& value) 
 } // namespace
 
 ChorusGenerationDefaults::ChorusGenerationDefaults() {
-    _patch.max_tokens = Chorus::OptionalPatch<int32_t>::set(128);
+    _patch.max_tokens = Chorus::ConfigPatch<int32_t>::set(128);
 }
 
 // ===========================================================================
@@ -209,7 +209,7 @@ String ChorusGenerationDefaults::get_constraint_source() const {
 }
 
 // ===========================================================================
-// thinking (disabled = the template/backend default, typically on)
+// thinking (disabled = the template/provider default, typically on)
 // ===========================================================================
 
 void ChorusGenerationDefaults::set_override_thinking(bool enabled) {
@@ -226,14 +226,14 @@ bool ChorusGenerationDefaults::get_thinking() const {
 }
 
 // ===========================================================================
-// backend_options
+// provider_options
 // ===========================================================================
 
-void ChorusGenerationDefaults::set_backend_options(const Dictionary& options) {
-    _backend_options = options;
+void ChorusGenerationDefaults::set_provider_options(const Dictionary& options) {
+    _provider_options = options;
 }
-Dictionary ChorusGenerationDefaults::get_backend_options() const {
-    return _backend_options;
+Dictionary ChorusGenerationDefaults::get_provider_options() const {
+    return _provider_options;
 }
 
 // ===========================================================================
@@ -242,13 +242,13 @@ Dictionary ChorusGenerationDefaults::get_backend_options() const {
 
 Chorus::GenerationConfigPatch ChorusGenerationDefaults::to_patch() const {
     Chorus::GenerationConfigPatch patch = _patch;
-    if (!_backend_options.is_empty()) {
-        auto converted = godot_chorus::variant_to_option_value(_backend_options);
+    if (!_provider_options.is_empty()) {
+        auto converted = godot_chorus::variant_to_option_value(_provider_options);
         if (converted && std::holds_alternative<Chorus::OptionMap>(*converted)) {
-            patch.backend_options = std::get<Chorus::OptionMap>(*converted);
+            patch.provider_options = std::get<Chorus::OptionMap>(*converted);
         } else {
             UtilityFunctions::push_error(
-                "[Chorus] generation_defaults backend_options contains unsupported values; ignoring."
+                "[Chorus] generation_defaults provider_options contains unsupported values; ignoring."
             );
         }
     }
@@ -383,8 +383,8 @@ void ChorusGenerationDefaults::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "override_thinking"), "set_override_thinking", "get_override_thinking");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "thinking"), "set_thinking", "get_thinking");
 
-    ClassDB::bind_method(D_METHOD("set_backend_options", "options"), &ChorusGenerationDefaults::set_backend_options);
-    ClassDB::bind_method(D_METHOD("get_backend_options"), &ChorusGenerationDefaults::get_backend_options);
-    ADD_GROUP("Backend Options", "");
-    ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "backend_options"), "set_backend_options", "get_backend_options");
+    ClassDB::bind_method(D_METHOD("set_provider_options", "options"), &ChorusGenerationDefaults::set_provider_options);
+    ClassDB::bind_method(D_METHOD("get_provider_options"), &ChorusGenerationDefaults::get_provider_options);
+    ADD_GROUP("Provider Options", "");
+    ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "provider_options"), "set_provider_options", "get_provider_options");
 }

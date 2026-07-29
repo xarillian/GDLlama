@@ -67,7 +67,7 @@ struct LlamaLoadConfig {
 using LlamaOffloadDeviceList = std::array<ggml_backend_dev_t, 1>;
 
 /**
- * @brief Declares every load option this backend accepts, for hosts to render.
+ * @brief Declares every load option this provider accepts, for hosts to render.
  *
  * Defaults come from a default-constructed LlamaLoadConfig, so the member
  * initializers above stay the single source of truth. parse_llama_load_config

@@ -1,4 +1,4 @@
-#include "chorus/backends/llama/llama_engine.hpp"
+#include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/core/common.hpp"
 #include "chorus/engine_factory.hpp"
 #include "chorus/runtime/runtime.hpp"
@@ -25,7 +25,7 @@ static Chorus::ChorusConfig make_gguf_config(const std::string& path) {
     Chorus::ChorusConfig config;
     config.model.model_id = "test-model";
     config.model.format = Chorus::ModelFormat::Gguf;
-    config.model.assets.push_back({"weights", path, std::nullopt, std::nullopt});
+    config.model.assets.push_back({Chorus::AssetRole::Weights, path, std::nullopt, std::nullopt});
     return config;
 }
 
@@ -89,7 +89,7 @@ void test_unsupported_model_format_is_rejected() {
 void test_unknown_llama_load_option_is_rejected() {
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH); // existing macro/constant in this file
-    config.backend_options["llama"] = Chorus::OptionMap{{"warp_factor", int64_t{9}}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"warp_factor", int64_t{9}}};
     auto err = engine.initialize(config);
     ASSERT_TRUE(err.has_value());
     ASSERT_TRUE(*err == Chorus::ChorusError::UnsupportedOption);
@@ -100,7 +100,7 @@ void test_model_loading() {
 
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::OptionMap{
         {"context_size", int64_t{1024}},
         {"use_gpu", false},
     };
@@ -120,7 +120,7 @@ void test_llama_cpu_placement_avoids_vulkan_compute_buffer() {
     ScopedLlamaLogCapture log_capture;
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
     std::mutex mutex;
@@ -132,7 +132,7 @@ void test_llama_cpu_placement_avoids_vulkan_compute_buffer() {
     Chorus::ChorusRequest request;
     request.id = 9001;
     request.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
-    request.gen_config.common.max_tokens = 1;
+    request.gen_config.max_tokens = 1;
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
         if (signal.type == Chorus::EventType::Token) {
@@ -172,7 +172,7 @@ void test_simple_generation() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
 
     std::atomic<bool> done{false};
     std::string full_response = "";
@@ -185,8 +185,8 @@ void test_simple_generation() {
     Chorus::ChorusRequest chorus_request;
     chorus_request.id = 1;
     chorus_request.prompt = "<start_of_turn>user\nHello!<end_of_turn>\n<start_of_turn>model\n";
-    chorus_request.gen_config.common.max_tokens = 20;
-    chorus_request.gen_config.common.temperature = 0.7f;
+    chorus_request.gen_config.max_tokens = 20;
+    chorus_request.gen_config.temperature = 0.7f;
 
     chorus_request.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (sig.type == Chorus::EventType::Token) {
@@ -228,7 +228,7 @@ void test_llama_batch_controls_create_context_and_generate_four_tokens() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::OptionMap{
         {"use_gpu", false},
         {"n_batch", int64_t{96}},
         {"n_ubatch", int64_t{32}},
@@ -244,8 +244,8 @@ void test_llama_batch_controls_create_context_and_generate_four_tokens() {
     Chorus::ChorusRequest request;
     request.id = 96;
     request.prompt = "<start_of_turn>user\nSay hello.<end_of_turn>\n<start_of_turn>model\n";
-    request.gen_config.common.max_tokens = 4;
-    request.gen_config.backend_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
+    request.gen_config.max_tokens = 4;
+    request.gen_config.provider_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
         if (signal.type == Chorus::EventType::Token)
             token_chunks++;
@@ -274,7 +274,7 @@ void test_concurrent_requests_complete_with_multiple_slots() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::OptionMap{
         {"use_gpu", false},
         {"num_slots", int64_t{2}},
     };
@@ -292,7 +292,7 @@ void test_concurrent_requests_complete_with_multiple_slots() {
         Chorus::ChorusRequest request;
         request.id = slot_index;
         request.prompt = "<start_of_turn>user\nHello!<end_of_turn>\n<start_of_turn>model\n";
-        request.gen_config.common.max_tokens = 10;
+        request.gen_config.max_tokens = 10;
         request.on_event = [&, slot_index](const Chorus::ChorusSignal& sig) {
             if (sig.type == Chorus::EventType::Token) {
                 std::lock_guard<std::mutex> lock(responses_mutex);
@@ -324,7 +324,7 @@ void test_max_tokens_counts_generated_not_prompt_tokens() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::OptionMap{
         {"use_gpu", false},
         {"context_size", int64_t{1024}},
     };
@@ -345,7 +345,7 @@ void test_max_tokens_counts_generated_not_prompt_tokens() {
     Chorus::ChorusRequest req;
     req.id = 1;
     req.prompt = long_prompt;
-    req.gen_config.common.max_tokens = 8;
+    req.gen_config.max_tokens = 8;
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (sig.type == Chorus::EventType::Token)
             token_count++;
@@ -370,7 +370,7 @@ void test_engine_reinitializes_and_generates_after_stop() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
 
     std::atomic<int> tokens{0};
     std::atomic<bool> done{false};
@@ -389,7 +389,7 @@ void test_engine_reinitializes_and_generates_after_stop() {
     Chorus::ChorusRequest req;
     req.id = 1;
     req.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
-    req.gen_config.common.max_tokens = 5;
+    req.gen_config.max_tokens = 5;
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (sig.type == Chorus::EventType::Token)
             tokens++;
@@ -412,21 +412,21 @@ void test_engine_reinitializes_and_generates_after_stop() {
 void test_llama_declares_gguf_and_chorus_managed() {
     Chorus::LlamaEngine engine; // pre-init envelope
     auto caps = engine.capabilities();
-    ASSERT_EQ(caps.backend_id, std::string("llama"));
+    ASSERT_EQ(caps.provider_id, std::string("llama"));
     ASSERT_TRUE(caps.scheduling == Chorus::SchedulingAuthority::ChorusManaged);
     ASSERT_EQ(caps.model_formats.size(), (size_t)1);
     ASSERT_TRUE(caps.model_formats[0] == Chorus::ModelFormat::Gguf);
     ASSERT_EQ(caps.constraint_formats.size(), size_t{2});
     ASSERT_TRUE(caps.constraint_formats[0] == Chorus::ConstraintFormat::Gbnf);
     ASSERT_TRUE(caps.constraint_formats[1] == Chorus::ConstraintFormat::JsonSchema);
-    ASSERT_EQ(caps.portable_generation_options.size(), (size_t)10);
+    ASSERT_EQ(caps.common_generation_options.size(), (size_t)10);
     ASSERT_TRUE(
-        std::find(caps.portable_generation_options.begin(), caps.portable_generation_options.end(), "constraint") !=
-        caps.portable_generation_options.end()
+        std::find(caps.common_generation_options.begin(), caps.common_generation_options.end(), "constraint") !=
+        caps.common_generation_options.end()
     );
     ASSERT_TRUE(
-        std::find(caps.portable_generation_options.begin(), caps.portable_generation_options.end(), "stop") !=
-        caps.portable_generation_options.end()
+        std::find(caps.common_generation_options.begin(), caps.common_generation_options.end(), "stop") !=
+        caps.common_generation_options.end()
     );
     ASSERT_TRUE(caps.cancellation);
 }
@@ -445,15 +445,15 @@ void test_llama_cancellation_removes_queued_request_before_active_request_finish
     auto state = std::make_shared<State>();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
     Chorus::ChorusRequest active;
     active.id = 301;
     active.prompt = "<start_of_turn>user\nTell me a very long story.<end_of_turn>\n<start_of_turn>model\n";
-    active.gen_config.common.max_tokens = 512;
-    active.gen_config.backend_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
+    active.gen_config.max_tokens = 512;
+    active.gen_config.provider_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
     active.on_event = [state](Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
         if (signal.type == Chorus::EventType::Token) {
@@ -479,7 +479,7 @@ void test_llama_cancellation_removes_queued_request_before_active_request_finish
     Chorus::ChorusRequest queued;
     queued.id = 302;
     queued.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
-    queued.gen_config.common.max_tokens = 2;
+    queued.gen_config.max_tokens = 2;
     queued.on_event = [state](Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->queued_signals.push_back(signal);
@@ -519,15 +519,15 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
     std::vector<Chorus::ChorusSignal> active_signals;
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
     Chorus::ChorusRequest active;
     active.id = 311;
     active.prompt = "<start_of_turn>user\nTell me a very long story.<end_of_turn>\n<start_of_turn>model\n";
-    active.gen_config.common.max_tokens = 512;
-    active.gen_config.backend_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
+    active.gen_config.max_tokens = 512;
+    active.gen_config.provider_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
     active.on_event = [&](Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
         active_signals.push_back(signal);
@@ -569,7 +569,7 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
     Chorus::ChorusRequest reuse;
     reuse.id = 312;
     reuse.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
-    reuse.gen_config.common.max_tokens = 2;
+    reuse.gen_config.max_tokens = 2;
     reuse.on_event = [&](Chorus::ChorusSignal& signal) {
         if (signal.type != Chorus::EventType::Stop && signal.type != Chorus::EventType::Error)
             return;
@@ -609,7 +609,7 @@ void test_llama_cancellation_committed_during_decode_failure_wins_once() {
     Chorus::LlamaEngine engine;
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::OptionMap{
         {"use_gpu", false},
         {"context_size", int64_t{64}},
         {"tokens_per_tick", int64_t{16}},
@@ -628,7 +628,7 @@ void test_llama_cancellation_committed_during_decode_failure_wins_once() {
     Chorus::ChorusRequest request;
     request.id = 321;
     request.prompt = huge_prompt;
-    request.gen_config.common.max_tokens = 8;
+    request.gen_config.max_tokens = 8;
     request.on_event = [&](Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
         signals.push_back(signal);
@@ -672,7 +672,7 @@ void test_llama_cancellation_from_committed_buffered_token_does_not_replace_stop
     };
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
@@ -681,10 +681,10 @@ void test_llama_cancellation_from_committed_buffered_token_does_not_replace_stop
         Chorus::ChorusRequest request;
         request.id = id;
         request.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
-        request.gen_config.common.max_tokens = 1;
-        request.gen_config.common.seed = 42;
-        request.gen_config.common.temperature = 0.0f;
-        request.gen_config.common.stop = std::move(stop);
+        request.gen_config.max_tokens = 1;
+        request.gen_config.seed = 42;
+        request.gen_config.temperature = 0.0f;
+        request.gen_config.stop = std::move(stop);
         request.on_event = [&, result, id, cancel_from_token](Chorus::ChorusSignal& signal) {
             {
                 std::lock_guard<std::mutex> lock(result->mutex);
@@ -743,7 +743,7 @@ void test_llama_stop_waits_for_active_cancellation_callback_and_drains_queue() {
     auto state = std::make_shared<State>();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
@@ -768,8 +768,8 @@ void test_llama_stop_waits_for_active_cancellation_callback_and_drains_queue() {
     Chorus::ChorusRequest active;
     active.id = 331;
     active.prompt = "<start_of_turn>user\nTell me a very long story.<end_of_turn>\n<start_of_turn>model\n";
-    active.gen_config.common.max_tokens = 512;
-    active.gen_config.backend_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
+    active.gen_config.max_tokens = 512;
+    active.gen_config.provider_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
     active.on_event = callback;
     engine.submit_request(active);
 
@@ -791,7 +791,7 @@ void test_llama_stop_waits_for_active_cancellation_callback_and_drains_queue() {
     Chorus::ChorusRequest queued;
     queued.id = 332;
     queued.prompt = "queued request";
-    queued.gen_config.common.max_tokens = 2;
+    queued.gen_config.max_tokens = 2;
     queued.on_event = callback;
     engine.submit_request(queued);
 
@@ -876,17 +876,17 @@ void test_llama_rejects_unwired_controls_explicitly() {
     Chorus::ChorusRequest req;
     req.id = 1;
     req.prompt = "hi";
-    req.gen_config.common.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= \"x\""};
+    req.gen_config.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= \"x\""};
     auto r = engine.validate_request(req);
     ASSERT_TRUE(!r.has_value());
 
-    req.gen_config.common.constraint.reset();
-    req.gen_config.backend_options["llama"] = Chorus::OptionMap{{"mirostat", int64_t{2}}};
+    req.gen_config.constraint.reset();
+    req.gen_config.provider_options["llama"] = Chorus::OptionMap{{"mirostat", int64_t{2}}};
     auto r2 = engine.validate_request(req);
     ASSERT_TRUE(!r2.has_value());
 
     // A known key with the wrong value type must reject.
-    req.gen_config.backend_options["llama"] = Chorus::OptionMap{{"repeat_penalty", int64_t{2}}};
+    req.gen_config.provider_options["llama"] = Chorus::OptionMap{{"repeat_penalty", int64_t{2}}};
     auto r3 = engine.validate_request(req);
     ASSERT_TRUE(r3.has_value());
     ASSERT_TRUE(r3->error == Chorus::ChorusError::UnsupportedOption);
@@ -922,10 +922,10 @@ run_constraint_request(Chorus::LlamaEngine& engine, int64_t request_id, Chorus::
     Chorus::ChorusRequest request;
     request.id = request_id;
     request.prompt = "<start_of_turn>user\nRespond now.<end_of_turn>\n<start_of_turn>model\n";
-    request.gen_config.common.seed = 42;
-    request.gen_config.common.temperature = 0.0f;
-    request.gen_config.common.max_tokens = 32;
-    request.gen_config.common.constraint = std::move(constraint);
+    request.gen_config.seed = 42;
+    request.gen_config.temperature = 0.0f;
+    request.gen_config.max_tokens = 32;
+    request.gen_config.constraint = std::move(constraint);
     request.on_event = [state](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
         if (signal.type == Chorus::EventType::Token) {
@@ -959,7 +959,7 @@ void test_llama_gbnf_constraint_enforces_output() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
@@ -980,7 +980,7 @@ void test_llama_json_schema_constraint_enforces_output() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
@@ -1009,7 +1009,7 @@ void test_llama_invalid_grammar_isolated_to_one_constraint_request() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
@@ -1043,7 +1043,7 @@ void test_llama_conformance_seed_and_temperature() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
 
     auto run_once = [&](std::string& text) {
         std::mutex sig_mutex;
@@ -1058,9 +1058,9 @@ void test_llama_conformance_seed_and_temperature() {
         Chorus::ChorusRequest req;
         req.id = 1;
         req.prompt = "<start_of_turn>user\nTell me about dragons.<end_of_turn>\n<start_of_turn>model\n";
-        req.gen_config.common.seed = 42;
-        req.gen_config.common.temperature = 0.9f;
-        req.gen_config.common.max_tokens = 24;
+        req.gen_config.seed = 42;
+        req.gen_config.temperature = 0.9f;
+        req.gen_config.max_tokens = 24;
         req.on_event = [&](const Chorus::ChorusSignal& sig) {
             std::lock_guard<std::mutex> lock(sig_mutex);
             if (sig.type == Chorus::EventType::Token) {
@@ -1091,7 +1091,7 @@ void test_llama_conformance_max_tokens_bounds_output() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
 
     std::mutex sig_mutex;
     std::condition_variable cv;
@@ -1106,7 +1106,7 @@ void test_llama_conformance_max_tokens_bounds_output() {
     Chorus::ChorusRequest req;
     req.id = 1;
     req.prompt = "<start_of_turn>user\nTell me a long story.<end_of_turn>\n<start_of_turn>model\n";
-    req.gen_config.common.max_tokens = 8;
+    req.gen_config.max_tokens = 8;
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(sig_mutex);
         if (sig.type == Chorus::EventType::Token) {
@@ -1132,7 +1132,7 @@ void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::OptionMap{
         {"use_gpu", false},
         {"num_slots", int64_t{1}},
     };
@@ -1147,7 +1147,7 @@ void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
     Chorus::ChorusRequest zero;
     zero.id = 201;
     zero.prompt = "This prompt must not enter inference.";
-    zero.gen_config.common.max_tokens = 0;
+    zero.gen_config.max_tokens = 0;
     zero.on_event = [&](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
         zero_events.push_back(signal.type);
@@ -1165,7 +1165,7 @@ void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
     Chorus::ChorusRequest reuse;
     reuse.id = 202;
     reuse.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
-    reuse.gen_config.common.max_tokens = 2;
+    reuse.gen_config.max_tokens = 2;
     reuse.on_event = [&](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
         reuse_events.push_back(signal.type);
@@ -1192,7 +1192,7 @@ void test_llama_stop_marker_never_emits_and_slot_reuses() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::OptionMap{
         {"use_gpu", false},
         {"num_slots", int64_t{1}},
     };
@@ -1215,10 +1215,10 @@ void test_llama_stop_marker_never_emits_and_slot_reuses() {
         Chorus::ChorusRequest request;
         request.id = id;
         request.prompt = "<start_of_turn>user\nTell me about moths.<end_of_turn>\n<start_of_turn>model\n";
-        request.gen_config.common.seed = 42;
-        request.gen_config.common.temperature = 0.0f;
-        request.gen_config.common.max_tokens = max_tokens;
-        request.gen_config.common.stop = stops;
+        request.gen_config.seed = 42;
+        request.gen_config.temperature = 0.0f;
+        request.gen_config.max_tokens = max_tokens;
+        request.gen_config.stop = stops;
         request.on_event = [result, mutex, cv](const Chorus::ChorusSignal& signal) {
             std::lock_guard<std::mutex> lock(*mutex);
             if (signal.type == Chorus::EventType::Token)
@@ -1296,7 +1296,7 @@ struct ReentryState {
 int run_reentry_child(ReentryTrigger trigger) {
     auto state = std::make_shared<ReentryState>();
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
     Chorus::LlamaEngine engine;
     state->engine = &engine;
     if (engine.initialize(config).has_value())
@@ -1305,9 +1305,9 @@ int run_reentry_child(ReentryTrigger trigger) {
     Chorus::ChorusRequest request;
     request.id = 221;
     if (trigger == ReentryTrigger::ZeroBudget)
-        request.gen_config.common.max_tokens = 0;
+        request.gen_config.max_tokens = 0;
     else
-        request.gen_config.common.max_tokens = -2;
+        request.gen_config.max_tokens = -2;
     request.on_event = [state, trigger](const Chorus::ChorusSignal& signal) {
         const Chorus::EventType expected =
             trigger == ReentryTrigger::ZeroBudget ? Chorus::EventType::Stop : Chorus::EventType::Error;
@@ -1321,7 +1321,7 @@ int run_reentry_child(ReentryTrigger trigger) {
         Chorus::ChorusRequest followup;
         followup.id = 222;
         followup.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
-        followup.gen_config.common.max_tokens = 2;
+        followup.gen_config.max_tokens = 2;
         followup.on_event = [state](const Chorus::ChorusSignal& next_signal) {
             if (next_signal.type == Chorus::EventType::Stop || next_signal.type == Chorus::EventType::Error) {
                 std::lock_guard<std::mutex> lock(state->mutex);
@@ -1379,14 +1379,14 @@ void test_llama_stop_completion_releases_callback_resources() {
     std::weak_ptr<int> ownership_probe = owned;
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
     Chorus::ChorusRequest request;
     request.id = 223;
     request.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
-    request.gen_config.common.max_tokens = 1;
+    request.gen_config.max_tokens = 1;
     request.on_event = [owned, state](const Chorus::ChorusSignal& signal) {
         if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error)
             state->terminal = true;
@@ -1419,15 +1419,15 @@ void test_llama_stop_zero_completes_while_slot_is_occupied() {
     auto state = std::make_shared<State>();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
     Chorus::ChorusRequest busy;
     busy.id = 224;
     busy.prompt = "<start_of_turn>user\nTell me about moths.<end_of_turn>\n<start_of_turn>model\n";
-    busy.gen_config.common.max_tokens = 512;
-    busy.gen_config.backend_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
+    busy.gen_config.max_tokens = 512;
+    busy.gen_config.provider_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
     busy.on_event = [state](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
         if (signal.type == Chorus::EventType::Token) {
@@ -1445,7 +1445,7 @@ void test_llama_stop_zero_completes_while_slot_is_occupied() {
 
     Chorus::ChorusRequest zero;
     zero.id = 225;
-    zero.gen_config.common.max_tokens = 0;
+    zero.gen_config.max_tokens = 0;
     zero.on_event = [state](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->zero_events.push_back(signal.type);
@@ -1481,7 +1481,7 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     auto sweep = std::make_shared<Sweep>();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
@@ -1514,9 +1514,9 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     Chorus::ChorusRequest success;
     success.id = 401;
     success.prompt = moth_prompt;
-    success.gen_config.common.seed = 42;
-    success.gen_config.common.temperature = 0.0f;
-    success.gen_config.common.max_tokens = 16;
+    success.gen_config.seed = 42;
+    success.gen_config.temperature = 0.0f;
+    success.gen_config.max_tokens = 16;
     if (!drive(success, false)) {
         engine.stop();
         ASSERT_TRUE(false);
@@ -1537,7 +1537,7 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
         prompt += "<end_of_turn>\n<start_of_turn>model\n";
         limited.prompt = prompt;
     }
-    limited.gen_config.common.max_tokens = 4;
+    limited.gen_config.max_tokens = 4;
     if (!drive(limited, false)) {
         engine.stop();
         ASSERT_TRUE(false);
@@ -1547,7 +1547,7 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     Chorus::ChorusRequest zero;
     zero.id = 403;
     zero.prompt = "This prompt must not enter inference.";
-    zero.gen_config.common.max_tokens = 0;
+    zero.gen_config.max_tokens = 0;
     if (!drive(zero, false)) {
         engine.stop();
         ASSERT_TRUE(false);
@@ -1558,10 +1558,10 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     Chorus::ChorusRequest stop_match;
     stop_match.id = 404;
     stop_match.prompt = moth_prompt;
-    stop_match.gen_config.common.seed = 42;
-    stop_match.gen_config.common.temperature = 0.0f;
-    stop_match.gen_config.common.max_tokens = 16;
-    stop_match.gen_config.common.stop = {marker};
+    stop_match.gen_config.seed = 42;
+    stop_match.gen_config.temperature = 0.0f;
+    stop_match.gen_config.max_tokens = 16;
+    stop_match.gen_config.stop = {marker};
     if (!drive(stop_match, false)) {
         engine.stop();
         ASSERT_TRUE(false);
@@ -1571,8 +1571,8 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     Chorus::ChorusRequest cancelled;
     cancelled.id = 405;
     cancelled.prompt = "<start_of_turn>user\nTell me a very long story.<end_of_turn>\n<start_of_turn>model\n";
-    cancelled.gen_config.common.max_tokens = 512;
-    cancelled.gen_config.backend_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
+    cancelled.gen_config.max_tokens = 512;
+    cancelled.gen_config.provider_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
     if (!drive(cancelled, true)) {
         engine.stop();
         ASSERT_TRUE(false);
@@ -1583,8 +1583,8 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     Chorus::ChorusRequest bad_grammar;
     bad_grammar.id = 406;
     bad_grammar.prompt = moth_prompt;
-    bad_grammar.gen_config.common.max_tokens = 8;
-    bad_grammar.gen_config.common.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= ["};
+    bad_grammar.gen_config.max_tokens = 8;
+    bad_grammar.gen_config.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= ["};
     if (!drive(bad_grammar, false)) {
         engine.stop();
         ASSERT_TRUE(false);
@@ -1618,7 +1618,7 @@ void test_llama_terminal_invariant_decode_failure_ends_once() {
     std::vector<Chorus::ChorusSignal> terminals;
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{
+    config.provider_options["llama"] = Chorus::OptionMap{
         {"use_gpu", false},
         {"context_size", int64_t{64}},
         {"tokens_per_tick", int64_t{16}},
@@ -1634,7 +1634,7 @@ void test_llama_terminal_invariant_decode_failure_ends_once() {
     Chorus::ChorusRequest request;
     request.id = 411;
     request.prompt = huge_prompt;
-    request.gen_config.common.max_tokens = 8;
+    request.gen_config.max_tokens = 8;
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
         if (signal.type != Chorus::EventType::Stop && signal.type != Chorus::EventType::Error)
             return;
@@ -1668,15 +1668,15 @@ void test_llama_terminal_invariant_engine_stop_ends_once() {
     std::vector<Chorus::ChorusSignal> terminals;
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
     Chorus::ChorusRequest request;
     request.id = 421;
     request.prompt = "<start_of_turn>user\nTell me a very long story.<end_of_turn>\n<start_of_turn>model\n";
-    request.gen_config.common.max_tokens = 512;
-    request.gen_config.backend_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
+    request.gen_config.max_tokens = 512;
+    request.gen_config.provider_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
         if (signal.type == Chorus::EventType::Token) {
@@ -1722,7 +1722,7 @@ void test_llama_two_slot_one_cancels_one_completes() {
     auto state = std::make_shared<State>();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{2}}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}, {"num_slots", int64_t{2}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
@@ -1732,8 +1732,8 @@ void test_llama_two_slot_one_cancels_one_completes() {
     Chorus::ChorusRequest cancel_req;
     cancel_req.id = cancel_id;
     cancel_req.prompt = "<start_of_turn>user\nTell me a very long story.<end_of_turn>\n<start_of_turn>model\n";
-    cancel_req.gen_config.common.max_tokens = 512;
-    cancel_req.gen_config.backend_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
+    cancel_req.gen_config.max_tokens = 512;
+    cancel_req.gen_config.provider_options["llama"] = Chorus::OptionMap{{"ignore_eos", true}};
     cancel_req.on_event = [state](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
         if (signal.type == Chorus::EventType::Token) {
@@ -1748,7 +1748,7 @@ void test_llama_two_slot_one_cancels_one_completes() {
     Chorus::ChorusRequest complete_req;
     complete_req.id = complete_id;
     complete_req.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
-    complete_req.gen_config.common.max_tokens = 8;
+    complete_req.gen_config.max_tokens = 8;
     complete_req.on_event = [state](const Chorus::ChorusSignal& signal) {
         if (signal.type != Chorus::EventType::Stop && signal.type != Chorus::EventType::Error)
             return;
@@ -1795,7 +1795,7 @@ namespace {
 
 Chorus::ChorusConfig make_chat_config() {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::OptionMap{{"use_gpu", false}};
     return config;
 }
 
@@ -1856,7 +1856,7 @@ void test_chat_messages_render_and_generate() {
     Chorus::ChorusRequest request;
     request.id = 901;
     request.messages = {{"user", "Reply with the single word: hello"}};
-    request.gen_config.common.max_tokens = 16;
+    request.gen_config.max_tokens = 16;
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
         if (sig.type == Chorus::EventType::Token)
@@ -1893,21 +1893,21 @@ void test_multi_turn_conversation_stays_contextual() {
     // Spec integration bullet: a 2-3 turn conversation is coherent. Exercised
     // at the RUNTIME level so history assembly itself is under test.
     Chorus::ChorusRuntime runtime;
-    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Backend::Llama), make_chat_config()).has_value());
+    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), make_chat_config()).has_value());
 
     Chorus::GenerationRequest turn1;
     turn1.prompt = "My name is Trebor. Remember my name.";
     turn1.session_id = "npc_1";
-    turn1.overrides.max_tokens = Chorus::OptionalPatch<int32_t>::set(48);
-    turn1.overrides.temperature = Chorus::OptionalPatch<float>::set(0.0f); // greedy: deterministic recall
+    turn1.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(48);
+    turn1.overrides.temperature = Chorus::ConfigPatch<float>::set(0.0f); // greedy: deterministic recall
     ASSERT_TRUE(runtime.submit(turn1).ok());
     ASSERT_TRUE(drain_runtime_until_terminal(runtime).terminal_kind == Chorus::RuntimeEvent::Kind::Complete);
 
     Chorus::GenerationRequest turn2;
     turn2.prompt = "What is my name? Answer with just the name.";
     turn2.session_id = "npc_1";
-    turn2.overrides.max_tokens = Chorus::OptionalPatch<int32_t>::set(24);
-    turn2.overrides.temperature = Chorus::OptionalPatch<float>::set(0.0f);
+    turn2.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(24);
+    turn2.overrides.temperature = Chorus::ConfigPatch<float>::set(0.0f);
     ASSERT_TRUE(runtime.submit(turn2).ok());
     auto drained = drain_runtime_until_terminal(runtime);
     ASSERT_TRUE(drained.terminal_kind == Chorus::RuntimeEvent::Kind::Complete);
@@ -1921,9 +1921,9 @@ void test_model_truncation_preserves_system_message() {
     // render hook proves the system message survived in the fitted window.
     Chorus::ChorusRuntime runtime;
     auto config = make_gguf_config(MODEL_PATH);
-    config.backend_options["llama"] =
+    config.provider_options["llama"] =
         Chorus::OptionMap{{"context_size", int64_t{512}}, {"num_slots", int64_t{1}}, {"use_gpu", false}};
-    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Backend::Llama), config).has_value());
+    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), config).has_value());
 
     std::vector<Chorus::ChatMessage> history{{"system", "You are Brunn the blacksmith."}};
     for (int i = 0; i < 30; ++i) {
@@ -1933,7 +1933,7 @@ void test_model_truncation_preserves_system_message() {
     ASSERT_TRUE(!runtime.import_conversation_history("npc_1", std::move(history)).has_value());
 
     Chorus::GenerationConfigPatch gen;
-    gen.max_tokens = Chorus::OptionalPatch<int32_t>::set(64);
+    gen.max_tokens = Chorus::ConfigPatch<int32_t>::set(64);
     auto fitted = runtime.render_prompt("npc_1", "", {}, gen);
     ASSERT_TRUE(fitted.has_value());
     ASSERT_TRUE(fitted->find("Brunn the blacksmith") != std::string::npos); // system pinned

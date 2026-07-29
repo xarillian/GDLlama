@@ -497,7 +497,7 @@ void test_runtime_exactly_one_terminal_per_accepted_request() {
         ASSERT_TRUE(events.back().error == Chorus::ChorusError::Decode);
     }
 
-    // Broken backend emitting a duplicate terminal: the runtime still surfaces one.
+    // Broken provider emitting a duplicate terminal: the runtime still surfaces one.
     {
         Chorus::ChorusRuntime runtime;
         auto engine = std::make_unique<SyncMockEngine>();

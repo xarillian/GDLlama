@@ -7,9 +7,9 @@
 
 void test_engine_capabilities_defaults_are_conservative() {
     Chorus::EngineCapabilities caps;
-    // BackendManaged is the deliberate conservative default: an engine that
+    // ProviderManaged is the deliberate conservative default: an engine that
     // forgets to set it must not claim Chorus-managed frame guarantees.
-    ASSERT_TRUE(caps.scheduling == Chorus::SchedulingAuthority::BackendManaged);
+    ASSERT_TRUE(caps.scheduling == Chorus::SchedulingAuthority::ProviderManaged);
     ASSERT_TRUE(!caps.streaming);
     ASSERT_TRUE(!caps.cancellation);
     ASSERT_TRUE(!caps.native_sessions);
@@ -20,10 +20,10 @@ void test_engine_capabilities_defaults_are_conservative() {
 }
 
 void test_model_spec_defaults() {
-    Chorus::ModelSpec spec;
+    Chorus::InitialModelSpec spec;
     ASSERT_TRUE(spec.format == Chorus::ModelFormat::Auto);
     ASSERT_TRUE(spec.assets.empty());
-    ASSERT_TRUE(spec.backend_options.empty());
+    ASSERT_TRUE(spec.provider_options.empty());
 }
 
 void test_new_error_categories_exist() {
@@ -40,7 +40,7 @@ void test_new_error_categories_exist() {
 int run_contract_type_tests() {
     std::cout << "\n--- Contract Type Tests ---\n";
     run_test("EngineCapabilities: conservative defaults", test_engine_capabilities_defaults_are_conservative);
-    run_test("ModelSpec: defaults", test_model_spec_defaults);
+    run_test("InitialModelSpec: defaults", test_model_spec_defaults);
     run_test("ChorusError: 3c categories", test_new_error_categories_exist);
     return g_tests_failed;
 }

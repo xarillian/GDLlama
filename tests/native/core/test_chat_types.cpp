@@ -28,15 +28,15 @@ void test_token_signal_defaults_to_content_channel() {
 void test_thinking_patch_set_and_clear() {
     Chorus::GenerationConfig base;
     Chorus::GenerationConfigPatch patch;
-    patch.thinking = Chorus::OptionalPatch<bool>::set(false);
+    patch.thinking = Chorus::ConfigPatch<bool>::set(false);
     auto with = Chorus::apply_generation_patch(base, patch);
-    ASSERT_TRUE(with.common.thinking.has_value());
-    ASSERT_TRUE(*with.common.thinking == false);
+    ASSERT_TRUE(with.thinking.has_value());
+    ASSERT_TRUE(*with.thinking == false);
 
     Chorus::GenerationConfigPatch clear_patch;
-    clear_patch.thinking = Chorus::OptionalPatch<bool>::clear();
+    clear_patch.thinking = Chorus::ConfigPatch<bool>::clear();
     auto cleared = Chorus::apply_generation_patch(with, clear_patch);
-    ASSERT_TRUE(!cleared.common.thinking.has_value());
+    ASSERT_TRUE(!cleared.thinking.has_value());
 }
 
 void test_render_chat_prompt_defaults_to_nullopt() {

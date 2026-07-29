@@ -1,4 +1,4 @@
-#include "chorus/backends/llama/llama_chat.hpp"
+#include "chorus/providers/llama/llama_chat.hpp"
 
 #include <algorithm>
 #include <cstddef>

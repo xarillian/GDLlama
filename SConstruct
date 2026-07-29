@@ -183,7 +183,7 @@ env.Append(CPPPATH=["include", "src"])
 # factory, or a host adapter fails to compile rather than waiting on review
 # (ARCHITECTURE.md, include discipline). The matching link seam -- an
 # inner-layer target that builds with no llama.cpp artifacts present -- is
-# heavier and lands with #11, where a second heavyweight backend pays for it.
+# heavier and lands with #11, where a second heavyweight provider pays for it.
 llama_cpppath = [
     "external/llama.cpp/include",
     "external/llama.cpp/common",
@@ -210,8 +210,8 @@ VariantDir("bin/obj/tests",        "tests",            duplicate=0)
 sources_core    = Glob("bin/obj/chorus/core/*.cpp")
 sources_factory = Glob("bin/obj/chorus/*.cpp")
 sources_runtime = Glob("bin/obj/chorus/runtime/*.cpp")
-sources_echo    = Glob("bin/obj/chorus/backends/echo/*.cpp")
-sources_llama   = Glob("bin/obj/chorus/backends/llama/*.cpp")
+sources_echo    = Glob("bin/obj/chorus/providers/echo/*.cpp")
+sources_llama   = Glob("bin/obj/chorus/providers/llama/*.cpp")
 sources_godot   = Glob("bin/obj/godot_chorus/*.cpp")
 sources_tests   = (
     Glob("bin/obj/tests/native/*.cpp") +
@@ -219,12 +219,12 @@ sources_tests   = (
     Glob("bin/obj/tests/native/wlib/*.cpp") +
     Glob("bin/obj/tests/native/core/*.cpp") +
     Glob("bin/obj/tests/native/factory/*.cpp") +
-    Glob("bin/obj/tests/native/backends/echo/*.cpp") +
+    Glob("bin/obj/tests/native/providers/echo/*.cpp") +
     Glob("bin/obj/tests/native/runtime/*.cpp")
 )
 # Kept apart from the rest: these are the only test objects that may see a
 # vendor header, so they compile under the scoped env alongside the provider.
-sources_tests_llama = Glob("bin/obj/tests/native/backends/llama/*.cpp")
+sources_tests_llama = Glob("bin/obj/tests/native/providers/llama/*.cpp")
 
 # Tests compile under their own env. Built by one helper so the compiledb section
 # below mirrors the exact flags the real test build uses (clangd needs them too).

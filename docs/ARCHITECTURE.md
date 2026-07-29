@@ -52,10 +52,10 @@ Each node has a distinct kind of responsibility:
 - **Generic utilities** sit below everything: reusable tools with no
   dependencies beyond the standard library, includable from any layer.
 
-A **provider** is any implementation of a service contract. In code, the
-selectable catalog entry for a provider is a **backend**; a live service
-instance built from that selection is an **engine**. The provider factory is
-the bridge between the two: backend selection in, engine instance out.
+A **provider** is any implementation of a service contract; a live service
+instance built from a provider selection is an **engine**. The provider
+factory is the bridge between the two: provider selection in, engine
+instance out.
 
 ### Why dependencies point inward
 
@@ -238,7 +238,7 @@ Where each part of the graph lives:
 |---|---|
 | Domain contracts | `include/chorus/core` (headers), `src/chorus/core` (implementations) |
 | Application orchestration | `include/chorus/runtime`, `src/chorus/runtime` |
-| Infrastructure providers | `src/chorus/backends/<provider>` |
+| Infrastructure providers | `src/chorus/providers/<provider>` |
 | Provider factory | `include/chorus/engine_factory.hpp`, `src/chorus/engine_factory.cpp` |
 | Host adapters | `src/godot_chorus` (Godot), `plugin/` (editor shell) |
 | Composition roots | each host adapter's initialization path |

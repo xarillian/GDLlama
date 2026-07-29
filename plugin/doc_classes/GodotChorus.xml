@@ -113,7 +113,7 @@
 		</method>
 	</methods>
 	<members>
-		<member name="backend" type="int" setter="set_backend" getter="get_backend" enum="GodotChorus.BackendChoice" default="0">
+		<member name="provider" type="int" setter="set_provider" getter="get_provider" enum="GodotChorus.ProviderChoice" default="0">
 		</member>
 		<member name="chat_template" type="String" setter="set_chat_template" getter="get_chat_template" default="&quot;&quot;">
 		</member>
@@ -187,9 +187,9 @@
 		</constant>
 		<constant name="ERR_UNKNOWN" value="12" enum="ErrorCode">
 		</constant>
-		<constant name="BACKEND_LLAMA" value="0" enum="BackendChoice">
+		<constant name="PROVIDER_LLAMA" value="0" enum="ProviderChoice">
 		</constant>
-		<constant name="BACKEND_ECHO" value="1" enum="BackendChoice">
+		<constant name="PROVIDER_ECHO" value="1" enum="ProviderChoice">
 		</constant>
 		<constant name="TURN_NONE" value="0" enum="TurnOutcomeCode">
 		</constant>

@@ -1,4 +1,4 @@
-#include "chorus/backends/llama/llama_engine.hpp"
+#include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/core/common.hpp"
 #include "test_utils.hpp"
 
@@ -15,8 +15,8 @@ static Chorus::ChorusConfig make_reasoning_config() {
     Chorus::ChorusConfig config;
     config.model.model_id = "qwen3-0.6b";
     config.model.format = Chorus::ModelFormat::Gguf;
-    config.model.assets.push_back({"weights", kReasoningModelPath, std::nullopt, std::nullopt});
-    config.backend_options["llama"] = Chorus::OptionMap{{"context_size", int64_t{2048}}, {"num_slots", int64_t{1}}};
+    config.model.assets.push_back({Chorus::AssetRole::Weights, kReasoningModelPath, std::nullopt, std::nullopt});
+    config.provider_options["llama"] = Chorus::OptionMap{{"context_size", int64_t{2048}}, {"num_slots", int64_t{1}}};
     return config;
 }
 
@@ -40,7 +40,7 @@ void test_reasoning_model_splits_channels() {
     Chorus::ChorusRequest request;
     request.id = 1001;
     request.messages = {{"user", "What is 2+2? Answer with just the number."}};
-    request.gen_config.common.max_tokens = 512; // room for the think block
+    request.gen_config.max_tokens = 512; // room for the think block
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
         if (sig.type == Chorus::EventType::Token) {
@@ -79,8 +79,8 @@ void test_thinking_disabled_yields_no_reasoning() {
     Chorus::ChorusRequest request;
     request.id = 1002;
     request.messages = {{"user", "Say hello."}};
-    request.gen_config.common.thinking = false;
-    request.gen_config.common.max_tokens = 64;
+    request.gen_config.thinking = false;
+    request.gen_config.max_tokens = 64;
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
         if (sig.type == Chorus::EventType::Token)

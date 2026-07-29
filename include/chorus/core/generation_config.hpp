@@ -10,6 +10,7 @@
 
 namespace Chorus {
 
+/// Grammar schema an OutputConstraint must satisfy.
 enum class ConstraintFormat {
     Gbnf,
     JsonSchema,
@@ -17,75 +18,116 @@ enum class ConstraintFormat {
     Lark,
 };
 
+/*
+ * Restricts output to a grammar.
+ *
+ * Generation is normally free text, and free text is sometimes useless. A caller that needs
+ * parseable output supplies a grammar here, and the provider samples only tokens that obey it.
+ */
 struct OutputConstraint {
     ConstraintFormat format = ConstraintFormat::Gbnf;
-    std::string source; // grammar text, schema JSON, pattern, ...
+    std::string source;
 };
 
-// Every field optional: unset means "backend default", set is a deliberate
-// instruction the backend must honor or reject (spec 3c-D). No literal
-// defaults here; resolution happens inside each backend.
-struct PortableGenerationConfig {
+/*
+ * Generation knobs every provider understands, plus options addressed to one
+ * provider by namespace, e.g. provider_options["llama"]["repeat_penalty"].
+ *
+ * Unset fields use the provider's default for the loaded model; a set field is a
+ * deliberate instruction the provider must honor or reject, never silently ignore.
+ */
+struct GenerationConfig {
+    // Cap on generated tokens, reasoning included. -1 removes the cap;
+    // 0 completes immediately with empty output.
     std::optional<int32_t> max_tokens;
+    // Sampling randomness. 0 disables sampling, making the provider greedy.
     std::optional<float> temperature;
+    // Sample only from the k most probable tokens. 0 disables the filter.
     std::optional<int32_t> top_k;
+    // Nucleus sampling: sample from the smallest token set whose cumulative
+    // probability reaches this value, in [0.0, 1.0]. 1.0 disables the filter.
     std::optional<float> top_p;
+    // Sampler RNG seed.
+    // A provider with a narrower seed range rejects values it cannot honor rather than truncating them.
     std::optional<uint64_t> seed;
+    // Penalizes tokens by how often they have already appeared.
     std::optional<float> frequency_penalty;
+    // Penalizes tokens that have appeared at all.
     std::optional<float> presence_penalty;
-    // Empty = none requested. Stop sequences match the content channel only;
-    // reasoning output never meets them, so max_tokens is what bounds a
-    // think block.
+    // Sequences that cut generation short; "stop sequence". When one appears in the output,
+    // generation stops there and the marker is withheld from the emitted
+    // text. Markers match the content channel only; reasoning output never
+    // meets them, so a think block is bounded by max_tokens alone.
     std::vector<std::string> stop;
     std::optional<OutputConstraint> constraint;
-    // Reasoning-model thinking toggle; unset = template/backend default (on).
+    // Reasoning-model thinking toggle.
     std::optional<bool> thinking;
-};
-
-struct GenerationConfig {
-    PortableGenerationConfig common;
-    OptionMap backend_options; // e.g. backend_options["llama"]["repeat_penalty"]
+    // Options only one provider understands, keyed by its namespace.
+    OptionMap provider_options;
 };
 
 enum class PatchAction { Inherit, Set, Clear };
 
-template <typename T> struct OptionalPatch {
+/*
+ * One layer's instruction for a single knob.
+ *
+ * Generation config is layered: provider defaults beneath host defaults beneath per-request
+ * overrides. A layer says one of three things about a knob: leave what is below alone (Inherit),
+ * set it, or clear it back to the bottom. std::optional can say only two of those, so the third
+ * state rides along explicitly. Clear resets to empty: unset for an optional knob, the empty
+ * list for stop.
+ */
+template <typename T> struct ConfigPatch {
     PatchAction action = PatchAction::Inherit;
     T value{};
-    static OptionalPatch set(T value) { return {PatchAction::Set, std::move(value)}; }
-    static OptionalPatch clear() { return {PatchAction::Clear, {}}; }
+
+    static ConfigPatch set(T value) { return {PatchAction::Set, std::move(value)}; }
+    static ConfigPatch clear() { return {PatchAction::Clear, {}}; }
 };
 
-template <typename T> using ValuePatch = OptionalPatch<T>;
-
+/// One layer's overlay on a full GenerationConfig.
 struct GenerationConfigPatch {
-    OptionalPatch<int32_t> max_tokens;
-    OptionalPatch<float> temperature;
-    OptionalPatch<int32_t> top_k;
-    OptionalPatch<float> top_p;
-    OptionalPatch<uint64_t> seed;
-    OptionalPatch<float> frequency_penalty;
-    OptionalPatch<float> presence_penalty;
-    ValuePatch<std::vector<std::string>> stop;
-    OptionalPatch<OutputConstraint> constraint;
-    OptionalPatch<bool> thinking;
-    OptionMap backend_options;
-    // Dotted namespaced paths ("llama.repeat_penalty") to remove from the
-    // inherited options, applied after the merge above. Merging alone can only
-    // add or replace, so without this a patch cannot say what a host request
-    // spells as an explicit null: drop what the layer below set. Erasing a path
-    // that is not present is a no-op.
-    std::vector<std::string> backend_option_erasures;
+    ConfigPatch<int32_t> max_tokens;
+    ConfigPatch<float> temperature;
+    ConfigPatch<int32_t> top_k;
+    ConfigPatch<float> top_p;
+    ConfigPatch<uint64_t> seed;
+    ConfigPatch<float> frequency_penalty;
+    ConfigPatch<float> presence_penalty;
+    ConfigPatch<std::vector<std::string>> stop;
+    ConfigPatch<OutputConstraint> constraint;
+    ConfigPatch<bool> thinking;
+
+    OptionMap provider_options;
+
+    std::vector<std::string> provider_option_erasures;
 };
 
+/*
+ * Overlays one option map onto another.
+ *
+ * Keys absent from overrides survive; map-on-map collisions merge recursively;
+ * any other collision the override replaces wholesale. A merge *only* adds or
+ * replaces: removal is erase_option_path's job.
+ */
 OptionMap merge_option_maps(const OptionMap& base, const OptionMap& overrides);
 
-// Removes one dotted path from a namespaced option map. Intermediate segments
-// must be maps; anything else means the path does not exist, which is not an
-// error. Nested maps left empty by the removal stay -- an empty namespace is a
-// backend's own business to accept or reject.
+/*
+ * Removes one dotted path ("llama.repeat_penalty") from a namespaced option map.
+ *
+ * Intermediate segments must be maps; anything else means the path does not
+ * exist, which is not an error. Nested maps left empty by the removal stay:
+ * an empty namespace is a provider's own business to accept or reject.
+ */
 void erase_option_path(OptionMap& options, const std::string& path);
 
+/*
+ * Folds one config layer onto the config below it.
+ *
+ * Each knob obeys its ConfigPatch action; provider_options merge; the
+ * erasures run last, so one patch can both set options and drop inherited
+ * ones.
+ */
 GenerationConfig apply_generation_patch(const GenerationConfig& base, const GenerationConfigPatch& patch);
 
 } // namespace Chorus

@@ -3,7 +3,9 @@
 namespace Chorus {
 namespace {
 
-template <typename T> void apply_optional_patch(std::optional<T>& target, const OptionalPatch<T>& patch) {
+// One applier for both knob shapes: assigning an empty Target{} is "unset"
+// for an optional knob and "empty list" for a plain one.
+template <typename Target, typename T> void apply_patch(Target& target, const ConfigPatch<T>& patch) {
     switch (patch.action) {
     case PatchAction::Inherit:
         break;
@@ -11,20 +13,7 @@ template <typename T> void apply_optional_patch(std::optional<T>& target, const 
         target = patch.value;
         break;
     case PatchAction::Clear:
-        target.reset();
-        break;
-    }
-}
-
-template <typename T> void apply_value_patch(T& target, const ValuePatch<T>& patch) {
-    switch (patch.action) {
-    case PatchAction::Inherit:
-        break;
-    case PatchAction::Set:
-        target = patch.value;
-        break;
-    case PatchAction::Clear:
-        target = {};
+        target = Target{};
         break;
     }
 }
@@ -70,19 +59,25 @@ void erase_option_path(OptionMap& options, const std::string& path) {
 
 GenerationConfig apply_generation_patch(const GenerationConfig& base, const GenerationConfigPatch& patch) {
     GenerationConfig merged = base;
-    apply_optional_patch(merged.common.max_tokens, patch.max_tokens);
-    apply_optional_patch(merged.common.temperature, patch.temperature);
-    apply_optional_patch(merged.common.top_k, patch.top_k);
-    apply_optional_patch(merged.common.top_p, patch.top_p);
-    apply_optional_patch(merged.common.seed, patch.seed);
-    apply_optional_patch(merged.common.frequency_penalty, patch.frequency_penalty);
-    apply_optional_patch(merged.common.presence_penalty, patch.presence_penalty);
-    apply_value_patch(merged.common.stop, patch.stop);
-    apply_optional_patch(merged.common.constraint, patch.constraint);
-    apply_optional_patch(merged.common.thinking, patch.thinking);
-    merged.backend_options = merge_option_maps(base.backend_options, patch.backend_options);
-    for (const auto& path : patch.backend_option_erasures)
-        erase_option_path(merged.backend_options, path);
+    // Both structs are destructured in full so this function refuses to
+    // compile when a knob is added without its apply line.
+    auto& [max_tokens, temperature, top_k, top_p, seed, frequency_penalty, presence_penalty, stop, constraint, thinking, provider_options] =
+        merged;
+    const auto& [p_max_tokens, p_temperature, p_top_k, p_top_p, p_seed, p_frequency_penalty, p_presence_penalty, p_stop, p_constraint, p_thinking, p_provider_options, p_provider_option_erasures] =
+        patch;
+    apply_patch(max_tokens, p_max_tokens);
+    apply_patch(temperature, p_temperature);
+    apply_patch(top_k, p_top_k);
+    apply_patch(top_p, p_top_p);
+    apply_patch(seed, p_seed);
+    apply_patch(frequency_penalty, p_frequency_penalty);
+    apply_patch(presence_penalty, p_presence_penalty);
+    apply_patch(stop, p_stop);
+    apply_patch(constraint, p_constraint);
+    apply_patch(thinking, p_thinking);
+    provider_options = merge_option_maps(base.provider_options, p_provider_options);
+    for (const auto& path : p_provider_option_erasures)
+        erase_option_path(provider_options, path);
     return merged;
 }
 

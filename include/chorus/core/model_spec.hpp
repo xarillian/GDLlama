@@ -10,27 +10,46 @@
 namespace Chorus {
 
 enum class ModelFormat {
-    Auto, // request-side wildcard; a populated LoadedModelInfo never reports it
+    Auto, // format left unstated; the provider resolves it
     Gguf,
     LiteRtLm,
     SafeTensors,
     Remote,
 };
 
+enum class AssetRole {
+    Weights,
+    Projector, // multimodal projector (e.g. mmproj)
+    Tokenizer,
+    Drafter, // dratft model for speculative decoding
+    Package, // bundled archive carrying serveral roles
+};
+
+/*
+ * One artifact of a model.
+ *
+ * Models can be sets of artifcts. The provider loads them all and uses them
+ * according to their role.
+ */
 struct ModelAsset {
-    std::string role;     // "weights", "projector", "tokenizer", "drafter", "package"
-    std::string location; // local path, URI, repository reference, or backend identifier
+    AssetRole role = AssetRole::Weights;
+    std::string source; // local path, URI, repository reference, provider identifier
     std::optional<uint64_t> declared_size_bytes;
     std::optional<std::string> checksum;
 };
 
-// A load request, not an unquestioned source of truth: after initialization
-// the engine reports what it actually loaded via LoadedModelInfo.
-struct ModelSpec {
-    std::string model_id; // stable logical name chosen by the developer or asset manager
+/*
+ * The model an engine boots with.
+ *
+ * "Initial" is a lifetime rule. An engine's base model is fixed at boot time and
+ * cannot be changed without restarting the engine. Loading a different model means
+ * building a different engine, which keeps two models from ever being resident at once.
+ */
+struct InitialModelSpec {
+    std::string model_id; // Caller-selected model name, e.g. "gpt-3.5-turbo"
     ModelFormat format = ModelFormat::Auto;
     std::vector<ModelAsset> assets;
-    OptionMap backend_options; // artifact-scoped hints; engine-wide options live on ChorusConfig
+    OptionMap provider_options;
 };
 
 } // namespace Chorus

@@ -67,11 +67,11 @@ void test_option_schema_gate_naming_unknown_option_disables() {
 
 void test_option_schema_ignores_keys_outside_the_declaration() {
     const auto descriptors = schema();
-    Chorus::OptionMap stored{{"threads", int64_t{8}}, {"leftover_from_another_backend", int64_t{1}}};
+    Chorus::OptionMap stored{{"threads", int64_t{8}}, {"leftover_from_another_provider", int64_t{1}}};
 
     const auto resolved = Chorus::resolve_option_defaults(descriptors, stored);
     ASSERT_EQ(std::get<int64_t>(resolved.at("threads")), int64_t{8});
-    ASSERT_TRUE(resolved.find("leftover_from_another_backend") == resolved.end());
+    ASSERT_TRUE(resolved.find("leftover_from_another_provider") == resolved.end());
 }
 
 } // namespace

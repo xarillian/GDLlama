@@ -1,6 +1,6 @@
-#include "chorus/backends/llama/llama_engine.hpp"
-#include "chorus/backends/llama/llama_generation.hpp"
-#include "chorus/backends/llama/llama_scheduler.hpp"
+#include "chorus/providers/llama/llama_engine.hpp"
+#include "chorus/providers/llama/llama_generation.hpp"
+#include "chorus/providers/llama/llama_scheduler.hpp"
 #include "chorus/core/common.hpp"
 
 namespace Chorus {
@@ -101,7 +101,7 @@ bool LlamaEngine::is_initialized() const {
 
 EngineCapabilities LlamaEngine::capabilities() const {
     EngineCapabilities caps;
-    caps.backend_id = "llama";
+    caps.provider_id = "llama";
     caps.model_formats = {ModelFormat::Gguf};
     caps.input_modalities = {Modality::Text};
     caps.output_modalities = {Modality::Text};
@@ -111,8 +111,8 @@ EngineCapabilities LlamaEngine::capabilities() const {
     caps.cancellation = true;
     caps.prompt_rendering = true; // #5
     // native_sessions arrives with #9, embeddings with #6.
-    caps.portable_generation_options = llama_portable_generation_option_names();
-    caps.backend_generation_options = llama_backend_generation_option_names();
+    caps.common_generation_options = llama_common_generation_option_names();
+    caps.provider_generation_options = llama_provider_generation_option_names();
     caps.load_options = llama_load_option_descriptors();
     return caps;
 }

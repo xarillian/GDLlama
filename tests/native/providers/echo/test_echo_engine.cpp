@@ -1,4 +1,4 @@
-#include "chorus/backends/echo/echo_engine.hpp"
+#include "chorus/providers/echo/echo_engine.hpp"
 #include "chorus/core/common.hpp"
 #include "test_utils.hpp"
 
@@ -18,7 +18,7 @@ void test_echo_initializes_without_a_model_file() {
     Chorus::EchoEngine engine;
     ASSERT_TRUE(!engine.is_initialized());
 
-    Chorus::ChorusConfig config; // empty ModelSpec deliberately: Echo needs no model
+    Chorus::ChorusConfig config; // empty InitialModelSpec deliberately: Echo needs no model
     ASSERT_TRUE(!engine.initialize(config).has_value());
     ASSERT_TRUE(engine.is_initialized());
 
@@ -98,14 +98,14 @@ void test_echo_capabilities_deterministic_across_init() {
     Chorus::ChorusConfig config;
     ASSERT_TRUE(!engine.initialize(config).has_value());
     auto after = engine.capabilities();
-    ASSERT_EQ(before.backend_id, std::string("echo"));
-    ASSERT_EQ(after.backend_id, before.backend_id);
+    ASSERT_EQ(before.provider_id, std::string("echo"));
+    ASSERT_EQ(after.provider_id, before.provider_id);
     ASSERT_TRUE(before.streaming && after.streaming);
-    ASSERT_TRUE(before.scheduling == Chorus::SchedulingAuthority::BackendManaged);
+    ASSERT_TRUE(before.scheduling == Chorus::SchedulingAuthority::ProviderManaged);
     ASSERT_TRUE(before.cancellation && after.cancellation);
-    ASSERT_EQ(before.portable_generation_options.size(), size_t{1});
-    ASSERT_EQ(before.portable_generation_options[0], std::string("max_tokens"));
-    ASSERT_TRUE(after.portable_generation_options == before.portable_generation_options);
+    ASSERT_EQ(before.common_generation_options.size(), size_t{1});
+    ASSERT_EQ(before.common_generation_options[0], std::string("max_tokens"));
+    ASSERT_TRUE(after.common_generation_options == before.common_generation_options);
     ASSERT_TRUE(!engine.loaded_model_info().has_value()); // model-free by design
     engine.stop();
 }
@@ -128,9 +128,9 @@ void test_echo_ignores_content_controls_with_one_warning() {
     Chorus::ChorusRequest req;
     req.id = 1;
     req.prompt = "hi";
-    req.gen_config.common.temperature = 0.5f;
-    req.gen_config.common.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= \"x\""};
-    req.gen_config.backend_options["llama"] = Chorus::OptionMap{{"repeat_penalty", 1.1}};
+    req.gen_config.temperature = 0.5f;
+    req.gen_config.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= \"x\""};
+    req.gen_config.provider_options["llama"] = Chorus::OptionMap{{"repeat_penalty", 1.1}};
     ASSERT_TRUE(!engine.validate_request(req).has_value());
 
     // Second sighting stays quiet: one warning per engine lifetime.
@@ -141,7 +141,7 @@ void test_echo_ignores_content_controls_with_one_warning() {
     req = {};
     req.id = 3;
     req.prompt = "hi";
-    req.gen_config.backend_options["echo"] = Chorus::OptionMap{{"volume", int64_t{11}}};
+    req.gen_config.provider_options["echo"] = Chorus::OptionMap{{"volume", int64_t{11}}};
     auto rejection = engine.validate_request(req);
     ASSERT_TRUE(rejection.has_value());
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
@@ -178,7 +178,7 @@ void test_echo_max_tokens_counts_word_chunks() {
         Chorus::ChorusRequest request;
         request.id = id;
         request.prompt = "one two three";
-        request.gen_config.common.max_tokens = max_tokens;
+        request.gen_config.max_tokens = max_tokens;
         if (engine.validate_request(request).has_value()) {
             g_tests_failed++;
             engine.stop();
@@ -235,7 +235,7 @@ void test_echo_rejects_max_tokens_below_negative_sentinel() {
     Chorus::ChorusRequest request;
     request.id = 14;
     request.prompt = "hi";
-    request.gen_config.common.max_tokens = -2;
+    request.gen_config.max_tokens = -2;
     const auto rejection = engine.validate_request(request);
     ASSERT_TRUE(rejection.has_value());
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
@@ -561,7 +561,7 @@ void test_echo_stop_waits_for_queued_cancellation_callback() {
 }
 
 // Capability conformance: Echo advertises exactly one option, max_tokens, and no
-// backend options. The matrix proves that option's deterministic behavior and pins
+// provider options. The matrix proves that option's deterministic behavior and pins
 // both completeness directions against the engine's own advertisement.
 void test_echo_conformance_matrix() {
     Chorus::EchoEngine engine;
@@ -569,9 +569,9 @@ void test_echo_conformance_matrix() {
     ASSERT_TRUE(!engine.initialize(config).has_value());
 
     const auto caps = engine.capabilities();
-    ASSERT_EQ(caps.portable_generation_options.size(), size_t{1});
-    ASSERT_EQ(caps.portable_generation_options[0], std::string("max_tokens"));
-    ASSERT_TRUE(caps.backend_generation_options.empty());
+    ASSERT_EQ(caps.common_generation_options.size(), size_t{1});
+    ASSERT_EQ(caps.common_generation_options[0], std::string("max_tokens"));
+    ASSERT_TRUE(caps.provider_generation_options.empty());
 
     // Prove max_tokens deterministic behavior: capping the emitted word chunks.
     std::mutex mutex;
@@ -581,7 +581,7 @@ void test_echo_conformance_matrix() {
     Chorus::ChorusRequest request;
     request.id = 60;
     request.prompt = "one two three";
-    request.gen_config.common.max_tokens = 1;
+    request.gen_config.max_tokens = 1;
     ASSERT_TRUE(!engine.validate_request(request).has_value());
     request.on_event = [&](Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -601,7 +601,7 @@ void test_echo_conformance_matrix() {
     ASSERT_TRUE(signals[1].type == Chorus::EventType::Stop);
 
     std::set<std::string> covered{"max_tokens"};
-    std::set<std::string> advertised(caps.portable_generation_options.begin(), caps.portable_generation_options.end());
+    std::set<std::string> advertised(caps.common_generation_options.begin(), caps.common_generation_options.end());
     for (const auto& name : advertised)
         ASSERT_TRUE(covered.count(name) == 1); // every advertised option has a case
     for (const auto& name : covered)
@@ -800,7 +800,7 @@ void test_echo_accepts_chat_template_and_thinking_as_inert() {
     ASSERT_TRUE(!engine.validate_request(with_template).has_value());
 
     Chorus::ChorusRequest with_thinking;
-    with_thinking.gen_config.common.thinking = true;
+    with_thinking.gen_config.thinking = true;
     ASSERT_TRUE(!engine.validate_request(with_thinking).has_value());
     engine.stop();
 }

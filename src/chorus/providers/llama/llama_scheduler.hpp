@@ -1,9 +1,9 @@
 #pragma once
 
-#include "chorus/backends/llama/llama_chat.hpp"
-#include "chorus/backends/llama/llama_generation.hpp"
-#include "chorus/backends/llama/llama_load_config.hpp"
-#include "chorus/backends/llama/stop_sequence_filter.hpp"
+#include "chorus/providers/llama/llama_chat.hpp"
+#include "chorus/providers/llama/llama_generation.hpp"
+#include "chorus/providers/llama/llama_load_config.hpp"
+#include "chorus/providers/llama/stop_sequence_filter.hpp"
 #include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 #include "chorus/core/inference_engine.hpp"

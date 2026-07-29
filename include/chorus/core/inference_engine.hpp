@@ -12,7 +12,7 @@ struct RenderedPrompt {
     int32_t token_count = 0;
 };
 
-// The backend port. Implementations must honor the callback contract:
+// The provider port. Implementations must honor the callback contract:
 //
 // - ChorusRequest::on_event may be invoked from an engine worker thread, or
 //   inline on the caller's thread during submit_request (e.g. the
@@ -39,8 +39,8 @@ class InferenceEngine {
     // initialize/stop: they read state those methods mutate; they are never
     // called from engine workers) ---
 
-    // Pre-init: the backend envelope. Post-init: the effective intersection
-    // of backend, model, and load configuration.
+    // Pre-init: the provider envelope. Post-init: the effective intersection
+    // of provider, model, and load configuration.
     virtual EngineCapabilities capabilities() const = 0;
 
     // Populated after successful initialization; never reports ModelFormat::Auto.
@@ -54,9 +54,9 @@ class InferenceEngine {
 
     // --- #5 optional prompt rendering (host-thread-only, like capabilities) ---
 
-    // The exact templated prompt this backend would feed the model for
+    // The exact templated prompt this provider would feed the model for
     // `messages`, plus its token count (the runtime's fitting loop budgets
-    // against it). Backends that render remotely or not at all return
+    // against it). Providers that render remotely or not at all return
     // std::nullopt honestly; capability flag: EngineCapabilities::prompt_rendering.
     virtual std::optional<RenderedPrompt> render_chat_prompt(
         const std::vector<ChatMessage>& messages, const std::string& template_override, bool enable_thinking

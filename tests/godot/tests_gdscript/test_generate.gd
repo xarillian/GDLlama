@@ -6,7 +6,7 @@ const ChorusNodeScene := preload("res://tests_gdscript/chorus_node.tscn")
 
 static func run_tests(parent: Node) -> void:
 	var chorus: GodotChorus = ChorusNodeScene.instantiate()
-	chorus.backend = GodotChorus.BACKEND_ECHO
+	chorus.provider = GodotChorus.PROVIDER_ECHO
 	parent.add_child(chorus)
 	chorus.load_model()
 
@@ -42,7 +42,7 @@ static func run_tests(parent: Node) -> void:
 
 	# TODO: missing 'prompt' key returns -1, no signal fires
 	# TODO: stream: true fires token_generated one or more times before generation_complete
-	# TODO: an unknown backend_options key is rejected (generate() returns -1)
+	# TODO: an unknown provider_options key is rejected (generate() returns -1)
 	# TODO: regenerate(session) with no prior turn fails cleanly
 
 	chorus.stop_all()

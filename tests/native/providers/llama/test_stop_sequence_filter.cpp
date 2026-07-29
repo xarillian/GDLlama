@@ -1,4 +1,4 @@
-#include "chorus/backends/llama/stop_sequence_filter.hpp"
+#include "chorus/providers/llama/stop_sequence_filter.hpp"
 #include "test_utils.hpp"
 #include "wlib/utf8.hpp"
 

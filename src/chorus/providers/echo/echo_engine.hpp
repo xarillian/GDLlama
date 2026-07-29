@@ -17,7 +17,7 @@ namespace Chorus {
 //
 // Echoes each request's prompt back word-by-word as Token signals (their concatenation
 // equals the prompt exactly), then a Stop, from a worker thread mirroring the real
-// engines' async contract. Exists to prove the backend seam, to let CI and day-one
+// engines' async contract. Exists to prove the provider seam, to let CI and day-one
 // integrations exercise the full signal path with no model file, and to keep the
 // interface contract compiler-enforced as it grows. It is not a gameplay test space:
 // echoed prompts say nothing about how real dialogue reads or paces.

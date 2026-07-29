@@ -81,8 +81,8 @@ class ChorusGenerationDefaults : public godot::Resource {
     void set_thinking(bool value);
     bool get_thinking() const;
 
-    void set_backend_options(const godot::Dictionary& options);
-    godot::Dictionary get_backend_options() const;
+    void set_provider_options(const godot::Dictionary& options);
+    godot::Dictionary get_provider_options() const;
 
     // Converts the current Inspector state into the host-neutral overlay
     // patch. Disabled overrides map to Inherit, enabled ones to Set (an
@@ -91,7 +91,7 @@ class ChorusGenerationDefaults : public godot::Resource {
 
   private:
     Chorus::GenerationConfigPatch _patch;
-    godot::Dictionary _backend_options;
+    godot::Dictionary _provider_options;
 };
 
 VARIANT_ENUM_CAST(ChorusGenerationDefaults::ConstraintFormat);

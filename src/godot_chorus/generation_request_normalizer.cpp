@@ -17,21 +17,21 @@ namespace godot_chorus {
 namespace {
 
 // ===========================================================================
-// Portable scalar keys: absent inherits, null clears, a present value sets.
+// Common scalar keys: absent inherits, null clears, a present value sets.
 // ===========================================================================
 
 template <typename T, typename Caster>
-void apply_scalar_overlay(const Dictionary& request, const char* key, Chorus::OptionalPatch<T>& field, Caster caster) {
+void apply_scalar_overlay(const Dictionary& request, const char* key, Chorus::ConfigPatch<T>& field, Caster caster) {
     if (!request.has(key))
         return;
     const Variant value = request[key];
     if (value.get_type() == Variant::NIL)
-        field = Chorus::OptionalPatch<T>::clear();
+        field = Chorus::ConfigPatch<T>::clear();
     else
-        field = Chorus::OptionalPatch<T>::set(caster(value));
+        field = Chorus::ConfigPatch<T>::set(caster(value));
 }
 
-void apply_portable_scalar_overlays(const Dictionary& request, Chorus::GenerationConfigPatch& patch) {
+void apply_common_scalar_overlays(const Dictionary& request, Chorus::GenerationConfigPatch& patch) {
     apply_scalar_overlay(request, "max_tokens", patch.max_tokens, [](const Variant& v) { return (int32_t)(int64_t)v; });
     apply_scalar_overlay(request, "temperature", patch.temperature, [](const Variant& v) { return (float)v; });
     apply_scalar_overlay(request, "top_k", patch.top_k, [](const Variant& v) { return (int32_t)(int64_t)v; });
@@ -46,7 +46,7 @@ void apply_portable_scalar_overlays(const Dictionary& request, Chorus::Generatio
 }
 
 // ===========================================================================
-// stop: null clears to the backend default; [] explicitly disables inherited
+// stop: null clears to the provider default; [] explicitly disables inherited
 // stops; a non-empty array replaces them.
 // ===========================================================================
 
@@ -55,7 +55,7 @@ std::optional<String> apply_stop_overlay(const Dictionary& request, Chorus::Gene
         return std::nullopt;
     const Variant value = request["stop"];
     if (value.get_type() == Variant::NIL) {
-        patch.stop = Chorus::ValuePatch<std::vector<std::string>>::clear();
+        patch.stop = Chorus::ConfigPatch<std::vector<std::string>>::clear();
         return std::nullopt;
     }
     if (value.get_type() != Variant::ARRAY)
@@ -70,7 +70,7 @@ std::optional<String> apply_stop_overlay(const Dictionary& request, Chorus::Gene
             return String("[Chorus] generate(): 'stop' entries must be Strings.");
         stops.emplace_back(((String)entry).utf8().get_data());
     }
-    patch.stop = Chorus::ValuePatch<std::vector<std::string>>::set(std::move(stops));
+    patch.stop = Chorus::ConfigPatch<std::vector<std::string>>::set(std::move(stops));
     return std::nullopt;
 }
 
@@ -105,7 +105,7 @@ std::optional<String> apply_constraint_overlay(const Dictionary& request, Chorus
     const Variant value = request[String(key.c_str())];
 
     if (value.get_type() == Variant::NIL) {
-        patch.constraint = Chorus::OptionalPatch<Chorus::OutputConstraint>::clear();
+        patch.constraint = Chorus::ConfigPatch<Chorus::OutputConstraint>::clear();
         return std::nullopt;
     }
 
@@ -134,12 +134,12 @@ std::optional<String> apply_constraint_overlay(const Dictionary& request, Chorus
         constraint.source = std::string(((String)value).utf8().get_data());
     }
 
-    patch.constraint = Chorus::OptionalPatch<Chorus::OutputConstraint>::set(constraint);
+    patch.constraint = Chorus::ConfigPatch<Chorus::OutputConstraint>::set(constraint);
     return std::nullopt;
 }
 
 // ===========================================================================
-// backend_options: recursive namespace merge into the patch's OptionMap. A
+// provider_options: recursive namespace merge into the patch's OptionMap. A
 // nested Dictionary deep-merges; any other value overwrites the leaf via
 // option_conversion's Variant->OptionValue. A null leaf records a dotted
 // erasure path instead of a value: the layer it has to remove lives below the
@@ -147,7 +147,7 @@ std::optional<String> apply_constraint_overlay(const Dictionary& request, Chorus
 // instruction rather than happening here.
 // ===========================================================================
 
-std::optional<String> merge_backend_dictionary_overrides(
+std::optional<String> merge_provider_dictionary_overrides(
     Chorus::GenerationConfigPatch& patch,
     Chorus::OptionMap& target,
     const std::string& prefix,
@@ -157,13 +157,13 @@ std::optional<String> merge_backend_dictionary_overrides(
     for (int i = 0; i < keys.size(); ++i) {
         const Variant key_variant = keys[i];
         if (key_variant.get_type() != Variant::STRING)
-            return String("[Chorus] generate(): backend_options keys must be Strings.");
+            return String("[Chorus] generate(): provider_options keys must be Strings.");
         const std::string key = std::string(((String)key_variant).utf8().get_data());
         const std::string path = prefix.empty() ? key : prefix + "." + key;
         const Variant value = overrides[key_variant];
 
         if (value.get_type() == Variant::NIL) {
-            patch.backend_option_erasures.push_back(path);
+            patch.provider_option_erasures.push_back(path);
             continue;
         }
 
@@ -176,14 +176,14 @@ std::optional<String> merge_backend_dictionary_overrides(
                 const auto [it, inserted] = target.insert_or_assign(key, Chorus::OptionMap{});
                 nested = &std::get<Chorus::OptionMap>(it->second);
             }
-            if (auto error = merge_backend_dictionary_overrides(patch, *nested, path, (Dictionary)value))
+            if (auto error = merge_provider_dictionary_overrides(patch, *nested, path, (Dictionary)value))
                 return error;
             continue;
         }
 
         auto converted = godot_chorus::variant_to_option_value(value);
         if (!converted)
-            return String("[Chorus] generate(): backend_options key '") + String(key.c_str()) +
+            return String("[Chorus] generate(): provider_options key '") + String(key.c_str()) +
                    String("' has an unsupported value.");
         target[key] = std::move(*converted);
     }
@@ -191,22 +191,22 @@ std::optional<String> merge_backend_dictionary_overrides(
 }
 
 // ===========================================================================
-// repeat_penalty: convenience for backend_options["llama"]["repeat_penalty"],
-// applied after backend_options so it wins; null erases the inherited leaf.
+// repeat_penalty: convenience for provider_options["llama"]["repeat_penalty"],
+// applied after provider_options so it wins; null erases the inherited leaf.
 // ===========================================================================
 
 constexpr const char* kRepeatPenaltyPath = "llama.repeat_penalty";
 
 void drop_erasure(Chorus::GenerationConfigPatch& patch, const std::string& path) {
-    auto& paths = patch.backend_option_erasures;
+    auto& paths = patch.provider_option_erasures;
     paths.erase(std::remove(paths.begin(), paths.end(), path), paths.end());
 }
 
-Chorus::OptionMap& llama_namespace(Chorus::OptionMap& backend) {
-    const auto existing = backend.find("llama");
-    if (existing != backend.end() && std::holds_alternative<Chorus::OptionMap>(existing->second))
+Chorus::OptionMap& llama_namespace(Chorus::OptionMap& provider) {
+    const auto existing = provider.find("llama");
+    if (existing != provider.end() && std::holds_alternative<Chorus::OptionMap>(existing->second))
         return std::get<Chorus::OptionMap>(existing->second);
-    const auto [it, inserted] = backend.insert_or_assign("llama", Chorus::OptionMap{});
+    const auto [it, inserted] = provider.insert_or_assign("llama", Chorus::OptionMap{});
     return std::get<Chorus::OptionMap>(it->second);
 }
 
@@ -217,24 +217,24 @@ apply_repeat_penalty_convenience(Chorus::GenerationConfigPatch& patch, const Dic
     const Variant value = request["repeat_penalty"];
 
     if (value.get_type() == Variant::NIL) {
-        llama_namespace(patch.backend_options).erase("repeat_penalty");
+        llama_namespace(patch.provider_options).erase("repeat_penalty");
         drop_erasure(patch, kRepeatPenaltyPath);
-        patch.backend_option_erasures.emplace_back(kRepeatPenaltyPath);
+        patch.provider_option_erasures.emplace_back(kRepeatPenaltyPath);
         return std::nullopt;
     }
     if (value.get_type() != Variant::FLOAT && value.get_type() != Variant::INT)
         return String("[Chorus] generate(): 'repeat_penalty' must be a float or null.");
 
-    // The convenience spelling wins over a backend_options entry for the same
+    // The convenience spelling wins over a provider_options entry for the same
     // leaf, including one that spelled itself as an erasure.
     drop_erasure(patch, kRepeatPenaltyPath);
-    llama_namespace(patch.backend_options)["repeat_penalty"] = (double)(float)value;
+    llama_namespace(patch.provider_options)["repeat_penalty"] = (double)(float)value;
     return std::nullopt;
 }
 
 // ===========================================================================
 // thinking: reasoning-model toggle. Absent inherits, null clears an inherited
-// value back to the template/backend default, a bool sets it.
+// value back to the template/provider default, a bool sets it.
 // ===========================================================================
 
 std::optional<String> apply_thinking_overlay(const Dictionary& request, Chorus::GenerationConfigPatch& patch) {
@@ -242,12 +242,12 @@ std::optional<String> apply_thinking_overlay(const Dictionary& request, Chorus::
         return std::nullopt;
     const Variant value = request["thinking"];
     if (value.get_type() == Variant::NIL) {
-        patch.thinking = Chorus::OptionalPatch<bool>::clear();
+        patch.thinking = Chorus::ConfigPatch<bool>::clear();
         return std::nullopt;
     }
     if (value.get_type() != Variant::BOOL)
         return String("[Chorus] generate(): 'thinking' must be a bool or null.");
-    patch.thinking = Chorus::OptionalPatch<bool>::set((bool)value);
+    patch.thinking = Chorus::ConfigPatch<bool>::set((bool)value);
     return std::nullopt;
 }
 
@@ -319,7 +319,7 @@ std::variant<Chorus::GenerationRequest, String> normalize_generation_request(con
 
 std::variant<Chorus::GenerationRequest, String> normalize_generation_overrides(const Dictionary& request) {
     Chorus::GenerationConfigPatch patch;
-    apply_portable_scalar_overlays(request, patch);
+    apply_common_scalar_overlays(request, patch);
     if (auto error = apply_stop_overlay(request, patch))
         return *error;
     if (auto error = apply_constraint_overlay(request, patch))
@@ -327,12 +327,12 @@ std::variant<Chorus::GenerationRequest, String> normalize_generation_overrides(c
     if (auto error = apply_thinking_overlay(request, patch))
         return *error;
 
-    if (request.has("backend_options")) {
-        const Variant backend_options = request["backend_options"];
-        if (backend_options.get_type() != Variant::DICTIONARY)
-            return String("[Chorus] generate(): 'backend_options' must be a Dictionary.");
+    if (request.has("provider_options")) {
+        const Variant provider_options = request["provider_options"];
+        if (provider_options.get_type() != Variant::DICTIONARY)
+            return String("[Chorus] generate(): 'provider_options' must be a Dictionary.");
         if (auto error =
-                merge_backend_dictionary_overrides(patch, patch.backend_options, "", (Dictionary)backend_options))
+                merge_provider_dictionary_overrides(patch, patch.provider_options, "", (Dictionary)provider_options))
             return *error;
     }
     if (auto error = apply_repeat_penalty_convenience(patch, request))

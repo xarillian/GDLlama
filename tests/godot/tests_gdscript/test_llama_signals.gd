@@ -11,7 +11,7 @@ const ChorusNodeScene := preload("res://tests_gdscript/chorus_node.tscn")
 
 static func run_tests(parent: Node) -> void:
 	var chorus: GodotChorus = ChorusNodeScene.instantiate()
-	chorus.backend = GodotChorus.BACKEND_LLAMA
+	chorus.provider = GodotChorus.PROVIDER_LLAMA
 	chorus.model_path = ModelPaths.reasoning_gguf()
 	parent.add_child(chorus)
 

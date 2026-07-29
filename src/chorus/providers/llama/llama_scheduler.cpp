@@ -1,5 +1,5 @@
-#include "chorus/backends/llama/llama_scheduler.hpp"
-#include "chorus/backends/llama/llama_utils.hpp"
+#include "chorus/providers/llama/llama_scheduler.hpp"
+#include "chorus/providers/llama/llama_utils.hpp"
 #include "chorus/core/common.hpp"
 
 #include <algorithm>
@@ -534,7 +534,7 @@ void LlamaScheduler::ingest_new_requests() {
                 };
             }
             if (!render_rejection) {
-                const bool thinking = chorus_request.gen_config.common.thinking.value_or(true);
+                const bool thinking = chorus_request.gen_config.thinking.value_or(true);
                 auto rendered = Chorus::render_llama_chat(tmpls, chorus_request.messages, thinking);
                 if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered)) {
                     render_rejection = *rejection;

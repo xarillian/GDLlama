@@ -1,4 +1,4 @@
-#include "chorus/backends/llama/llama_chat.hpp"
+#include "chorus/providers/llama/llama_chat.hpp"
 #include "test_utils.hpp"
 
 #include <chat.h> // match the include style llama_chat.hpp settles on

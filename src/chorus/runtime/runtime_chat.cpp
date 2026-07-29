@@ -85,13 +85,13 @@ TurnOutcome ChorusRuntime::last_turn_outcome(const SessionId& session) const {
 std::variant<ChorusRuntime::FittedTurn, SubmitResult>
 ChorusRuntime::fit_turn_messages(const ResolvedRequest& resolved, std::vector<ChatMessage> prospective) const {
     const GenerationRequest& request = resolved.request;
-    const bool thinking = resolved.config.common.thinking.value_or(true);
+    const bool thinking = resolved.config.thinking.value_or(true);
 
     auto info = _engine->loaded_model_info();
     if (!info || !info->per_request_context) // no budget known: fitting doesn't apply
         return FittedTurn{place_injections(std::move(prospective), request.inject), 0};
 
-    const auto& max_tokens = resolved.config.common.max_tokens;
+    const auto& max_tokens = resolved.config.max_tokens;
     const int32_t reservation =
         (max_tokens.has_value() && *max_tokens > 0) ? *max_tokens : kFallbackResponseReservation;
     // Clamp before the signed subtraction; a window over INT32_MAX would wrap
@@ -161,9 +161,8 @@ std::optional<std::string> ChorusRuntime::render_prompt(
     auto& turn = std::get<FittedTurn>(fitted);
     if (turn.rendered_text) // fitting already rendered the winning candidate
         return std::move(turn.rendered_text);
-    auto rendered = _engine->render_chat_prompt(
-        turn.messages, resolved.chat_template, resolved.config.common.thinking.value_or(true)
-    );
+    auto rendered =
+        _engine->render_chat_prompt(turn.messages, resolved.chat_template, resolved.config.thinking.value_or(true));
     return rendered ? std::optional<std::string>(std::move(rendered->text)) : std::nullopt;
 }
 

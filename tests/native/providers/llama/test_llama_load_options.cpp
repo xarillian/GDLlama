@@ -1,5 +1,5 @@
-#include "chorus/backends/llama/llama_generation.hpp"
-#include "chorus/backends/llama/llama_load_config.hpp"
+#include "chorus/providers/llama/llama_generation.hpp"
+#include "chorus/providers/llama/llama_load_config.hpp"
 
 #include "test_utils.hpp"
 
@@ -16,8 +16,8 @@ namespace {
 std::variant<Chorus::LlamaLoadConfig, Chorus::RequestRejection> parse(Chorus::OptionMap options) {
     Chorus::ChorusConfig config;
     config.model.format = Chorus::ModelFormat::Gguf;
-    config.model.assets.push_back({"weights", "model.gguf", std::nullopt, std::nullopt});
-    config.backend_options["llama"] = std::move(options);
+    config.model.assets.push_back({Chorus::AssetRole::Weights, "model.gguf", std::nullopt, std::nullopt});
+    config.provider_options["llama"] = std::move(options);
     return Chorus::parse_llama_load_config(config);
 }
 
@@ -30,7 +30,7 @@ parse_with(const std::string& key, Chorus::OptionValue value) {
     return parse(Chorus::resolve_option_defaults(descriptors, stored));
 }
 
-// The declared defaults must be exactly what the backend falls back to when a
+// The declared defaults must be exactly what the provider falls back to when a
 // host sends nothing. This is the check that keeps a schema entry from drifting
 // away from the LlamaLoadConfig member it advertises.
 void test_llama_descriptor_defaults_match_the_parsed_defaults() {
@@ -51,8 +51,8 @@ void test_llama_descriptor_defaults_match_the_parsed_defaults() {
 }
 
 // The contract's half of a widget bound: whatever a host lets a user pick
-// inside the declared range, the backend accepts. A hint tightened past the
-// backend's own limits, or a limit tightened past the hint, fails here rather
+// inside the declared range, the provider accepts. A hint tightened past the
+// provider's own limits, or a limit tightened past the hint, fails here rather
 // than in a game at load time.
 void test_llama_descriptor_bounds_are_accepted() {
     for (const auto& descriptor : Chorus::llama_load_option_descriptors()) {
@@ -94,10 +94,10 @@ void test_llama_gated_options_still_reject_when_sent() {
 }
 
 // The Godot request normalizer promotes 'repeat_penalty' to a top-level
-// convenience key over backend_options["llama"]. That spelling only works
+// convenience key over provider_options["llama"]. That spelling only works
 // while llama still declares the option it forwards to.
-void test_normalizer_convenience_keys_exist_in_the_backend_declaration() {
-    const auto& names = Chorus::llama_backend_generation_option_names();
+void test_normalizer_convenience_keys_exist_in_the_provider_declaration() {
+    const auto& names = Chorus::llama_provider_generation_option_names();
     ASSERT_TRUE(std::find(names.begin(), names.end(), "repeat_penalty") != names.end());
 }
 
@@ -112,8 +112,8 @@ int run_llama_load_option_tests() {
     run_test("Llama rejects options outside the declaration", test_llama_rejects_options_outside_the_declaration);
     run_test("Llama gated options still reject when sent", test_llama_gated_options_still_reject_when_sent);
     run_test(
-        "Normalizer convenience keys exist in the backend declaration",
-        test_normalizer_convenience_keys_exist_in_the_backend_declaration
+        "Normalizer convenience keys exist in the provider declaration",
+        test_normalizer_convenience_keys_exist_in_the_provider_declaration
     );
     return 0;
 }

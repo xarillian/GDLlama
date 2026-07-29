@@ -15,7 +15,7 @@ void test_factory_echo_engine_round_trips_through_interface() {
     std::mutex sig_mutex;
     std::vector<Chorus::ChorusSignal> sigs;
 
-    std::unique_ptr<Chorus::InferenceEngine> engine = Chorus::make_engine(Chorus::Backend::Echo);
+    std::unique_ptr<Chorus::InferenceEngine> engine = Chorus::make_engine(Chorus::Provider::Echo);
     ASSERT_TRUE(engine != nullptr);
     ASSERT_TRUE(!engine->is_initialized());
 
@@ -54,8 +54,8 @@ void test_factory_echo_engine_round_trips_through_interface() {
 }
 
 void test_factory_creates_llama_engine_uninitialized() {
-    // No model load here: this only proves the factory constructs the real backend.
-    std::unique_ptr<Chorus::InferenceEngine> engine = Chorus::make_engine(Chorus::Backend::Llama);
+    // No model load here: this only proves the factory constructs the real provider.
+    std::unique_ptr<Chorus::InferenceEngine> engine = Chorus::make_engine(Chorus::Provider::Llama);
     ASSERT_TRUE(engine != nullptr);
     ASSERT_TRUE(!engine->is_initialized());
 }

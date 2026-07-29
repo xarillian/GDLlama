@@ -1,4 +1,4 @@
-#include "chorus/backends/echo/echo_engine.hpp"
+#include "chorus/providers/echo/echo_engine.hpp"
 
 namespace Chorus {
 EchoEngine::EchoEngine() {}
@@ -15,9 +15,9 @@ std::optional<ChorusError> EchoEngine::initialize(const ChorusConfig& config) {
         return std::nullopt;
     }
 
-    // No model asset is needed; any ModelSpec is accepted and unread by design.
-    if (!config.backend_options.empty()) {
-        chorus_log(_log, LogLevel::Error, "EchoEngine accepts no backend options.");
+    // No model asset is needed; any InitialModelSpec is accepted and unread by design.
+    if (!config.provider_options.empty()) {
+        chorus_log(_log, LogLevel::Error, "EchoEngine accepts no provider options.");
         return ChorusError::UnsupportedOption;
     }
 
@@ -143,13 +143,13 @@ bool EchoEngine::is_initialized() const {
 
 EngineCapabilities EchoEngine::capabilities() const {
     EngineCapabilities caps;
-    caps.backend_id = "echo";
+    caps.provider_id = "echo";
     caps.input_modalities = {Modality::Text};
     caps.output_modalities = {Modality::Text};
-    caps.scheduling = SchedulingAuthority::BackendManaged;
+    caps.scheduling = SchedulingAuthority::ProviderManaged;
     caps.streaming = true;
     caps.cancellation = true;
-    caps.portable_generation_options = {"max_tokens"};
+    caps.common_generation_options = {"max_tokens"};
     return caps;
 }
 
@@ -162,18 +162,18 @@ std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest
         return RequestRejection{ChorusError::EngineNotReady, "EchoEngine is not initialized."};
     if (request.type == RequestType::Embedding)
         return RequestRejection{ChorusError::UnsupportedFeature, "EchoEngine does not produce embeddings."};
-    const auto& c = request.gen_config.common;
+    const auto& c = request.gen_config;
     if (c.max_tokens && *c.max_tokens < -1)
         return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine max_tokens must be -1 or greater."};
     // Options addressed to this engine by namespace are demands: Echo has no
     // options, so any 'echo' entry is a typo to catch.
-    if (request.gen_config.backend_options.count("echo"))
+    if (request.gen_config.provider_options.count("echo"))
         return RequestRejection{
-            ChorusError::UnsupportedOption, "EchoEngine has no backend options; remove the 'echo' entry."
+            ChorusError::UnsupportedOption, "EchoEngine has no provider options; remove the 'echo' entry."
         };
 
     // Content controls (sampling, stop, constraint, thinking, templates,
-    // foreign backend namespaces) are inert here: echoed output makes no
+    // foreign provider namespaces) are inert here: echoed output makes no
     // content claims, so any value is vacuously honored. Accept them so real
     // request pipelines run unmodified against the test double, and warn once
     // per engine lifetime so the discard is not silent (user decision
@@ -199,8 +199,8 @@ std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest
         ignored.push_back("thinking");
     if (!request.chat_template.empty())
         ignored.push_back("chat_template");
-    if (!request.gen_config.backend_options.empty())
-        ignored.push_back("backend_options");
+    if (!request.gen_config.provider_options.empty())
+        ignored.push_back("provider_options");
 
     if (!ignored.empty() && !_warned_ignored.exchange(true)) {
         std::string names;
@@ -256,7 +256,7 @@ void EchoEngine::worker_loop() {
         const std::string& text = req.messages.empty() ? req.prompt : chat_source;
         size_t start = 0;
         int32_t chunks = 0;
-        const int32_t max_chunks = req.gen_config.common.max_tokens.value_or(-1);
+        const int32_t max_chunks = req.gen_config.max_tokens.value_or(-1);
         while (start < text.size() && (max_chunks < 0 || chunks < max_chunks)) {
             {
                 std::lock_guard<std::mutex> lock(_queue_mutex);

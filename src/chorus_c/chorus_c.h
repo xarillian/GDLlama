@@ -11,7 +11,7 @@
  *   - Strings: all char* parameters are borrowed, UTF-8, NUL-terminated, and
  *     copied before return. Returned strings and arrays are owned as
  *     documented per function; free with the matching chorus_..._free.
- *   - Optionals: builder setters left uncalled mean "backend default",
+ *   - Optionals: builder setters left uncalled mean "provider default",
  *     mirroring the C++ std::optional fields.
  *   - Every fallible call returns chorus_error; CHORUS_OK is 0. A
  *     human-readable detail for the most recent failure on a runtime is
@@ -72,10 +72,10 @@ typedef enum chorus_error {
     CHORUS_ERR_UNKNOWN = 12,
 } chorus_error;
 
-typedef enum chorus_backend {
-    CHORUS_BACKEND_LLAMA = 0,
-    CHORUS_BACKEND_ECHO = 1,
-} chorus_backend;
+typedef enum chorus_provider {
+    CHORUS_PROVIDER_LLAMA = 0,
+    CHORUS_PROVIDER_ECHO = 1,
+} chorus_provider;
 
 typedef enum chorus_event_kind {
     CHORUS_EVENT_TOKEN = 0,
@@ -168,12 +168,12 @@ CHORUS_API void chorus_runtime_free(chorus_runtime* rt);
 CHORUS_API const char* chorus_last_error_message(const chorus_runtime* rt);
 
 /* ========================================================================
- * Engine loading -- the composition root. The shim selects the backend via
+ * Engine loading -- the composition root. The shim selects the provider via
  * the factory and injects it; consumers never see an engine.
  * ======================================================================== */
 
-/* Load-time backend options (context_size, gpu_layers, ...). Key vocabulary
- * is the backend's; unknown keys are rejected at load, never dropped.
+/* Load-time provider options (context_size, gpu_layers, ...). Key vocabulary
+ * is the provider's; unknown keys are rejected at load, never dropped.
  * TODO(deviations #1): enumerate keys from provider self-description once
  * the contract exposes option metadata, instead of documenting them here. */
 CHORUS_API chorus_options* chorus_options_new(void);
@@ -186,9 +186,9 @@ CHORUS_API void chorus_options_set_string(chorus_options* opts, const char* key,
 /* Builds the engine and loads the model. Replaces any loaded engine (live
  * requests get Cancelled terminals; old engine torn down before the new one
  * initializes). model_path: .gguf path; ignored for ECHO (pass NULL).
- * options: borrowed, may be NULL for backend defaults. */
+ * options: borrowed, may be NULL for provider defaults. */
 CHORUS_API chorus_error
-chorus_load(chorus_runtime* rt, chorus_backend backend, const char* model_path, const chorus_options* options);
+chorus_load(chorus_runtime* rt, chorus_provider provider, const char* model_path, const chorus_options* options);
 
 CHORUS_API bool chorus_is_loaded(const chorus_runtime* rt);
 
@@ -212,7 +212,7 @@ CHORUS_API void chorus_request_set_session(chorus_request* req, const char* sess
 CHORUS_API void chorus_request_set_priority(chorus_request* req, int32_t priority);
 CHORUS_API void chorus_request_set_stream(chorus_request* req, bool stream);
 
-/* Portable generation config; unset = backend default. */
+/* Portable generation config; unset = provider default. */
 CHORUS_API void chorus_request_set_max_tokens(chorus_request* req, int32_t max_tokens);
 CHORUS_API void chorus_request_set_temperature(chorus_request* req, float temperature);
 CHORUS_API void chorus_request_set_top_k(chorus_request* req, int32_t top_k);
@@ -224,11 +224,11 @@ CHORUS_API void chorus_request_add_stop(chorus_request* req, const char* sequenc
 CHORUS_API void chorus_request_set_constraint(chorus_request* req, chorus_constraint_format format, const char* source);
 CHORUS_API void chorus_request_set_thinking(chorus_request* req, bool thinking);
 
-/* Backend-specific generation options, e.g. ("llama", "repeat_penalty"). */
+/* Provider-specific generation options, e.g. ("llama", "repeat_penalty"). */
 CHORUS_API void
-chorus_request_set_backend_option_float(chorus_request* req, const char* backend, const char* key, double value);
+chorus_request_set_provider_option_float(chorus_request* req, const char* provider, const char* key, double value);
 CHORUS_API void
-chorus_request_set_backend_option_int(chorus_request* req, const char* backend, const char* key, int64_t value);
+chorus_request_set_provider_option_int(chorus_request* req, const char* provider, const char* key, int64_t value);
 
 /* Chat controls; sessioned requests only, rejected on stateless ones.
  * inject: ephemeral message spliced into the fitted copy, depth counted from
@@ -301,7 +301,7 @@ CHORUS_API chorus_turn_outcome chorus_last_turn_outcome(const chorus_runtime* rt
  * now, without generating. req carries the overrides (chat_template, inject,
  * config) and must match what you would generate with; may be NULL for
  * defaults. Returns a caller-owned string (chorus_string_free), or NULL for
- * unknown session / no engine / no backend rendering. */
+ * unknown session / no engine / no provider rendering. */
 CHORUS_API char* chorus_render_prompt(const chorus_runtime* rt, const char* session, const chorus_request* req);
 
 #ifdef __cplusplus

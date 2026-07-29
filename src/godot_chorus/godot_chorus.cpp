@@ -44,8 +44,8 @@ static const char* chorus_error_name(Chorus::ChorusError e) {
     return "Unknown";
 }
 
-static Chorus::Backend to_chorus_backend(GodotChorus::BackendChoice backend) {
-    return backend == GodotChorus::BACKEND_ECHO ? Chorus::Backend::Echo : Chorus::Backend::Llama;
+static Chorus::Provider to_chorus_provider(GodotChorus::ProviderChoice provider) {
+    return provider == GodotChorus::PROVIDER_ECHO ? Chorus::Provider::Echo : Chorus::Provider::Llama;
 }
 
 static bool gates_another_option(const godot_chorus::OptionDescriptors& descriptors, const std::string& key) {
@@ -148,7 +148,7 @@ void GodotChorus::_process(double /*delta*/) {
 // ===========================================================================
 
 bool GodotChorus::load_model() {
-    if (_backend != BACKEND_ECHO && _model_path.is_empty()) {
+    if (_provider != PROVIDER_ECHO && _model_path.is_empty()) {
         UtilityFunctions::push_error("[Chorus] model_path is not set.");
         return false;
     }
@@ -170,18 +170,20 @@ bool GodotChorus::load_model() {
             break;
         }
     };
-    if (_backend != BACKEND_ECHO) {
+    if (_provider != PROVIDER_ECHO) {
         config.model.model_id = _model_path.get_file().get_basename().utf8().get_data();
         config.model.format = Chorus::ModelFormat::Gguf;
-        config.model.assets.push_back({"weights", _model_path.utf8().get_data(), std::nullopt, std::nullopt});
+        config.model.assets.push_back(
+            {Chorus::AssetRole::Weights, _model_path.utf8().get_data(), std::nullopt, std::nullopt}
+        );
     }
-    // Echo: empty ModelSpec, and it declares no load options, so the loop below
+    // Echo: empty InitialModelSpec, and it declares no load options, so the loop below
     // contributes nothing rather than needing a special case.
-    const auto& caps = backend_capabilities();
+    const auto& caps = provider_capabilities();
     if (!caps.load_options.empty())
-        config.backend_options[caps.backend_id] = Chorus::resolve_option_defaults(caps.load_options, _load_options);
+        config.provider_options[caps.provider_id] = Chorus::resolve_option_defaults(caps.load_options, _load_options);
 
-    auto engine = Chorus::make_engine(to_chorus_backend(_backend));
+    auto engine = Chorus::make_engine(to_chorus_provider(_provider));
     auto err = _runtime.load_engine(std::move(engine), config);
     if (err.has_value()) {
         UtilityFunctions::push_error(String("[Chorus] Model load failed: ") + chorus_error_name(err.value()));
@@ -382,23 +384,23 @@ String GodotChorus::get_model_path() const {
 }
 
 // ---------------------------------------------------------------------------
-// Backend load options
+// Provider load options
 //
 // The selected provider declares its own option schema; these hooks render it.
-// Nothing here names an option, a default, or a range: swap the backend and the
+// Nothing here names an option, a default, or a range: swap the provider and the
 // inspector follows without a line of adapter code changing.
 // ---------------------------------------------------------------------------
 
-const Chorus::EngineCapabilities& GodotChorus::backend_capabilities() const {
-    if (_cached_capabilities_backend != _backend) {
-        _cached_capabilities = Chorus::describe_backend(to_chorus_backend(_backend));
-        _cached_capabilities_backend = _backend;
+const Chorus::EngineCapabilities& GodotChorus::provider_capabilities() const {
+    if (_cached_capabilities_provider != _provider) {
+        _cached_capabilities = Chorus::describe_provider(to_chorus_provider(_provider));
+        _cached_capabilities_provider = _provider;
     }
     return _cached_capabilities;
 }
 
 const godot_chorus::OptionDescriptors& GodotChorus::load_option_descriptors() const {
-    return backend_capabilities().load_options;
+    return provider_capabilities().load_options;
 }
 
 const Chorus::OptionDescriptor* GodotChorus::find_load_option(const StringName& name) const {
@@ -437,7 +439,7 @@ void GodotChorus::_get_property_list(List<PropertyInfo>* list) const {
     const auto& descriptors = load_option_descriptors();
     if (descriptors.empty())
         return;
-    list->push_back(PropertyInfo(Variant::NIL, "Backend Options", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_GROUP));
+    list->push_back(PropertyInfo(Variant::NIL, "Provider Options", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_GROUP));
     for (const auto& descriptor : descriptors) {
         const bool enabled = Chorus::option_is_enabled(descriptors, descriptor, _load_options);
         list->push_back(godot_chorus::property_info_for(descriptor, enabled));
@@ -456,16 +458,18 @@ bool GodotChorus::_property_get_revert(const StringName& name, Variant& ret) con
     return true;
 }
 
-void GodotChorus::set_backend(BackendChoice backend) {
+void GodotChorus::set_provider(ProviderChoice provider) {
     if (is_loaded()) {
-        UtilityFunctions::push_warning("[Chorus] backend changed while loaded; takes effect on the next load_model().");
+        UtilityFunctions::push_warning(
+            "[Chorus] provider changed while loaded; takes effect on the next load_model()."
+        );
     }
-    _backend = backend;
+    _provider = provider;
     notify_property_list_changed(); // a different provider declares different options
 }
 
-GodotChorus::BackendChoice GodotChorus::get_backend() const {
-    return _backend;
+GodotChorus::ProviderChoice GodotChorus::get_provider() const {
+    return _provider;
 }
 
 void GodotChorus::set_generation_defaults(const Ref<ChorusGenerationDefaults>& defaults) {
@@ -571,9 +575,9 @@ void GodotChorus::_bind_methods() {
     BIND_ENUM_CONSTANT(ERR_SESSION_BUSY);
     BIND_ENUM_CONSTANT(ERR_UNKNOWN);
 
-    // --- BackendChoice enum ---
-    BIND_ENUM_CONSTANT(BACKEND_LLAMA);
-    BIND_ENUM_CONSTANT(BACKEND_ECHO);
+    // --- ProviderChoice enum ---
+    BIND_ENUM_CONSTANT(PROVIDER_LLAMA);
+    BIND_ENUM_CONSTANT(PROVIDER_ECHO);
 
     // --- TurnOutcomeCode enum ---
     BIND_ENUM_CONSTANT(TURN_NONE);
@@ -618,13 +622,15 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::STRING, "model_path", PROPERTY_HINT_FILE, "*.gguf"), "set_model_path", "get_model_path"
     );
 
-    // Backend load options (context_size, use_gpu, ...) are not bound here:
+    // Provider load options (context_size, use_gpu, ...) are not bound here:
     // the selected provider declares them and _get_property_list renders that
-    // declaration, so the adapter never restates a backend's option schema.
+    // declaration, so the adapter never restates a provider's option schema.
 
-    ClassDB::bind_method(D_METHOD("set_backend", "backend"), &GodotChorus::set_backend);
-    ClassDB::bind_method(D_METHOD("get_backend"), &GodotChorus::get_backend);
-    ADD_PROPERTY(PropertyInfo(Variant::INT, "backend", PROPERTY_HINT_ENUM, "Llama,Echo"), "set_backend", "get_backend");
+    ClassDB::bind_method(D_METHOD("set_provider", "provider"), &GodotChorus::set_provider);
+    ClassDB::bind_method(D_METHOD("get_provider"), &GodotChorus::get_provider);
+    ADD_PROPERTY(
+        PropertyInfo(Variant::INT, "provider", PROPERTY_HINT_ENUM, "Llama,Echo"), "set_provider", "get_provider"
+    );
 
     ClassDB::bind_method(D_METHOD("set_generation_defaults", "defaults"), &GodotChorus::set_generation_defaults);
     ClassDB::bind_method(D_METHOD("get_generation_defaults"), &GodotChorus::get_generation_defaults);

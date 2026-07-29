@@ -7,7 +7,7 @@
 	<tutorials>
 	</tutorials>
 	<members>
-		<member name="backend_options" type="Dictionary" setter="set_backend_options" getter="get_backend_options" default="{}">
+		<member name="provider_options" type="Dictionary" setter="set_provider_options" getter="get_provider_options" default="{}">
 		</member>
 		<member name="constraint_format" type="int" setter="set_constraint_format" getter="get_constraint_format" enum="ChorusGenerationDefaults.ConstraintFormat" default="0">
 		</member>

@@ -137,7 +137,7 @@ class ChorusRuntime {
     // now, without generating. Pass the SAME overrides you generate with -- the
     // host defaults apply underneath either way, and the resolved max_tokens
     // and thinking drive the fitting reservation.
-    // nullopt: unknown session, no engine, or no backend rendering.
+    // nullopt: unknown session, no engine, or no provider rendering.
     std::optional<std::string> render_prompt(
         const SessionId& session,
         const std::string& template_override = "",

@@ -300,12 +300,12 @@ void test_render_reservation_matches_generation() {
     );
     // Probe: 6 messages x 2 = 12. max_tokens=514 => budget 12: nothing dropped.
     Chorus::GenerationConfigPatch roomy;
-    roomy.max_tokens = Chorus::OptionalPatch<int32_t>::set(514);
+    roomy.max_tokens = Chorus::ConfigPatch<int32_t>::set(514);
     auto full = runtime.render_prompt("npc_1", "", {}, roomy);
     ASSERT_TRUE(full.has_value() && full->find("<user>a") != std::string::npos);
     // max_tokens=518 => budget 8: oldest turns fall out of the window.
     Chorus::GenerationConfigPatch tight;
-    tight.max_tokens = Chorus::OptionalPatch<int32_t>::set(518);
+    tight.max_tokens = Chorus::ConfigPatch<int32_t>::set(518);
     auto fitted = runtime.render_prompt("npc_1", "", {}, tight);
     ASSERT_TRUE(fitted.has_value());
     ASSERT_TRUE(fitted->find("<user>a") == std::string::npos); // dropped
@@ -325,7 +325,7 @@ void test_inspection_equals_consumption() {
     ASSERT_TRUE(!runtime.load_engine(std::move(owned), make_config()).has_value());
 
     Chorus::GenerationConfigPatch config;
-    config.max_tokens = Chorus::OptionalPatch<int32_t>::set(516); // budget 10; staged list 6x2=12 -> drops oldest turn
+    config.max_tokens = Chorus::ConfigPatch<int32_t>::set(516); // budget 10; staged list 6x2=12 -> drops oldest turn
     std::vector<Chorus::ChatMessage> base{
         {"system", "persona"}, {"user", "a"}, {"assistant", "b"}, {"user", "c"}, {"assistant", "d"}
     };
@@ -380,7 +380,7 @@ void test_stateless_chat_controls_rejected() {
     request.chat_template = "{{ x }}";
     ASSERT_TRUE(runtime.submit(request).error == Chorus::ChorusError::InvalidRequest);
     request.chat_template.clear();
-    request.overrides.thinking = Chorus::OptionalPatch<bool>::set(false);
+    request.overrides.thinking = Chorus::ConfigPatch<bool>::set(false);
     ASSERT_TRUE(runtime.submit(request).error == Chorus::ChorusError::InvalidRequest);
     ASSERT_TRUE(runtime.list_conversations().empty());
 }
@@ -443,7 +443,7 @@ void test_host_default_thinking_is_dropped_from_a_stateless_request() {
     ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
 
     Chorus::HostDefaults defaults;
-    defaults.config.thinking = Chorus::OptionalPatch<bool>::set(false);
+    defaults.config.thinking = Chorus::ConfigPatch<bool>::set(false);
     runtime.set_host_defaults(defaults);
 
     Chorus::GenerationRequest request;
@@ -456,12 +456,12 @@ void test_request_thinking_still_rejects_a_stateless_request() {
     ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
 
     Chorus::HostDefaults defaults;
-    defaults.config.thinking = Chorus::OptionalPatch<bool>::set(false);
+    defaults.config.thinking = Chorus::ConfigPatch<bool>::set(false);
     runtime.set_host_defaults(defaults);
 
     Chorus::GenerationRequest request;
     request.prompt = "hi";
-    request.overrides.thinking = Chorus::OptionalPatch<bool>::set(true); // asked for deliberately
+    request.overrides.thinking = Chorus::ConfigPatch<bool>::set(true); // asked for deliberately
     ASSERT_TRUE(runtime.submit(request).error == Chorus::ChorusError::InvalidRequest);
 }
 
@@ -510,22 +510,22 @@ void test_request_overrides_layer_onto_host_defaults() {
     ASSERT_TRUE(!runtime.load_engine(std::move(owned), make_config()).has_value());
 
     Chorus::HostDefaults defaults;
-    defaults.config.max_tokens = Chorus::OptionalPatch<int32_t>::set(128);
-    defaults.config.temperature = Chorus::OptionalPatch<float>::set(0.7f);
-    defaults.config.backend_options = Chorus::OptionMap{{"llama", Chorus::OptionMap{{"repeat_penalty", 1.1}}}};
+    defaults.config.max_tokens = Chorus::ConfigPatch<int32_t>::set(128);
+    defaults.config.temperature = Chorus::ConfigPatch<float>::set(0.7f);
+    defaults.config.provider_options = Chorus::OptionMap{{"llama", Chorus::OptionMap{{"repeat_penalty", 1.1}}}};
     runtime.set_host_defaults(defaults);
 
     Chorus::GenerationRequest request;
     request.prompt = "hi";
-    request.overrides.max_tokens = Chorus::OptionalPatch<int32_t>::set(32); // replaces
-    request.overrides.backend_option_erasures = {"llama.repeat_penalty"};   // clears
+    request.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(32);  // replaces
+    request.overrides.provider_option_erasures = {"llama.repeat_penalty"}; // clears
     ASSERT_TRUE(runtime.submit(request).ok());
 
     const auto& config = engine->last_config;
-    ASSERT_EQ(*config.common.max_tokens, 32);
-    ASSERT_TRUE(config.common.temperature.has_value()); // untouched default survives
-    ASSERT_TRUE(*config.common.temperature == 0.7f);
-    const auto& llama = std::get<Chorus::OptionMap>(config.backend_options.at("llama"));
+    ASSERT_EQ(*config.max_tokens, 32);
+    ASSERT_TRUE(config.temperature.has_value()); // untouched default survives
+    ASSERT_TRUE(*config.temperature == 0.7f);
+    const auto& llama = std::get<Chorus::OptionMap>(config.provider_options.at("llama"));
     ASSERT_TRUE(llama.find("repeat_penalty") == llama.end());
 }
 

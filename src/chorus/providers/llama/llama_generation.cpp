@@ -1,5 +1,5 @@
-#include "chorus/backends/llama/llama_generation.hpp"
-#include "chorus/backends/llama/stop_sequence_filter.hpp"
+#include "chorus/providers/llama/llama_generation.hpp"
+#include "chorus/providers/llama/stop_sequence_filter.hpp"
 #include "json-schema-to-grammar.h"
 
 #include <algorithm>
@@ -66,7 +66,7 @@ struct OptionDescriptor {
     TargetMember target_member;
 };
 
-constexpr std::array<const char*, 10> kPortableOptions{
+constexpr std::array<const char*, 10> kCommonOptions{
     "max_tokens",
     "temperature",
     "top_k",
@@ -79,7 +79,7 @@ constexpr std::array<const char*, 10> kPortableOptions{
     "thinking", // honored at chat-render time (#5), not in the sampler
 };
 
-constexpr std::array<OptionDescriptor, 23> kBackendOptions{{
+constexpr std::array<OptionDescriptor, 23> kProviderOptions{{
     {"min_keep", OptionValueKind::Int64, RangePolicy::NonnegativeInt32, TargetMember::MinKeep},
     {"min_p", OptionValueKind::Double, RangePolicy::Probability, TargetMember::MinP},
     {"typical_p", OptionValueKind::Double, RangePolicy::Probability, TargetMember::TypicalP},
@@ -184,7 +184,7 @@ RequestRejection option_rejection(
 }
 
 const OptionDescriptor* find_descriptor(const std::string& key) {
-    for (const auto& descriptor : kBackendOptions) {
+    for (const auto& descriptor : kProviderOptions) {
         if (key == descriptor.public_key)
             return &descriptor;
     }
@@ -434,7 +434,7 @@ void assign_bool(common_params_sampling& sampling, TargetMember target, bool val
 }
 
 std::optional<RequestRejection>
-apply_backend_option(ResolvedLlamaGeneration& resolved, const OptionDescriptor& descriptor, const OptionValue& value) {
+apply_provider_option(ResolvedLlamaGeneration& resolved, const OptionDescriptor& descriptor, const OptionValue& value) {
     if (!matches_kind(value, descriptor.value_kind)) {
         return option_rejection(
             "llama",
@@ -495,21 +495,21 @@ apply_backend_option(ResolvedLlamaGeneration& resolved, const OptionDescriptor& 
     return std::nullopt;
 }
 
-std::optional<RequestRejection> validate_portable(const PortableGenerationConfig& config) {
+std::optional<RequestRejection> validate_common(const GenerationConfig& config) {
     if (config.max_tokens && *config.max_tokens < -1)
-        return option_rejection("portable", "max_tokens", "int32", "int32", "[-1, 2147483647]");
+        return option_rejection("common", "max_tokens", "int32", "int32", "[-1, 2147483647]");
     if (config.temperature && (!std::isfinite(*config.temperature) || *config.temperature < 0.0f))
-        return option_rejection("portable", "temperature", "float", "float", "[0.0, finite float maximum]");
+        return option_rejection("common", "temperature", "float", "float", "[0.0, finite float maximum]");
     if (config.top_k && *config.top_k < 0)
-        return option_rejection("portable", "top_k", "int32", "int32", "[0, 2147483647]");
+        return option_rejection("common", "top_k", "int32", "int32", "[0, 2147483647]");
     if (config.top_p && (!std::isfinite(*config.top_p) || *config.top_p < 0.0f || *config.top_p > 1.0f))
-        return option_rejection("portable", "top_p", "float", "float", "[0.0, 1.0]");
+        return option_rejection("common", "top_p", "float", "float", "[0.0, 1.0]");
     if (config.seed && *config.seed > std::numeric_limits<uint32_t>::max())
-        return option_rejection("portable", "seed", "uint64", "uint64", "[0, 4294967295]");
+        return option_rejection("common", "seed", "uint64", "uint64", "[0, 4294967295]");
     if (config.frequency_penalty && !std::isfinite(*config.frequency_penalty))
-        return option_rejection("portable", "frequency_penalty", "float", "float", "finite float range");
+        return option_rejection("common", "frequency_penalty", "float", "float", "finite float range");
     if (config.presence_penalty && !std::isfinite(*config.presence_penalty))
-        return option_rejection("portable", "presence_penalty", "float", "float", "finite float range");
+        return option_rejection("common", "presence_penalty", "float", "float", "finite float range");
     if (auto rejection = validate_stop_sequences(config.stop))
         return rejection;
     return std::nullopt;
@@ -553,31 +553,30 @@ resolve_constraint(common_params_sampling& sampling, const std::optional<OutputC
 } // namespace
 
 std::variant<ResolvedLlamaGeneration, RequestRejection> resolve_llama_generation(const GenerationConfig& config) {
-    if (auto rejection = validate_portable(config.common))
+    if (auto rejection = validate_common(config))
         return *rejection;
 
     ResolvedLlamaGeneration resolved;
-    const auto& portable = config.common;
-    if (portable.max_tokens)
-        resolved.max_tokens = *portable.max_tokens;
-    if (portable.temperature)
-        resolved.sampling.temp = *portable.temperature;
-    if (portable.top_k)
-        resolved.sampling.top_k = *portable.top_k;
-    if (portable.top_p)
-        resolved.sampling.top_p = *portable.top_p;
-    if (portable.seed)
-        resolved.sampling.seed = static_cast<uint32_t>(*portable.seed);
-    if (portable.frequency_penalty)
-        resolved.sampling.penalty_freq = *portable.frequency_penalty;
-    if (portable.presence_penalty)
-        resolved.sampling.penalty_present = *portable.presence_penalty;
-    resolved.stop = portable.stop;
-    if (auto rejection = resolve_constraint(resolved.sampling, portable.constraint))
+    if (config.max_tokens)
+        resolved.max_tokens = *config.max_tokens;
+    if (config.temperature)
+        resolved.sampling.temp = *config.temperature;
+    if (config.top_k)
+        resolved.sampling.top_k = *config.top_k;
+    if (config.top_p)
+        resolved.sampling.top_p = *config.top_p;
+    if (config.seed)
+        resolved.sampling.seed = static_cast<uint32_t>(*config.seed);
+    if (config.frequency_penalty)
+        resolved.sampling.penalty_freq = *config.frequency_penalty;
+    if (config.presence_penalty)
+        resolved.sampling.penalty_present = *config.presence_penalty;
+    resolved.stop = config.stop;
+    if (auto rejection = resolve_constraint(resolved.sampling, config.constraint))
         return *rejection;
     bool has_custom_sampler_order = false;
 
-    for (const auto& [option_namespace, namespace_value] : config.backend_options) {
+    for (const auto& [option_namespace, namespace_value] : config.provider_options) {
         if (option_namespace != "llama") {
             return option_rejection(
                 option_namespace,
@@ -600,7 +599,7 @@ std::variant<ResolvedLlamaGeneration, RequestRejection> resolve_llama_generation
                     "llama", key, "catalogued option key", received_type(value), "catalogued llama generation option"
                 );
             }
-            if (auto rejection = apply_backend_option(resolved, *descriptor, value))
+            if (auto rejection = apply_provider_option(resolved, *descriptor, value))
                 return *rejection;
             if (key == "sampler_order" && !std::get<OptionList>(value).empty())
                 has_custom_sampler_order = true;
@@ -678,7 +677,7 @@ std::optional<RequestRejection> validate_llama_request(const ChorusRequest& requ
                 "Llama chat_template requires non-empty messages; unset it for raw-prompt generation.",
             };
         }
-        if (request.gen_config.common.thinking.has_value()) {
+        if (request.gen_config.thinking.has_value()) {
             return RequestRejection{
                 ChorusError::UnsupportedOption,
                 "Llama thinking requires non-empty messages; unset it for raw-prompt generation.",
@@ -688,16 +687,16 @@ std::optional<RequestRejection> validate_llama_request(const ChorusRequest& requ
     return validate_llama_generation(request.gen_config);
 }
 
-const std::vector<std::string>& llama_portable_generation_option_names() {
-    static const std::vector<std::string> names(kPortableOptions.begin(), kPortableOptions.end());
+const std::vector<std::string>& llama_common_generation_option_names() {
+    static const std::vector<std::string> names(kCommonOptions.begin(), kCommonOptions.end());
     return names;
 }
 
-const std::vector<std::string>& llama_backend_generation_option_names() {
+const std::vector<std::string>& llama_provider_generation_option_names() {
     static const std::vector<std::string> names = [] {
         std::vector<std::string> result;
-        result.reserve(kBackendOptions.size());
-        for (const auto& descriptor : kBackendOptions)
+        result.reserve(kProviderOptions.size());
+        for (const auto& descriptor : kProviderOptions)
             result.emplace_back(descriptor.public_key);
         return result;
     }();

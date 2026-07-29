@@ -1,4 +1,4 @@
-#include "godot_chorus/backend_option_properties.hpp"
+#include "godot_chorus/provider_option_properties.hpp"
 
 #include <string>
 #include <variant>
@@ -10,7 +10,7 @@ namespace {
 
 // A declared maximum is a widget bound, not the provider's limit, so every
 // numeric range renders with or_greater: the spinner suggests the useful span
-// while a script may still ask for more and earn the backend's own answer.
+// while a script may still ask for more and earn the provider's own answer.
 // Bounds render as whole numbers; the first float option with fractional
 // bounds or step needs this to stop truncating.
 String range_hint(const Chorus::OptionDescriptor& descriptor) {
@@ -65,7 +65,7 @@ Variant option_value_to_variant(const Chorus::OptionValue& value) {
         return Variant(String(as_string->c_str()));
     // List- and map-valued options have no inspector rendering yet: they read
     // as null here, and coerce_to_descriptor refuses every write, so the first
-    // backend to declare one fails loudly rather than quietly.
+    // provider to declare one fails loudly rather than quietly.
     return Variant();
 }
 

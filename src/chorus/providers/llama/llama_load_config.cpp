@@ -1,4 +1,4 @@
-#include "chorus/backends/llama/llama_load_config.hpp"
+#include "chorus/providers/llama/llama_load_config.hpp"
 
 #include <limits>
 #include <optional>
@@ -100,7 +100,7 @@ const std::vector<OptionDescriptor>& llama_load_option_descriptors() {
             // n_batch -- and a widget bound cannot depend on a sibling option's
             // live value. So each bound tracks the other's default: the pair is
             // freely adjustable within the declared ranges, and moving one past
-            // the other is a deliberate act that earns the backend's rejection.
+            // the other is a deliberate act that earns the provider's rejection.
             {"n_batch",
              "Batch Size",
              "Maximum total tokens combined into one inference batch.",
@@ -126,18 +126,18 @@ const std::vector<OptionDescriptor>& llama_load_option_descriptors() {
 std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const ChorusConfig& config) {
     LlamaLoadConfig out;
     for (const auto& asset : config.model.assets) {
-        if (asset.role == "weights") {
-            out.weights_path = asset.location;
+        if (asset.role == AssetRole::Weights) {
+            out.weights_path = asset.source;
         } else {
-            return unsupported("LlamaEngine does not use asset role '" + asset.role + "'");
+            return unsupported("LlamaEngine only uses the 'weights' asset role.");
         }
     }
     if (out.weights_path.empty())
-        return RequestRejection{ChorusError::InvalidRequest, "ModelSpec has no 'weights' asset."};
-    if (!config.model.backend_options.empty())
+        return RequestRejection{ChorusError::InvalidRequest, "InitialModelSpec has no 'weights' asset."};
+    if (!config.model.provider_options.empty())
         return unsupported("LlamaEngine defines no artifact-scoped model options.");
 
-    for (const auto& [ns, value] : config.backend_options) {
+    for (const auto& [ns, value] : config.provider_options) {
         if (ns != "llama")
             return unsupported("Unknown option namespace '" + ns + "'");
         const auto* opts = std::get_if<OptionMap>(&value);

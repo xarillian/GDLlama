@@ -13,8 +13,8 @@
 
 #include "chorus/core/common.hpp"
 #include "chorus/runtime/runtime.hpp"
-#include "godot_chorus/backend_option_properties.hpp"
 #include "godot_chorus/chorus_generation_defaults.hpp"
+#include "godot_chorus/provider_option_properties.hpp"
 
 class GodotChorus : public godot::Node {
     GDCLASS(GodotChorus, godot::Node);
@@ -23,10 +23,10 @@ class GodotChorus : public godot::Node {
     static void _bind_methods();
     void _notification(int p_what);
 
-    // --- Backend load options, rendered from the provider's declared schema ---
-    // The selected backend owns its option names, types, defaults, and bounds;
+    // --- Provider load options, rendered from the provider's declared schema ---
+    // The selected provider owns its option names, types, defaults, and bounds;
     // these hooks restate that declaration as inspector properties so the node
-    // never hard-codes a backend's configuration surface.
+    // never hard-codes a provider's configuration surface.
     bool _set(const godot::StringName& name, const godot::Variant& value);
     bool _get(const godot::StringName& name, godot::Variant& ret) const;
     void _get_property_list(godot::List<godot::PropertyInfo>* list) const;
@@ -50,9 +50,9 @@ class GodotChorus : public godot::Node {
         ERR_UNKNOWN,
     };
 
-    enum BackendChoice {
-        BACKEND_LLAMA, // mirrors Chorus::Backend::Llama
-        BACKEND_ECHO,  // mirrors Chorus::Backend::Echo
+    enum ProviderChoice {
+        PROVIDER_LLAMA, // mirrors Chorus::Provider::Llama
+        PROVIDER_ECHO,  // mirrors Chorus::Provider::Echo
     };
 
     // Mirrors Chorus::TurnOutcome: the terminal state of a session's most
@@ -69,7 +69,7 @@ class GodotChorus : public godot::Node {
 
     // --- Core API ---
 
-    // Constructs the selected backend via the factory and hands it to the
+    // Constructs the selected provider via the factory and hands it to the
     // runtime. Always (re)loads: a second call replaces the engine (in-flight
     // requests get ERR_CANCELLED), and the current config fully applies.
     bool load_model();
@@ -90,20 +90,20 @@ class GodotChorus : public godot::Node {
     // defaults. Absent = inherit the layer below; an explicit null clears an inherited value;
     // a present non-null value replaces it:
     //   max_tokens, temperature, top_k, top_p, seed, frequency_penalty, presence_penalty
-    //   stop: Array[String]  (null clears to the backend default; [] explicitly disables any
+    //   stop: Array[String]  (null clears to the provider default; [] explicitly disables any
     //                          inherited stop sequences; a non-empty array replaces them)
-    //   backend_options: Dictionary
+    //   provider_options: Dictionary
     //                        (namespaced, e.g. {"llama": {"repeat_penalty": 1.1}}; deep-merges
-    //                          onto the inherited backend options; a null leaf erases the
+    //                          onto the inherited provider options; a null leaf erases the
     //                          corresponding inherited key; unknown options are rejected)
-    //   repeat_penalty: float (convenience for backend_options["llama"]["repeat_penalty"]; applied
-    //                          after backend_options, so it wins if both are given; null erases it)
+    //   repeat_penalty: float (convenience for provider_options["llama"]["repeat_penalty"]; applied
+    //                          after provider_options, so it wins if both are given; null erases it)
     //   constraint: Dictionary {"format": "gbnf"|"json_schema", "source": String}, or one of the
     //                          convenience spellings grammar: String (GBNF text) / json_schema:
     //                          String (schema text) / json: String (same as json_schema); at most
     //                          one spelling may be present; null clears an inherited constraint.
     //   thinking: bool       (reasoning-model toggle; null clears an inherited value back to the
-    //                          template/backend default)
+    //                          template/provider default)
     // Chat keys (meaningful on sessioned requests):
     //   inject: Array        (of {role: String, content: String, depth?: int} Dictionaries;
     //                          ephemeral messages placed into this turn's prompt only, never
@@ -145,7 +145,7 @@ class GodotChorus : public godot::Node {
     bool reset_context();
     TurnOutcomeCode last_turn_outcome(const godot::String& session) const;
     // The exact fitted prompt generation would consume for this session right
-    // now ("" when unavailable: unknown session, no engine, or no backend
+    // now ("" when unavailable: unknown session, no engine, or no provider
     // rendering). Uses this node's effective generation defaults for the
     // fitting reservation and thinking flag, so inspection matches a
     // default-configured turn; a generate() call overriding max_tokens or
@@ -162,8 +162,8 @@ class GodotChorus : public godot::Node {
 
     void set_model_path(const godot::String& path);
     godot::String get_model_path() const;
-    void set_backend(BackendChoice backend);
-    BackendChoice get_backend() const;
+    void set_provider(ProviderChoice provider);
+    ProviderChoice get_provider() const;
     void set_generation_defaults(const godot::Ref<ChorusGenerationDefaults>& defaults);
     godot::Ref<ChorusGenerationDefaults> get_generation_defaults() const;
     // Node-default jinja chat template for chat (sessioned) turns; "" = the
@@ -186,9 +186,9 @@ class GodotChorus : public godot::Node {
     // renders, so the node never has to decide where an ambient value applies.
     void push_host_defaults();
 
-    // The selected backend's self-description, fetched from the factory and
+    // The selected provider's self-description, fetched from the factory and
     // cached because the inspector asks for the property list constantly.
-    const Chorus::EngineCapabilities& backend_capabilities() const;
+    const Chorus::EngineCapabilities& provider_capabilities() const;
     const godot_chorus::OptionDescriptors& load_option_descriptors() const;
     const Chorus::OptionDescriptor* find_load_option(const godot::StringName& name) const;
 
@@ -196,17 +196,17 @@ class GodotChorus : public godot::Node {
 
     godot::String _model_path;
 
-    BackendChoice _backend = BACKEND_LLAMA;
+    ProviderChoice _provider = PROVIDER_LLAMA;
 
     // Only the options the user actually set; everything else resolves from
-    // the backend's declared defaults at load time. Keys belonging to a
-    // backend that is not currently selected are inert, so switching back and
+    // the provider's declared defaults at load time. Keys belonging to a
+    // provider that is not currently selected are inert, so switching back and
     // forth in a session keeps a configuration. A scene save does not: only
-    // the selected backend's options are listed as properties, so only they
+    // the selected provider's options are listed as properties, so only they
     // persist.
     Chorus::OptionMap _load_options;
     mutable Chorus::EngineCapabilities _cached_capabilities;
-    mutable std::optional<BackendChoice> _cached_capabilities_backend;
+    mutable std::optional<ProviderChoice> _cached_capabilities_provider;
 
     // Node-default jinja chat template; "" = the model's embedded template.
     godot::String _chat_template;
@@ -219,5 +219,5 @@ class GodotChorus : public godot::Node {
 };
 
 VARIANT_ENUM_CAST(GodotChorus::ErrorCode);
-VARIANT_ENUM_CAST(GodotChorus::BackendChoice);
+VARIANT_ENUM_CAST(GodotChorus::ProviderChoice);
 VARIANT_ENUM_CAST(GodotChorus::TurnOutcomeCode);

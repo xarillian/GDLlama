@@ -20,9 +20,9 @@ enum class Modality {
 };
 
 enum class SchedulingAuthority {
-    ChorusManaged,  // Chorus owns batching, prefill, KV, decode cadence
-    BackendManaged, // backend runtime owns its own scheduling
-    Hybrid,         // Chorus influences coarse budgets only
+    ChorusManaged,   // Chorus owns batching, prefill, KV, decode cadence
+    ProviderManaged, // provider runtime owns its own scheduling
+    Hybrid,          // Chorus influences coarse budgets only
 };
 
 /**
@@ -57,14 +57,14 @@ struct OptionDescriptor {
 };
 
 struct EngineCapabilities {
-    std::string backend_id;
+    std::string provider_id;
     std::vector<ModelFormat> model_formats;
     std::vector<Modality> input_modalities;
     std::vector<Modality> output_modalities;
     std::vector<ConstraintFormat> constraint_formats;
 
     // Conservative default: an engine must opt in to frame-budget claims.
-    SchedulingAuthority scheduling = SchedulingAuthority::BackendManaged;
+    SchedulingAuthority scheduling = SchedulingAuthority::ProviderManaged;
 
     bool streaming = false;
     bool cancellation = false;
@@ -75,14 +75,14 @@ struct EngineCapabilities {
     bool dynamic_adapters = false;
     bool prompt_rendering = false;
 
-    std::vector<std::string> portable_generation_options;
-    std::vector<std::string> backend_generation_options;
+    std::vector<std::string> common_generation_options;
+    std::vector<std::string> provider_generation_options;
 
-    // Options this backend accepts under its own namespace in
-    // ChorusConfig::backend_options at load time. Full descriptors rather than
+    // Options this provider accepts under its own namespace in
+    // ChorusConfig::provider_options at load time. Full descriptors rather than
     // names because hosts render configuration surfaces from them; the
     // generation lists above stay names, being per-request rather than
-    // configured, with defaults that are backend sampler internals.
+    // configured, with defaults that are provider sampler internals.
     std::vector<OptionDescriptor> load_options;
 };
 

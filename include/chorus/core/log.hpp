@@ -10,9 +10,9 @@ enum class LogLevel { Debug, Info, Warn, Error, Fatal };
 
 using LogCallback = std::function<void(LogLevel, const std::string&)>;
 
-inline void chorus_log(const LogCallback& cb, LogLevel level, const std::string& msg) {
-    if (cb) {
-        cb(level, msg);
+inline void chorus_log(const LogCallback& callback, LogLevel level, const std::string& message) {
+    if (callback) {
+        callback(level, message);
         return;
     }
 
@@ -21,19 +21,19 @@ inline void chorus_log(const LogCallback& cb, LogLevel level, const std::string&
 
     switch (level) {
     case LogLevel::Debug:
-        std::cerr << prefix << "DEBUG: " << msg << std::endl;
+        std::cerr << prefix << "DEBUG: " << message << std::endl;
         break;
     case LogLevel::Info:
-        std::cerr << prefix << msg << std::endl;
+        std::cerr << prefix << "INFO: " << message << std::endl;
         break;
     case LogLevel::Warn:
-        std::cerr << prefix << "WARNING: " << msg << std::endl;
+        std::cerr << prefix << "WARNING: " << message << std::endl;
         break;
     case LogLevel::Error:
-        std::cerr << prefix << "ERROR: " << msg << std::endl;
+        std::cerr << prefix << "ERROR: " << message << std::endl;
         break;
     case LogLevel::Fatal:
-        std::cerr << prefix << "FATAL: " << msg << std::endl;
+        std::cerr << prefix << "FATAL: " << message << std::endl;
         break;
     }
 }

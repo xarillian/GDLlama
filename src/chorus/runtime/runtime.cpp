@@ -50,7 +50,7 @@ ChorusRuntime::ResolvedRequest ChorusRuntime::resolve_request(const GenerationRe
         // A request that named the control itself keeps it, and meets the
         // rejection below.
         if (request.overrides.thinking.action == PatchAction::Inherit)
-            resolved.config.common.thinking.reset();
+            resolved.config.thinking.reset();
     } else if (resolved.chat_template.empty()) {
         resolved.chat_template = _host_defaults.chat_template;
     }
@@ -78,7 +78,7 @@ SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
     // must not be silently discarded (project no-silent-discard rule). By this
     // point only controls the caller set deliberately survive.
     if (!request.session_id &&
-        (!request.inject.empty() || !resolved.chat_template.empty() || resolved.config.common.thinking.has_value()))
+        (!request.inject.empty() || !resolved.chat_template.empty() || resolved.config.thinking.has_value()))
         return SubmitResult{
             -1, ChorusError::InvalidRequest, "inject/chat_template/thinking are chat controls; they require a session."
         };

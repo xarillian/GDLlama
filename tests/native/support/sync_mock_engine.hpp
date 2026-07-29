@@ -14,7 +14,7 @@
 
 // Deterministic InferenceEngine for runtime tests: emits everything inline on
 // the caller's thread (legal per the port contract). Knobs deliberately allow
-// broken-backend behavior so the runtime's policy-boundary defenses can be
+// broken-provider behavior so the runtime's policy-boundary defenses can be
 // exercised.
 class SyncMockEngine : public Chorus::InferenceEngine {
   public:
@@ -68,7 +68,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
 
     Chorus::EngineCapabilities declared_caps = [] {
         Chorus::EngineCapabilities caps;
-        caps.backend_id = "mock";
+        caps.provider_id = "mock";
         caps.streaming = true;
         return caps;
     }();
