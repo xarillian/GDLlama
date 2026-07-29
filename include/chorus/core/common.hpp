@@ -43,12 +43,6 @@ enum class EventType {
 
 enum class TokenChannel { Content, Reasoning };
 
-/// Why an engine refused a request up front (see InferenceEngine::validate_request).
-struct RequestRejection {
-    ChorusError error = ChorusError::Unknown;
-    std::string message;
-};
-
 /*
  * Engine-wide configuration, fixed for the life of one engine instance.
  */
@@ -68,6 +62,12 @@ struct ChatMessage {
 struct RenderedPrompt {
     std::string text;
     int32_t token_count = 0;
+};
+
+/// Why an engine refused a request up front (see InferenceEngine::validate_request).
+struct RequestRejection {
+    ChorusError error = ChorusError::Unknown;
+    std::string message;
 };
 
 /*

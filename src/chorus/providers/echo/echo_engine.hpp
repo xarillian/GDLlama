@@ -10,7 +10,6 @@
 #include <optional>
 #include <thread>
 #include <unordered_set>
-#include <vector>
 
 namespace Chorus {
 // Reference implementation of InferenceEngine: model-free and dependency-free.

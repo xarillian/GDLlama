@@ -7,32 +7,40 @@
 
 namespace Chorus {
 
-// The provider port. Implementations must honor the callback contract:
-//
-// - ChorusRequest::on_event may be invoked from an engine worker thread, or
-//   inline on the caller's thread during submit_request (e.g. the
-//   EngineNotReady rejection path). Callbacks must therefore be thread-safe.
-// - After stop() returns, the engine must never invoke a previously supplied
-//   on_event again. (Current engines guarantee this by joining their worker
-//   inside stop().) ChorusRuntime relies on this to destroy its event queue
-//   safely.
-// - ChorusConfig::log_callback may be invoked from any engine thread; hosts
-//   must supply a thread-safe sink.
+/*
+ * The provider port, the only way anything above reaches a provider.
+ *
+ * Every inference provider implements this interface. An engine may run
+ * threads of its own, so every callback it is handed must be thread-safe. Its
+ * own methods run the other way around, confined to the thread that calls them
+ * and never reached from an engine worker.
+ */
 class InferenceEngine {
   public:
     virtual ~InferenceEngine() = default;
 
+    /// Brings the engine up under `config`, or reports why it could not.
+    /// `ChorusConfig::log_callback` may be written from any engine thread.
     virtual std::optional<ChorusError> initialize(const Chorus::ChorusConfig& config) = 0;
-    virtual bool is_initialized() const = 0;
 
+    virtual bool is_initialized() const = 0; // @todo maybe an enum? true / false / error. Error doesn't feed anything
+                                             // rn, but could be useful
+
+    /// Takes the request on. `on_event` fires from an engine worker, or inline
+    /// before this returns when the engine rejects the request outright.
     virtual void submit_request(const Chorus::ChorusRequest& chorus_request) = 0;
+
     virtual void cancel_request(RequestId id) = 0;
 
+    /*
+     * Tears the engine down, fencing its callbacks.
+     *
+     * Once this returns, an `on_event` the engine was given before is never
+     * invoked again, which is what lets a caller then destroy its sinks.
+     */
     virtual void stop() = 0;
 
-    // --- Capability self-description (all three are host-thread-only, like
-    // initialize/stop: they read state those methods mutate; they are never
-    // called from engine workers) ---
+    // --- Capability self-description ---
 
     // Pre-init: the provider envelope. Post-init: the effective intersection
     // of provider, model, and load configuration.
@@ -46,7 +54,7 @@ class InferenceEngine {
     // cannot fail later.
     virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
 
-    // --- Optional prompt rendering (host-thread-only, like capabilities) ---
+    // --- Optional prompt rendering ---
 
     // The exact templated prompt this provider would feed the model for
     // `messages`, plus its token count (the runtime's fitting loop budgets
