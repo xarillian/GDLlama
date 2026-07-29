@@ -84,10 +84,6 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         }
         return mock_model_info;
     }
-    std::optional<Chorus::RequestRejection> validate_request(const Chorus::ChorusRequest&) const override {
-        return reject_with;
-    }
-
     std::optional<Chorus::RenderedPrompt> render_chat_prompt(
         const std::vector<Chorus::ChatMessage>& messages,
         const std::string& /*template_override*/,
@@ -112,6 +108,10 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         }
         rendered.token_count = count;
         return rendered;
+    }
+
+    std::optional<Chorus::RequestRejection> validate_request(const Chorus::ChorusRequest&) const override {
+        return reject_with;
     }
 
     void submit_request(const Chorus::ChorusRequest& req) override {

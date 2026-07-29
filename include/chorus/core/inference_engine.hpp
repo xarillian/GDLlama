@@ -27,35 +27,11 @@ class InferenceEngine {
     /// failed answers false, the same as one that never initialized.
     virtual bool is_initialized() const = 0;
 
-    /// Takes the request on. `on_event` fires from an engine worker, or inline
-    /// before this returns when the engine rejects the request outright.
-    virtual void submit_request(const Chorus::ChorusRequest& chorus_request) = 0;
-
-    virtual void cancel_request(RequestId id) = 0;
-
-    /*
-     * Tears the engine down, fencing its callbacks.
-     *
-     * Once this returns, an `on_event` the engine was given before is never
-     * invoked again, which is what lets a caller then destroy its sinks.
-     */
-    virtual void stop() = 0;
-
-    // --- Capability self-description ---
-
     // Pre-init: the provider envelope. Post-init: the effective intersection
     // of provider, model, and load configuration.
     virtual EngineCapabilities capabilities() const = 0;
 
     virtual std::optional<LoadedModelInfo> loaded_model_info() const = 0;
-
-    // Lightweight, side-effect-free synchronous check: readiness, request
-    // type, constraint format, and named options. Never rejects a request
-    // for carrying a session id. Acceptance does not guarantee execution
-    // cannot fail later.
-    virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
-
-    // --- Optional prompt rendering ---
 
     // The exact templated prompt this provider would feed the model for
     // `messages`, plus its token count (the runtime's fitting loop budgets
@@ -69,6 +45,26 @@ class InferenceEngine {
         (void)enable_thinking;
         return std::nullopt;
     }
+
+    // Lightweight, side-effect-free synchronous check: readiness, request
+    // type, constraint format, and named options. Never rejects a request
+    // for carrying a session id. Acceptance does not guarantee execution
+    // cannot fail later.
+    virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
+
+    /// Takes the request on. `on_event` fires from an engine worker, or inline
+    /// before this returns when the engine rejects the request outright.
+    virtual void submit_request(const Chorus::ChorusRequest& chorus_request) = 0;
+
+    virtual void cancel_request(RequestId id) = 0;
+
+    /*
+     * Tears the engine down, fencing its callbacks.
+     *
+     * Once this returns, an `on_event` the engine was given before is never
+     * invoked again, which is what lets a caller then destroy its sinks.
+     */
+    virtual void stop() = 0;
 };
 
 } // namespace Chorus
