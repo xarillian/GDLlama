@@ -1,6 +1,6 @@
 #include "chorus/providers/llama/llama_scheduler.hpp"
-#include "chorus/providers/llama/llama_utils.hpp"
 #include "chorus/core/common.hpp"
+#include "chorus/providers/llama/llama_utils.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -12,7 +12,7 @@
 LlamaScheduler::LlamaScheduler() {}
 
 LlamaScheduler::~LlamaScheduler() {
-    stop();
+    shutdown();
 }
 
 bool LlamaScheduler::load_model_from_file(const Chorus::LlamaLoadConfig& config) {
@@ -125,7 +125,7 @@ std::optional<Chorus::ChorusError> LlamaScheduler::initialize(const Chorus::Chor
     return std::nullopt;
 }
 
-void LlamaScheduler::stop() {
+void LlamaScheduler::shutdown() {
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
         is_running = false;

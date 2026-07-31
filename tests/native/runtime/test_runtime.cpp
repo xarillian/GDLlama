@@ -346,7 +346,7 @@ void test_replacing_engine_cancels_live_requests_and_new_engine_works() {
     int first_stops = 0;
     auto first = std::make_unique<SyncMockEngine>();
     first->hold_requests = true;
-    first->stop_count_sink = &first_stops;
+    first->shutdown_count_sink = &first_stops;
     auto load_err = runtime.load_engine(std::move(first), make_config());
     ASSERT_TRUE(!load_err.has_value());
     auto held = runtime.submit(make_request("held"));
@@ -472,7 +472,7 @@ void test_engine_error_during_stop_wins_over_synthesized_Cancelled() {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->hold_requests = true;
-    engine->emit_error_during_stop = true;
+    engine->emit_error_during_shutdown = true;
     auto load_err = runtime.load_engine(std::move(engine), make_config());
     ASSERT_TRUE(!load_err.has_value());
 
@@ -480,7 +480,7 @@ void test_engine_error_during_stop_wins_over_synthesized_Cancelled() {
     ASSERT_TRUE(held.ok());
     runtime.stop_all();
 
-    // The engine's own Error (emitted inside stop(), before it returned) is
+    // The engine's own Error (emitted inside shutdown(), before it returned) is
     // drained first; the synthesized Cancelled for the same id is then dropped
     // by the liveness rule. Exactly one terminal.
     auto events = runtime.poll();

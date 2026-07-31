@@ -300,7 +300,7 @@ void test_transient_decode_failure_recovers() {
     ASSERT_TRUE(small_done);
     ASSERT_TRUE(small_tokens > 0);
 
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_higher_priority_request_served_first() {
@@ -365,7 +365,7 @@ void test_higher_priority_request_served_first() {
     ASSERT_EQ(completion_order.size(), 2);
     ASSERT_EQ(completion_order[0], 200); // high priority completes first
 
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_slot_reusable_after_request_completes() {
@@ -416,7 +416,7 @@ void test_slot_reusable_after_request_completes() {
     int second = run_one(2); // must reuse the reclaimed slot
     ASSERT_TRUE(second > 0);
 
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
@@ -489,7 +489,7 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
     ASSERT_TRUE(small_done);
     ASSERT_TRUE(small_tokens > 0);
 
-    engine.stop();
+    engine.shutdown();
 }
 
 int run_llama_scheduler_tests() {

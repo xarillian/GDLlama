@@ -50,7 +50,7 @@ void test_factory_echo_engine_round_trips_through_interface() {
     ASSERT_TRUE(reassembled == "seam proof");
     ASSERT_TRUE(sigs[2].type == Chorus::EventType::Stop);
 
-    engine->stop();
+    engine->shutdown();
 }
 
 void test_factory_creates_llama_engine_uninitialized() {

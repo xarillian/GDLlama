@@ -30,7 +30,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     std::optional<Chorus::ChorusError> fail_initialize_with; // make initialize() fail
     bool hold_requests = false;                              // accept but emit nothing (request stays in flight)
     bool emit_cancelled_on_cancel = false;                   // emit one Cancelled terminal for a matching held request
-    bool emit_error_during_stop = false;                     // emit Error for held requests inside stop()
+    bool emit_error_during_shutdown = false;                 // emit Error for held requests inside shutdown()
     bool log_on_initialize_from_worker = false;              // exercise log-callback pass-through
     bool supports_render = false;                            // render_chat_prompt returns text + word-count tokens
     std::optional<uint32_t> mock_per_request_context;        // reported via loaded_model_info()
@@ -40,9 +40,9 @@ class SyncMockEngine : public Chorus::InferenceEngine {
 
     // --- observability ---
     int initialize_calls = 0;
-    int stop_calls = 0;
+    int shutdown_calls = 0;
     std::string* seen_model_id = nullptr; // survives this object's destruction
-    int* stop_count_sink = nullptr;       // ditto
+    int* shutdown_count_sink = nullptr;   // ditto
     std::vector<int64_t> submitted_ids;
     std::vector<Chorus::RequestId> cancelled_ids;
     std::vector<Chorus::ChatMessage> last_messages; // messages of the last submitted request
@@ -198,11 +198,11 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         _held.erase(held);
     }
 
-    void stop() override {
-        stop_calls++;
-        if (stop_count_sink)
-            (*stop_count_sink)++;
-        if (emit_error_during_stop) {
+    void shutdown() override {
+        shutdown_calls++;
+        if (shutdown_count_sink)
+            (*shutdown_count_sink)++;
+        if (emit_error_during_shutdown) {
             for (auto& req : _held)
                 if (req.on_event)
                     send(
@@ -221,7 +221,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
      * Dies mid-flight, the way the llama worker does on a fatal decode.
      *
      * Held requests get their Decode terminals first, then the engine stops
-     * being able to take work. stop() is never called, so nothing fences the
+     * being able to take work. shutdown() is never called, so nothing fences the
      * callbacks and nothing announces the death: it is visible only to whoever
      * asks is_initialized() next.
      */

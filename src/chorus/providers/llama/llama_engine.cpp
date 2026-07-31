@@ -10,7 +10,7 @@ LlamaEngine::LlamaEngine() {
 }
 
 LlamaEngine::~LlamaEngine() {
-    stop();
+    shutdown();
 }
 
 std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config) {
@@ -32,7 +32,7 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config) {
     }
     if (holds_dead_scheduler) {
         chorus_log(_log, LogLevel::Warn, "Re-initializing LlamaEngine after engine failure.");
-        stop();
+        shutdown();
     }
 
     if (config.model.format != ModelFormat::Gguf && config.model.format != ModelFormat::Auto) {
@@ -88,7 +88,7 @@ void LlamaEngine::cancel_request(RequestId id) {
         scheduler->cancel_request(id);
 }
 
-void LlamaEngine::stop() {
+void LlamaEngine::shutdown() {
     std::shared_ptr<LlamaScheduler> stopped_scheduler;
     {
         std::lock_guard<std::mutex> lock(_lifecycle_mutex);
@@ -96,7 +96,7 @@ void LlamaEngine::stop() {
         _initialized = false;
     }
     if (stopped_scheduler)
-        stopped_scheduler->stop();
+        stopped_scheduler->shutdown();
 }
 
 bool LlamaEngine::is_initialized() const {

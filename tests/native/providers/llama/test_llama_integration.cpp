@@ -110,7 +110,7 @@ void test_model_loading() {
     ASSERT_TRUE(!engine.initialize(config).has_value());
     ASSERT_TRUE(engine.is_initialized());
 
-    engine.stop();
+    engine.shutdown();
     ASSERT_TRUE(!engine.is_initialized());
 }
 
@@ -149,7 +149,7 @@ void test_llama_cpu_placement_avoids_vulkan_compute_buffer() {
         std::unique_lock<std::mutex> lock(mutex);
         ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(10), [&] { return terminal_count == 1; }));
     }
-    engine.stop();
+    engine.shutdown();
 
     ASSERT_EQ(token_count, 1);
     ASSERT_EQ(terminal_count, 1);
@@ -267,7 +267,7 @@ void test_llama_batch_controls_create_context_and_generate_four_tokens() {
     ASSERT_TRUE(done);
     ASSERT_TRUE(!errored);
     ASSERT_EQ(token_chunks.load(), 4);
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_concurrent_requests_complete_with_multiple_slots() {
@@ -366,7 +366,7 @@ void test_max_tokens_counts_generated_not_prompt_tokens() {
     ASSERT_TRUE(token_count <= 8);
 }
 
-void test_engine_reinitializes_and_generates_after_stop() {
+void test_engine_reinitializes_and_generates_after_shutdown() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
@@ -379,10 +379,10 @@ void test_engine_reinitializes_and_generates_after_stop() {
     Chorus::LlamaEngine engine;
 
     ASSERT_TRUE(!engine.initialize(config).has_value());
-    engine.stop();
+    engine.shutdown();
     ASSERT_TRUE(!engine.is_initialized());
 
-    // Re-init must rebuild cleanly (robust stop() freed everything) and still generate.
+    // Re-init must rebuild cleanly (robust shutdown() freed everything) and still generate.
     ASSERT_TRUE(!engine.initialize(config).has_value());
     ASSERT_TRUE(engine.is_initialized());
 
@@ -406,7 +406,7 @@ void test_engine_reinitializes_and_generates_after_stop() {
 
     ASSERT_TRUE(done);
     ASSERT_TRUE(tokens > 0);
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_llama_declares_gguf_and_chorus_managed() {
@@ -472,7 +472,7 @@ void test_llama_cancellation_removes_queued_request_before_active_request_finish
         active_started = state->cv.wait_for(lock, std::chrono::seconds(15), [&] { return state->active_started; });
     }
     if (!active_started) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(active_started);
     }
 
@@ -499,7 +499,7 @@ void test_llama_cancellation_removes_queued_request_before_active_request_finish
                                                       state->queued_signals.back().type == Chorus::EventType::Error);
         });
     }
-    engine.stop();
+    engine.shutdown();
 
     ASSERT_TRUE(queued_terminal);
     ASSERT_EQ(state->queued_signals.size(), size_t{1});
@@ -543,7 +543,7 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
         started = cv.wait_for(lock, std::chrono::seconds(15), [&] { return active_started; });
     }
     if (!started) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(started);
     }
 
@@ -562,7 +562,7 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
         });
     }
     if (!active_terminal) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(active_terminal);
     }
 
@@ -584,7 +584,7 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
         std::unique_lock<std::mutex> lock(mutex);
         reuse_completed = cv.wait_for(lock, std::chrono::seconds(15), [&] { return reuse_stopped; });
     }
-    engine.stop();
+    engine.shutdown();
 
     size_t terminal_count = 0;
     Chorus::ChorusError terminal_code = Chorus::ChorusError::None;
@@ -646,7 +646,7 @@ void test_llama_cancellation_committed_during_decode_failure_wins_once() {
             });
         });
     }
-    engine.stop();
+    engine.shutdown();
 
     size_t terminal_count = 0;
     Chorus::ChorusError terminal_code = Chorus::ChorusError::None;
@@ -714,20 +714,20 @@ void test_llama_cancellation_from_committed_buffered_token_does_not_replace_stop
         buffered_marker = baseline->text + "<UNMATCHED>";
     }
     if (!baseline_terminal || !baseline_has_text) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(baseline_terminal);
         ASSERT_TRUE(baseline_has_text);
     }
 
     auto [reentrant, reentrant_terminal] = run(327, {buffered_marker}, true);
-    engine.stop();
+    engine.shutdown();
 
     ASSERT_TRUE(reentrant_terminal);
     ASSERT_EQ(reentrant->terminals.size(), size_t{1});
     ASSERT_TRUE(reentrant->terminals[0].type == Chorus::EventType::Stop);
 }
 
-void test_llama_stop_waits_for_active_cancellation_callback_and_drains_queue() {
+void test_llama_shutdown_waits_for_active_cancellation_callback_and_drains_queue() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     struct State {
@@ -784,7 +784,7 @@ void test_llama_stop_waits_for_active_cancellation_callback_and_drains_queue() {
             state->release_cancellation = true;
             state->cv.notify_all();
         }
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(started);
     }
 
@@ -807,7 +807,7 @@ void test_llama_stop_waits_for_active_cancellation_callback_and_drains_queue() {
         }
     }
     if (!cancellation_callback_entered) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(cancellation_callback_entered);
     }
 
@@ -817,7 +817,7 @@ void test_llama_stop_waits_for_active_cancellation_callback_and_drains_queue() {
             state->stop_started = true;
             state->cv.notify_all();
         }
-        engine.stop();
+        engine.shutdown();
         std::lock_guard<std::mutex> state_lock(state->mutex);
         state->stop_returned = true;
         state->cv.notify_all();
@@ -865,7 +865,7 @@ void test_llama_loaded_model_info_populated() {
     ASSERT_TRUE(!info->family.empty());
     ASSERT_TRUE(info->maximum_context.has_value() && *info->maximum_context > 0);
     ASSERT_TRUE(info->model_bytes.has_value() && *info->model_bytes > 0);
-    engine.stop();
+    engine.shutdown();
     ASSERT_TRUE(!engine.loaded_model_info().has_value()); // teardown clears it
 }
 
@@ -890,7 +890,7 @@ void test_llama_rejects_unwired_controls_explicitly() {
     auto r3 = engine.validate_request(req);
     ASSERT_TRUE(r3.has_value());
     ASSERT_TRUE(r3->error == Chorus::ChorusError::UnsupportedOption);
-    engine.stop();
+    engine.shutdown();
 }
 
 namespace {
@@ -966,7 +966,7 @@ void test_llama_gbnf_constraint_enforces_output() {
     auto result = run_constraint_request(
         engine, 101, Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, R"(root ::= "\"PINK_MOTH\"")"}
     );
-    engine.stop();
+    engine.shutdown();
 
     ASSERT_TRUE(!result.timed_out);
     ASSERT_TRUE(!result.error.has_value());
@@ -992,7 +992,7 @@ void test_llama_json_schema_constraint_enforces_output() {
             R"({"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false})",
         }
     );
-    engine.stop();
+    engine.shutdown();
 
     ASSERT_TRUE(!result.timed_out);
     ASSERT_TRUE(!result.error.has_value());
@@ -1022,7 +1022,7 @@ void test_llama_invalid_grammar_isolated_to_one_constraint_request() {
     auto valid = run_constraint_request(
         engine, 104, Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, R"(root ::= "\"PINK_MOTH\"")"}
     );
-    engine.stop();
+    engine.shutdown();
 
     ASSERT_TRUE(!valid.timed_out);
     ASSERT_TRUE(!valid.error.has_value());
@@ -1076,7 +1076,7 @@ void test_llama_conformance_seed_and_temperature() {
             std::unique_lock<std::mutex> lock(sig_mutex);
             cv.wait_for(lock, std::chrono::seconds(15), [&] { return done; });
         }
-        engine.stop();
+        engine.shutdown();
     };
 
     std::string text_a;
@@ -1122,7 +1122,7 @@ void test_llama_conformance_max_tokens_bounds_output() {
         std::unique_lock<std::mutex> lock(sig_mutex);
         cv.wait_for(lock, std::chrono::seconds(15), [&] { return done; });
     }
-    engine.stop();
+    engine.shutdown();
 
     ASSERT_TRUE(done);
     ASSERT_TRUE(token_count <= 8);
@@ -1185,7 +1185,7 @@ void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
             std::find(reuse_events.begin(), reuse_events.end(), Chorus::EventType::Token) != reuse_events.end()
         );
     }
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_llama_stop_marker_never_emits_and_slot_reuses() {
@@ -1275,7 +1275,7 @@ void test_llama_stop_marker_never_emits_and_slot_reuses() {
     ASSERT_TRUE(reused->stopped);
     ASSERT_TRUE(!reused->errored);
     ASSERT_TRUE(!reused->chunks.empty());
-    engine.stop();
+    engine.shutdown();
 }
 
 namespace {
@@ -1338,7 +1338,7 @@ int run_reentry_child(ReentryTrigger trigger) {
         std::unique_lock<std::mutex> lock(state->mutex);
         completed = state->cv.wait_for(lock, std::chrono::seconds(5), [&] { return state->followup_stopped; });
     }
-    engine.stop();
+    engine.shutdown();
     return completed && state->trigger_completed ? 0 : 11;
 }
 
@@ -1402,7 +1402,7 @@ void test_llama_stop_completion_releases_callback_resources() {
     }
     ASSERT_TRUE(state->terminal);
     ASSERT_TRUE(ownership_probe.expired());
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_llama_stop_zero_completes_while_slot_is_occupied() {
@@ -1460,7 +1460,7 @@ void test_llama_stop_zero_completes_while_slot_is_occupied() {
     ASSERT_TRUE(state->zero_events[0] == Chorus::EventType::Stop);
     ASSERT_TRUE(!state->busy_terminal_at_zero);
     lock.unlock();
-    engine.stop();
+    engine.shutdown();
 }
 
 // Terminal invariant sweep: every accepted request yields exactly one terminal
@@ -1518,12 +1518,12 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     success.gen_config.temperature = 0.0f;
     success.gen_config.max_tokens = 16;
     if (!drive(success, false)) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(false);
     }
     const std::string success_text = sweep->text[401];
     if (success_text.size() < 4) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(success_text.size() >= 4);
     }
 
@@ -1539,7 +1539,7 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     }
     limited.gen_config.max_tokens = 4;
     if (!drive(limited, false)) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(false);
     }
 
@@ -1549,7 +1549,7 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     zero.prompt = "This prompt must not enter inference.";
     zero.gen_config.max_tokens = 0;
     if (!drive(zero, false)) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(false);
     }
 
@@ -1563,7 +1563,7 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     stop_match.gen_config.max_tokens = 16;
     stop_match.gen_config.stop = {marker};
     if (!drive(stop_match, false)) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(false);
     }
 
@@ -1574,7 +1574,7 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     cancelled.gen_config.max_tokens = 512;
     cancelled.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
     if (!drive(cancelled, true)) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(false);
     }
 
@@ -1586,11 +1586,11 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
     bad_grammar.gen_config.max_tokens = 8;
     bad_grammar.gen_config.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= ["};
     if (!drive(bad_grammar, false)) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(false);
     }
 
-    engine.stop();
+    engine.shutdown();
 
     // Exactly one terminal per accepted request, of the expected kind.
     ASSERT_EQ(sweep->terminals[401].size(), size_t{1});
@@ -1649,7 +1649,7 @@ void test_llama_terminal_invariant_decode_failure_ends_once() {
         std::unique_lock<std::mutex> lock(mutex);
         terminal = cv.wait_for(lock, std::chrono::seconds(15), [&] { return !terminals.empty(); });
     }
-    engine.stop();
+    engine.shutdown();
 
     ASSERT_TRUE(terminal);
     ASSERT_EQ(terminals.size(), size_t{1});
@@ -1659,7 +1659,7 @@ void test_llama_terminal_invariant_decode_failure_ends_once() {
 
 // Terminal invariant: stopping the engine mid-flight drains the active request with
 // exactly one Cancelled terminal.
-void test_llama_terminal_invariant_engine_stop_ends_once() {
+void test_llama_terminal_invariant_engine_shutdown_ends_once() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
     std::mutex mutex;
@@ -1695,11 +1695,11 @@ void test_llama_terminal_invariant_engine_stop_ends_once() {
         active = cv.wait_for(lock, std::chrono::seconds(15), [&] { return started; });
     }
     if (!active) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(active);
     }
 
-    engine.stop(); // tears down mid-flight; must synthesize exactly one terminal
+    engine.shutdown(); // tears down mid-flight; must synthesize exactly one terminal
 
     ASSERT_EQ(terminals.size(), size_t{1});
     ASSERT_TRUE(terminals[0].type == Chorus::EventType::Error);
@@ -1766,7 +1766,7 @@ void test_llama_two_slot_one_cancels_one_completes() {
         started = state->cv.wait_for(lock, std::chrono::seconds(15), [&] { return state->cancel_started; });
     }
     if (!started) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(started);
     }
 
@@ -1779,7 +1779,7 @@ void test_llama_two_slot_one_cancels_one_completes() {
             return !state->cancel_terminals.empty() && !state->complete_terminals.empty();
         });
     }
-    engine.stop();
+    engine.shutdown();
 
     ASSERT_TRUE(both);
     ASSERT_EQ(state->cancel_terminals.size(), size_t{1});
@@ -1874,7 +1874,7 @@ void test_chat_messages_render_and_generate() {
     ASSERT_TRUE(done.load());
     ASSERT_TRUE(stopped.load());
     ASSERT_TRUE(!text.empty());
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_capabilities_and_model_info_report_rendering() {
@@ -1885,7 +1885,7 @@ void test_capabilities_and_model_info_report_rendering() {
     auto info = engine.loaded_model_info();
     ASSERT_TRUE(info.has_value() && info->per_request_context.has_value());
     ASSERT_TRUE(*info->per_request_context > 0);
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_multi_turn_conversation_stays_contextual() {
@@ -1969,7 +1969,9 @@ int run_llama_integration_tests() {
         "Llama_ConcurrentRequestsCompleteWithMultipleSlots", test_concurrent_requests_complete_with_multiple_slots
     );
     run_test("Max_tokens_counts_generated_not_prompt_tokens", test_max_tokens_counts_generated_not_prompt_tokens);
-    run_test("Engine_reinitializes_and_generates_after_stop", test_engine_reinitializes_and_generates_after_stop);
+    run_test(
+        "Engine_reinitializes_and_generates_after_shutdown", test_engine_reinitializes_and_generates_after_shutdown
+    );
     run_test("Llama_constraint_capabilities", test_llama_declares_gguf_and_chorus_managed);
     run_test(
         "Llama cancellation removes queued request before active finishes",
@@ -1988,8 +1990,8 @@ int run_llama_integration_tests() {
         test_llama_cancellation_from_committed_buffered_token_does_not_replace_stop
     );
     run_test(
-        "Llama stop waits for active cancellation callback and drains queue",
-        test_llama_stop_waits_for_active_cancellation_callback_and_drains_queue
+        "Llama shutdown waits for active cancellation callback and drains queue",
+        test_llama_shutdown_waits_for_active_cancellation_callback_and_drains_queue
     );
     run_test("Llama loaded model info populated", test_llama_loaded_model_info_populated);
     run_test("Llama_chat_messages_render_and_generate", test_chat_messages_render_and_generate);
@@ -2019,7 +2021,9 @@ int run_llama_integration_tests() {
     run_test(
         "Llama terminal invariant decode failure ends once", test_llama_terminal_invariant_decode_failure_ends_once
     );
-    run_test("Llama terminal invariant engine stop ends once", test_llama_terminal_invariant_engine_stop_ends_once);
+    run_test(
+        "Llama terminal invariant engine shutdown ends once", test_llama_terminal_invariant_engine_shutdown_ends_once
+    );
     run_test("Llama two slot one cancels one completes", test_llama_two_slot_one_cancels_one_completes);
 
     std::cout << "\n======================================\n";

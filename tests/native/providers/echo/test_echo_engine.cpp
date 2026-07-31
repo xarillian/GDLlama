@@ -1,11 +1,13 @@
 #include "chorus/core/common.hpp"
 #include "chorus/providers/echo/echo_engine.hpp"
+#include "engine_contract_suite.hpp"
 #include "test_utils.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -22,7 +24,7 @@ void test_echo_initializes_without_a_model_file() {
     ASSERT_TRUE(!engine.initialize(config).has_value());
     ASSERT_TRUE(engine.is_initialized());
 
-    engine.stop();
+    engine.shutdown();
     ASSERT_TRUE(!engine.is_initialized());
 }
 
@@ -67,7 +69,7 @@ void test_echo_streams_prompt_word_by_word_then_stops() {
     ASSERT_TRUE(sigs.back().type == Chorus::EventType::Stop);
     ASSERT_EQ(sigs.back().request_id, 7);
 
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_echo_submit_before_initialize_signals_engine_not_ready() {
@@ -107,7 +109,7 @@ void test_echo_capabilities_deterministic_across_init() {
     ASSERT_EQ(before.common_generation_options[0], std::string("max_tokens"));
     ASSERT_TRUE(after.common_generation_options == before.common_generation_options);
     ASSERT_TRUE(!engine.loaded_model_info().has_value()); // model-free by design
-    engine.stop();
+    engine.shutdown();
 }
 
 // Content controls are inert on a test double whose output makes no content
@@ -145,7 +147,7 @@ void test_echo_ignores_content_controls_with_one_warning() {
     auto rejection = engine.validate_request(req);
     ASSERT_TRUE(rejection.has_value());
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_echo_accepts_session_id_as_correlation() {
@@ -159,7 +161,7 @@ void test_echo_accepts_session_id_as_correlation() {
     req.session_id = "npc_42/dialogue";
     ASSERT_TRUE(!engine.validate_request(req).has_value());
     ASSERT_TRUE(!engine.capabilities().native_sessions);
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_echo_max_tokens_counts_word_chunks() {
@@ -181,7 +183,7 @@ void test_echo_max_tokens_counts_word_chunks() {
         request.gen_config.max_tokens = max_tokens;
         if (engine.validate_request(request).has_value()) {
             g_tests_failed++;
-            engine.stop();
+            engine.shutdown();
             return std::vector<Chorus::ChorusSignal>{};
         }
         request.on_event = [&](Chorus::ChorusSignal& signal) {
@@ -198,11 +200,11 @@ void test_echo_max_tokens_counts_word_chunks() {
                 })) {
                 g_tests_failed++;
                 lock.unlock();
-                engine.stop();
+                engine.shutdown();
                 return std::vector<Chorus::ChorusSignal>{};
             }
         }
-        engine.stop();
+        engine.shutdown();
         return signals;
     };
 
@@ -239,7 +241,7 @@ void test_echo_rejects_max_tokens_below_negative_sentinel() {
     const auto rejection = engine.validate_request(request);
     ASSERT_TRUE(rejection.has_value());
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
-    engine.stop();
+    engine.shutdown();
 }
 
 void test_echo_cancels_active_request_reentrantly_once() {
@@ -275,7 +277,7 @@ void test_echo_cancels_active_request_reentrantly_once() {
             return !signals.empty() && signals.back().type == Chorus::EventType::Error;
         });
     }
-    engine.stop();
+    engine.shutdown();
     ASSERT_TRUE(terminal_reached);
 
     ASSERT_EQ(signals.size(), size_t{2});
@@ -321,7 +323,7 @@ void test_echo_cancels_queued_request_without_affecting_another() {
         }
     }
     if (!callback_reached) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(callback_reached);
     }
 
@@ -356,7 +358,7 @@ void test_echo_cancels_queued_request_without_affecting_another() {
             return false;
         }));
     }
-    engine.stop();
+    engine.shutdown();
 
     size_t cancelled_terminals = 0;
     size_t cancelled_nonterminals = 0;
@@ -375,7 +377,7 @@ void test_echo_cancels_queued_request_without_affecting_another() {
     ASSERT_TRUE(survivor_stopped);
 }
 
-void test_echo_stop_drains_active_and_queued_requests_before_returning() {
+void test_echo_shutdown_drains_active_and_queued_requests_before_returning() {
     std::mutex mutex;
     std::condition_variable cv;
     bool active_callback_blocked = false;
@@ -410,7 +412,7 @@ void test_echo_stop_drains_active_and_queued_requests_before_returning() {
         }
     }
     if (!callback_reached) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(callback_reached);
     }
 
@@ -429,7 +431,7 @@ void test_echo_stop_drains_active_and_queued_requests_before_returning() {
         release_active = true;
         cv.notify_all();
     });
-    engine.stop();
+    engine.shutdown();
     release.join();
 
     size_t active_cancelled = 0;
@@ -460,7 +462,7 @@ void test_echo_stop_drains_active_and_queued_requests_before_returning() {
     ASSERT_EQ(queued_cancelled, size_t{1});
 }
 
-void test_echo_stop_waits_for_queued_cancellation_callback() {
+void test_echo_shutdown_waits_for_queued_cancellation_callback() {
     std::mutex mutex;
     std::condition_variable cv;
     bool active_callback_blocked = false;
@@ -498,7 +500,7 @@ void test_echo_stop_waits_for_queued_cancellation_callback() {
         }
     }
     if (!active_reached) {
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(active_reached);
     }
 
@@ -529,12 +531,12 @@ void test_echo_stop_waits_for_queued_cancellation_callback() {
     }
     if (!cancellation_reached) {
         cancel.join();
-        engine.stop();
+        engine.shutdown();
         ASSERT_TRUE(cancellation_reached);
     }
 
     std::thread stopper([&] {
-        engine.stop();
+        engine.shutdown();
         std::lock_guard<std::mutex> lock(mutex);
         stop_returned = true;
         cv.notify_all();
@@ -607,7 +609,7 @@ void test_echo_conformance_matrix() {
     for (const auto& name : covered)
         ASSERT_TRUE(advertised.count(name) == 1); // no case names an unadvertised option
     ASSERT_EQ(covered.size(), advertised.size());
-    engine.stop();
+    engine.shutdown();
 }
 
 // Terminal invariant at the Echo layer: every accepted request produces exactly one
@@ -638,7 +640,7 @@ void test_echo_terminal_invariant_one_per_request() {
                 return !signals.empty() && signals.back().type == Chorus::EventType::Stop;
             }));
         }
-        engine.stop();
+        engine.shutdown();
         size_t terminals = 0;
         for (const auto& signal : signals)
             terminals += signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error;
@@ -675,7 +677,7 @@ void test_echo_terminal_invariant_one_per_request() {
                 return !signals.empty() && signals.back().type == Chorus::EventType::Error;
             }));
         }
-        engine.stop();
+        engine.shutdown();
         size_t terminals = 0;
         for (const auto& signal : signals)
             terminals += signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error;
@@ -721,7 +723,7 @@ void test_echo_terminal_invariant_one_per_request() {
             }
         }
         if (!reached) {
-            engine.stop();
+            engine.shutdown();
             ASSERT_TRUE(reached);
         }
 
@@ -740,7 +742,7 @@ void test_echo_terminal_invariant_one_per_request() {
             release_active = true;
             cv.notify_all();
         });
-        engine.stop();
+        engine.shutdown();
         release.join();
 
         size_t active_terminals = 0;
@@ -780,12 +782,12 @@ void test_echo_messages_echoes_last_user_message() {
         }
     };
     engine.submit_request(request);
-    // Echo's worker is asynchronous: stop() before the dequeue would cancel
+    // Echo's worker is asynchronous: shutdown() before the dequeue would cancel
     // the request (Cancelled terminal). Wait for the natural terminal first --
     // mirror the wait helper this suite already uses for its other tests.
     for (int i = 0; i < 200 && !done; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    engine.stop();
+    engine.shutdown();
     ASSERT_TRUE(done.load());
     ASSERT_TRUE(terminal == Chorus::EventType::Stop); // completed, not cancelled
     ASSERT_EQ(text, std::string("second question"));
@@ -802,7 +804,21 @@ void test_echo_accepts_chat_template_and_thinking_as_inert() {
     Chorus::ChorusRequest with_thinking;
     with_thinking.gen_config.thinking = true;
     ASSERT_TRUE(!engine.validate_request(with_thinking).has_value());
-    engine.stop();
+    engine.shutdown();
+}
+
+// Echo's binding to the shared port contract. Model-free, so it runs in every
+// configuration and is the fast canary for a contract change.
+static EngineUnderTest echo_under_test() {
+    EngineUnderTest subject;
+    subject.label = "Echo";
+    subject.make_engine = [] { return std::make_unique<Chorus::EchoEngine>(); };
+    subject.make_config = [] { return Chorus::ChorusConfig{}; }; // needs no model
+    subject.shape_long_request = [](Chorus::ChorusRequest& request) {
+        request.prompt = "one two three four five"; // five word chunks to stream
+    };
+    subject.shape_short_request = [](Chorus::ChorusRequest& request) { request.prompt = "hi"; };
+    return subject;
 }
 
 int run_echo_engine_tests() {
@@ -825,14 +841,19 @@ int run_echo_engine_tests() {
         test_echo_cancels_queued_request_without_affecting_another
     );
     run_test(
-        "Echo_stop_drains_active_and_queued_requests_before_returning",
-        test_echo_stop_drains_active_and_queued_requests_before_returning
+        "Echo_shutdown_drains_active_and_queued_requests_before_returning",
+        test_echo_shutdown_drains_active_and_queued_requests_before_returning
     );
-    run_test("Echo_stop_waits_for_queued_cancellation_callback", test_echo_stop_waits_for_queued_cancellation_callback);
+    run_test(
+        "Echo_shutdown_waits_for_queued_cancellation_callback",
+        test_echo_shutdown_waits_for_queued_cancellation_callback
+    );
     run_test("Echo_conformance_matrix_covers_advertised_options", test_echo_conformance_matrix);
     run_test("Echo_terminal_invariant_one_per_request", test_echo_terminal_invariant_one_per_request);
     run_test("Echo_messages_echoes_last_user_message", test_echo_messages_echoes_last_user_message);
     run_test("Echo_accepts_chat_template_and_thinking_as_inert", test_echo_accepts_chat_template_and_thinking_as_inert);
+
+    run_engine_contract_suite(echo_under_test());
 
     std::cout << "\n======================================\n";
     if (g_tests_failed > 0) {

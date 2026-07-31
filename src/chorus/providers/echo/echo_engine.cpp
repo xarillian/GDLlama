@@ -4,7 +4,7 @@ namespace Chorus {
 EchoEngine::EchoEngine() {}
 
 EchoEngine::~EchoEngine() {
-    stop();
+    shutdown();
 }
 
 std::optional<ChorusError> EchoEngine::initialize(const ChorusConfig& config) {
@@ -98,12 +98,12 @@ void EchoEngine::cancel_request(RequestId id) {
     }
 }
 
-void EchoEngine::stop() {
+void EchoEngine::shutdown() {
     std::vector<ChorusRequest> queued;
     {
         // The store must happen under the queue mutex: the worker evaluates its wait
         // predicate while holding it, and an unlocked store+notify can land between
-        // that check and the block, losing the wakeup forever (stop() then hangs on
+        // that check and the block, losing the wakeup forever (shutdown() then hangs on
         // join). The running flag alone does not prevent the lost wakeup.
         std::lock_guard<std::mutex> lock(_queue_mutex);
         _running = false;

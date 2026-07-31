@@ -34,7 +34,7 @@ class EchoEngine : public InferenceEngine {
     std::optional<RequestRejection> validate_request(const Chorus::ChorusRequest& request) const override;
     void submit_request(const Chorus::ChorusRequest& chorus_request) override;
     void cancel_request(RequestId id) override;
-    void stop() override;
+    void shutdown() override;
 
   private:
     void worker_loop();

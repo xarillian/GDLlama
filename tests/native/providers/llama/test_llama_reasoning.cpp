@@ -57,7 +57,7 @@ void test_reasoning_model_splits_channels() {
     engine.submit_request(request);
     for (int i = 0; i < 1200 && !done; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    engine.stop();
+    engine.shutdown();
 
     ASSERT_TRUE(done.load());
     ASSERT_TRUE(stopped.load());
@@ -96,7 +96,7 @@ void test_thinking_disabled_yields_no_reasoning() {
     engine.submit_request(request);
     for (int i = 0; i < 600 && !done; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    engine.stop();
+    engine.shutdown();
     ASSERT_TRUE(done.load());
     ASSERT_TRUE(stopped.load());
     ASSERT_TRUE(reasoning.empty());

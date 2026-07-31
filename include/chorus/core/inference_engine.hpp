@@ -19,12 +19,12 @@ class InferenceEngine {
   public:
     virtual ~InferenceEngine() = default;
 
-    /// Brings the engine up under `config`, or reports why it could not.
+    /// Brings the engine up under `chorus_config`, or reports why it could not.
     /// `ChorusConfig::log_callback` may be written from any engine thread.
-    virtual std::optional<ChorusError> initialize(const Chorus::ChorusConfig& config) = 0;
+    virtual std::optional<ChorusError> initialize(const Chorus::ChorusConfig& chorus_config) = 0;
 
-    /// Whether the engine can take work now. An engine that came up and later
-    /// failed answers false, the same as one that never initialized.
+    /// Whether the engine can take work now.
+    /// An engine that came up and later failed answers false, the same as one that never initialized.
     virtual bool is_initialized() const = 0;
 
     // Pre-init: the provider envelope. Post-init: the effective intersection
@@ -46,25 +46,40 @@ class InferenceEngine {
         return std::nullopt;
     }
 
-    // Lightweight, side-effect-free synchronous check: readiness, request
-    // type, constraint format, and named options. Never rejects a request
-    // for carrying a session id. Acceptance does not guarantee execution
-    // cannot fail later.
     virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
 
-    /// Takes the request on. `on_event` fires from an engine worker, or inline
-    /// before this returns when the engine rejects the request outright.
+    /*
+     * Starts work on a `ChorusRequest` and returns before it finishes.
+     *
+     * Exactly one terminal signal, Stop or Error, reaches the request's
+     * `on_event`. An engine in no state to serve refuses the work there with
+     * an `EngineNotReady` error. Signals arrive from an engine thread or
+     * inline from this call, so a caller must be ready to see the terminal
+     * before submit returns.
+     */
     virtual void submit_request(const Chorus::ChorusRequest& chorus_request) = 0;
 
+    /*
+     * Asks the engine to end request with `id` early; best-effort, returns at once.
+     *
+     * The request ends on its one terminal signal, carrying
+     * `ChorusError::Cancelled` when the cancel arrives before the work
+     * finishes. Signals in flight may arrive after this returns. Repeated
+     * cancels of one id cost one terminal, and an id the engine does not hold
+     * is inert.
+     */
     virtual void cancel_request(RequestId id) = 0;
 
     /*
-     * Tears the engine down, fencing its callbacks.
+     * Tears the engine down.
      *
-     * Once this returns, an `on_event` the engine was given before is never
-     * invoked again, which is what lets a caller then destroy its sinks.
+     * Work the engine holds, queued or running, ends before this returns: one
+     * terminal each, `ChorusError::Cancelled`. Once this returns the engine
+     * invokes no `on_event` it was handed, and no such invocation is in
+     * progress, which lets the caller destroy whatever those callbacks write
+     * into. Shutting down an idle or already shut-down engine changes nothing.
      */
-    virtual void stop() = 0;
+    virtual void shutdown() = 0;
 };
 
 } // namespace Chorus

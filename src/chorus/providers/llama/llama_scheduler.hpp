@@ -35,7 +35,7 @@ class LlamaScheduler {
     // Returns false after shutdown and never invokes the request callback inline.
     bool push_request(const Chorus::ChorusRequest& req);
     void cancel_request(Chorus::RequestId id);
-    void stop();
+    void shutdown();
     bool is_healthy() const;
 
     const std::optional<Chorus::LoadedModelInfo>& model_info() const { return _model_info; }

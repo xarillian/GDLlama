@@ -255,9 +255,9 @@ void ChorusRuntime::stop_all() {
 
 void ChorusRuntime::unload_engine() {
     if (_engine) {
-        // Port contract: after stop() returns, the engine never invokes a
+        // Port contract: after shutdown() returns, the engine never invokes a
         // previously supplied on_event again.
-        _engine->stop();
+        _engine->shutdown();
         _engine.reset();
     }
     // An unload is not a death, and there is no longer an engine to report on.

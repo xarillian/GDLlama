@@ -11,7 +11,7 @@ void test_initialize_returns_nullopt_on_success() {
     ASSERT_TRUE(!engine.initialize(config).has_value());
     ASSERT_TRUE(engine.is_initialized());
 
-    engine.stop();
+    engine.shutdown();
     ASSERT_TRUE(!engine.is_initialized());
 }
 
