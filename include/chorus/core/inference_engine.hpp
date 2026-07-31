@@ -27,8 +27,6 @@ class InferenceEngine {
     /// An engine that came up and later failed answers false, the same as one that never initialized.
     virtual bool is_initialized() const = 0;
 
-    // Pre-init: the provider envelope. Post-init: the effective intersection
-    // of provider, model, and load configuration.
     virtual EngineCapabilities capabilities() const = 0;
 
     virtual std::optional<LoadedModelInfo> loaded_model_info() const = 0;
