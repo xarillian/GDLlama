@@ -82,12 +82,12 @@ struct EngineCapabilities {
 /*
  * Looks up one option in a provider's option schema.
  *
- * Returns:
- *  - A pointer to the descriptor whose key matches
- *  - A nullptr when the schema declares no such key.
- *
  * The pointer borrows the schema's storage and stays valid
  * until the schema is modified or destroyed; callers must not free it.
+ *
+ * Returns:
+ *  - `const ProviderOptionDescriptor*`: the descriptor whose key matches.
+ *  - `nullptr`: the schema declares no such key.
  */
 const ProviderOptionDescriptor*
 find_option_descriptor(const ProviderOptionDescriptors& declared_options, const std::string& key);

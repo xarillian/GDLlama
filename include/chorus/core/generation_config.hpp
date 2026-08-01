@@ -115,9 +115,12 @@ ProviderOptionMap merge_option_maps(const ProviderOptionMap& base, const Provide
 /*
  * Removes one dotted path ("llama.repeat_penalty") from a namespaced option map.
  *
- * Intermediate segments must be maps; anything else means the path does not
- * exist, which is not an error. Nested maps left empty by the removal stay:
- * an empty namespace is a provider's own business to accept or reject.
+ * Nested maps left empty by the removal stay: an empty namespace is a
+ * provider's own business to accept or reject.
+ *
+ * A path is absent when a segment is missing or when an intermediate segment
+ * holds a scalar where a namespace was expected. Removing what is absent is a
+ * no-op, so this raises nothing and reports nothing.
  */
 void erase_option_path(ProviderOptionMap& options, const std::string& path);
 
