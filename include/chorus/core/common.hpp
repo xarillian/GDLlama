@@ -6,14 +6,12 @@
 #include <vector>
 
 #include "chorus/core/generation_config.hpp"
+#include "chorus/core/identity.hpp"
 #include "chorus/core/log.hpp"
 #include "chorus/core/model_spec.hpp"
 #include "chorus/core/provider_option_value.hpp"
 
 namespace Chorus {
-
-using RequestId = int64_t;
-using SessionId = std::string;
 
 /// Error codes for Chorus operations.
 enum class ChorusError {
@@ -48,8 +46,8 @@ enum class TokenChannel { Content, Reasoning };
  */
 struct ChorusConfig {
     InitialModelSpec model;
-    ProviderOptionMap provider_options; // Engine-wide options, namespaced: provider_options["llama"]
-    LogCallback log_callback;           // Optional; falls back to stderr if not set
+    ProviderOptionMap provider_options;     // Engine-wide options, namespaced: provider_options["llama"]
+    LogLevel log_level = log_level_default; // least severe level worth reporting
 };
 
 /// An individual turn of a conversation.

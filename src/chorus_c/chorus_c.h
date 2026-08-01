@@ -100,13 +100,30 @@ typedef enum chorus_constraint_format {
     CHORUS_CONSTRAINT_LARK = 3,
 } chorus_constraint_format;
 
+/* How severe one record is, ascending; doubles as the verbosity a host asks
+ * for, since chorus_load takes the least severe level worth reporting.
+ * CHORUS_LOG_OFF is that threshold only and admits nothing; no record arrives
+ * carrying it. Mirrors Chorus::LogLevel. */
 typedef enum chorus_log_level {
     CHORUS_LOG_DEBUG = 0,
     CHORUS_LOG_INFO = 1,
     CHORUS_LOG_WARN = 2,
     CHORUS_LOG_ERROR = 3,
     CHORUS_LOG_FATAL = 4,
+    CHORUS_LOG_OFF = 5,
 } chorus_log_level;
+
+/* What a host hears unless it asks for more. */
+#define CHORUS_LOG_LEVEL_DEFAULT CHORUS_LOG_WARN
+
+/* The type of one field on a log record. Mirrors Chorus::LogValue's
+ * alternatives, in the same order. */
+typedef enum chorus_log_field_type {
+    CHORUS_FIELD_INT = 0,
+    CHORUS_FIELD_FLOAT = 1,
+    CHORUS_FIELD_BOOL = 2,
+    CHORUS_FIELD_STRING = 3,
+} chorus_log_field_type;
 
 /* ========================================================================
  * Plain structs -- POD only, pointers borrowed unless stated.
@@ -134,10 +151,37 @@ typedef struct chorus_event {
     int32_t dropped;
 } chorus_event;
 
-/* Log sink, installed at runtime creation. A provider may log from a thread of
- * its own, so this is called on no particular thread and must be thread-safe;
- * it must not call back into the runtime. */
-typedef void (*chorus_log_callback)(chorus_log_level level, const char* message, void* user_data);
+/* One field of a log record. Mirrors Chorus::LogField; only the union member
+ * named by `type` is meaningful. */
+typedef struct chorus_log_field {
+    const char* key;
+    chorus_log_field_type type;
+    union {
+        int64_t int_value;
+        double float_value;
+        bool bool_value;
+        const char* string_value;
+    } value;
+} chorus_log_field;
+
+/* Mirrors Chorus::LogRecord. Produced by chorus_poll_logs; all pointers are
+ * owned by the runtime and valid until the next chorus_poll_logs or
+ * chorus_runtime_free on the same handle.
+ *
+ * `message` is stable text with no interpolated values: two occurrences of the
+ * same failure produce the same message and differ only in their fields, which
+ * is what lets a host group, filter, and count them. `source` names the
+ * producer ("llama", "echo", "runtime"). request_id is -1 and session NULL
+ * when the record concerns no particular work. */
+typedef struct chorus_log_record {
+    chorus_log_level level;
+    const char* message;
+    const chorus_log_field* fields;
+    size_t field_count;
+    chorus_request_id request_id;
+    const char* session;
+    const char* source;
+} chorus_log_record;
 
 /* ========================================================================
  * Library
@@ -157,9 +201,10 @@ CHORUS_API void chorus_string_free(char* str);
  * Runtime lifecycle
  * ======================================================================== */
 
-/* log_callback may be NULL (stderr fallback). Returns NULL on allocation
- * failure only. */
-CHORUS_API chorus_runtime* chorus_runtime_new(chorus_log_callback log_callback, void* log_user_data);
+/* Returns NULL on allocation failure only. Diagnostics are not wired here:
+ * they buffer inside the runtime and are drained by chorus_poll_logs, under
+ * the minimum log level passed to chorus_load. */
+CHORUS_API chorus_runtime* chorus_runtime_new(void);
 
 /* Stops the engine (as chorus_stop_all) and releases everything, including
  * any event array from the last poll. NULL is a no-op. */
@@ -188,9 +233,16 @@ CHORUS_API void chorus_options_set_string(chorus_options* opts, const char* key,
 /* Builds the engine and loads the model. Replaces any loaded engine (live
  * requests get Cancelled terminals; old engine torn down before the new one
  * initializes). model_path: .gguf path; ignored for ECHO (pass NULL).
- * options: borrowed, may be NULL for provider defaults. */
-CHORUS_API chorus_error
-chorus_load(chorus_runtime* rt, chorus_provider provider, const char* model_path, const chorus_options* options);
+ * options: borrowed, may be NULL for provider defaults. min_log_level: the
+ * least severe level worth reporting, or CHORUS_LOG_LEVEL_DEFAULT; travels
+ * with the engine, so it applies from this load until the next. */
+CHORUS_API chorus_error chorus_load(
+    chorus_runtime* rt,
+    chorus_provider provider,
+    const char* model_path,
+    const chorus_options* options,
+    chorus_log_level min_log_level
+);
 
 CHORUS_API bool chorus_is_loaded(const chorus_runtime* rt);
 
@@ -264,6 +316,16 @@ CHORUS_API chorus_request_id chorus_active_request_for_session(const chorus_runt
  * (*out_count = 0 when idle). Call once per tick: pending events are retained
  * without bound until drained. */
 CHORUS_API const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count);
+
+/* Drains buffered log records. Returns a runtime-owned array of *out_count
+ * records, valid until the next chorus_poll_logs or chorus_runtime_free; never
+ * NULL (*out_count = 0 when idle). Call it beside chorus_poll.
+ *
+ * Logs ride their own buffer, so ordering between this stream and chorus_poll's
+ * is explicitly not guaranteed; within this one it is FIFO. A full buffer drops
+ * its oldest records and reports the count as a record of its own, so a host is
+ * never silently misinformed about what it is seeing. */
+CHORUS_API const chorus_log_record* chorus_poll_logs(chorus_runtime* rt, size_t* out_count);
 
 /* ========================================================================
  * Conversation history

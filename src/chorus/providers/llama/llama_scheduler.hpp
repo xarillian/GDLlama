@@ -6,6 +6,7 @@
 #include "chorus/providers/llama/llama_chat.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
+#include "chorus/providers/llama/llama_log_bridge.hpp"
 #include "chorus/providers/llama/stop_sequence_filter.hpp"
 #include "wlib/utf8.hpp"
 
@@ -31,7 +32,7 @@ class LlamaScheduler {
     LlamaScheduler();
     ~LlamaScheduler();
 
-    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config);
+    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger);
     // Returns false after shutdown and never invokes the request callback inline.
     bool push_request(const Chorus::ChorusRequest& req);
     void cancel_request(Chorus::RequestId id);
@@ -134,7 +135,9 @@ class LlamaScheduler {
 
     int32_t _tokens_per_tick = 512;
     int32_t _batch_capacity = 0; // token capacity of `batch`; prepare_next_batch must never exceed it
-    Chorus::LogCallback _log;
+    Chorus::Logger _log;
+    // Routes llama.cpp's process-global log into `_log`; released on shutdown.
+    std::shared_ptr<Chorus::LlamaLogBridge> _llama_log_bridge;
     std::optional<Chorus::LoadedModelInfo> _model_info;
 
     // #5 chat templates, initialized from the model at load. Reached from the

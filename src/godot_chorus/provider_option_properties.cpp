@@ -3,6 +3,8 @@
 #include <string>
 #include <variant>
 
+#include "godot_chorus/option_conversion.hpp"
+
 using namespace godot;
 
 namespace godot_chorus {
@@ -47,7 +49,7 @@ PropertyInfo property_info_for(const Chorus::ProviderOptionDescriptor& descripto
         usage |= PROPERTY_USAGE_READ_ONLY;
     return PropertyInfo(
         type,
-        String(descriptor.key.c_str()),
+        godot_chorus::to_godot_string(descriptor.key),
         hint_string.is_empty() ? PROPERTY_HINT_NONE : PROPERTY_HINT_RANGE,
         hint_string,
         usage
@@ -62,7 +64,7 @@ Variant option_value_to_variant(const Chorus::ProviderOptionValue& value) {
     if (const auto* as_double = std::get_if<double>(&value))
         return Variant(*as_double);
     if (const auto* as_string = std::get_if<std::string>(&value))
-        return Variant(String(as_string->c_str()));
+        return Variant(godot_chorus::to_godot_string(*as_string));
     // List- and map-valued options have no inspector rendering yet: they read
     // as null here, and coerce_to_descriptor refuses every write, so the first
     // provider to declare one fails loudly rather than quietly.

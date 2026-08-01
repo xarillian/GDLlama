@@ -22,10 +22,9 @@ class InferenceEngine {
     /*
      * Brings the engine up under `chorus_config`.
      *
-     * `ChorusConfig::log_callback` may be written from any engine thread.
-     * Bringing up an engine that is already up changes nothing and succeeds.
-     * One that came up and later failed releases what it still holds before
-     * trying again, so a retry never doubles the model's residency.
+     * Initializing an engine that is already running does nothing and
+     * succeeds. One that started and later died frees what it still holds
+     * before retrying, so two models are never resident at once.
      *
      * Errors are returned instead of signalled.
      *
@@ -40,7 +39,7 @@ class InferenceEngine {
      *  - `ChorusError::UnsupportedOption`: a load option the provider does not declare.
      *  - `ChorusError::Unknown`: the provider failed with nothing better to say.
      */
-    virtual std::optional<ChorusError> initialize(const Chorus::ChorusConfig& chorus_config) = 0;
+    virtual std::optional<ChorusError> initialize(const Chorus::ChorusConfig& chorus_config, Logger logger) = 0;
 
     /// Whether the engine can take work now.
     /// An engine that came up and later failed answers false, the same as one that never initialized.

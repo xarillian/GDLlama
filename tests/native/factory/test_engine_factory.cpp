@@ -20,7 +20,7 @@ void test_factory_echo_engine_round_trips_through_interface() {
     ASSERT_TRUE(!engine->is_initialized());
 
     Chorus::ChorusConfig config;
-    ASSERT_TRUE(!engine->initialize(config).has_value());
+    ASSERT_TRUE(!engine->initialize(config, {}).has_value());
 
     Chorus::ChorusRequest req;
     req.id = 11;

@@ -507,24 +507,57 @@ void test_two_consecutive_loads_apply_each_config() {
     ASSERT_EQ(path_b, "b.gguf"); // no reuse: the second load fully applies
 }
 
-void test_log_callback_passes_through_from_worker_thread() {
-    std::mutex log_mutex;
-    std::vector<std::string> log_lines;
-
+// A record produced on a thread the host does not own still reaches the host,
+// and reaches it on the host's own thread, which is the whole point of the
+// channel: the provider never calls host code.
+void test_records_from_a_provider_thread_drain_on_the_host_thread() {
     Chorus::ChorusConfig config = make_config();
-    config.log_callback = [&](Chorus::LogLevel, const std::string& msg) {
-        std::lock_guard<std::mutex> lock(log_mutex);
-        log_lines.push_back(msg);
-    };
+    config.log_level = Chorus::LogLevel::Debug;
 
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->log_on_initialize_from_worker = true;
     runtime.load_engine(std::move(engine), config);
 
-    std::lock_guard<std::mutex> lock(log_mutex);
-    ASSERT_EQ(log_lines.size(), 1);
-    ASSERT_EQ(log_lines[0], "from worker");
+    auto records = runtime.poll_logs();
+    ASSERT_EQ(records.size(), size_t{1});
+    ASSERT_EQ(records[0].message, "From worker");
+    ASSERT_TRUE(records[0].level == Chorus::LogLevel::Info);
+    ASSERT_EQ(records[0].source, "mock"); // the provider's own name, stamped by the runtime
+
+    // Drained means drained: a second poll sees nothing.
+    ASSERT_EQ(runtime.poll_logs().size(), size_t{0});
+}
+
+// The host's declared threshold travels with the config, and the provider that
+// would emit the record is the one that declines to build it.
+void test_log_level_from_the_config_silences_a_level() {
+    Chorus::ChorusConfig config = make_config();
+    config.log_level = Chorus::log_level_default; // Warn and above, so Info is out
+
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    engine->log_on_initialize_from_worker = true;
+    runtime.load_engine(std::move(engine), config);
+
+    ASSERT_EQ(runtime.poll_logs().size(), size_t{0});
+}
+
+// The shutdown fence cuts callbacks, not the record already in the channel:
+// the channel outlives every engine, so what was enqueued still drains.
+void test_records_enqueued_before_shutdown_drain_afterward() {
+    Chorus::ChorusConfig config = make_config();
+    config.log_level = Chorus::LogLevel::Debug;
+
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    engine->log_on_initialize_from_worker = true;
+    runtime.load_engine(std::move(engine), config);
+    runtime.stop_all();
+
+    auto records = runtime.poll_logs();
+    ASSERT_EQ(records.size(), size_t{1});
+    ASSERT_EQ(records[0].message, "From worker");
 }
 
 void test_destruction_with_active_requests_is_clean() {
@@ -680,7 +713,13 @@ int run_runtime_tests() {
     run_test("Runtime_consecutive_loads_apply_each_config", test_two_consecutive_loads_apply_each_config);
     run_test("Runtime_destruction_with_active_requests_is_clean", test_destruction_with_active_requests_is_clean);
     run_test(
-        "Runtime_log_callback_passes_through_from_worker_thread", test_log_callback_passes_through_from_worker_thread
+        "Runtime_records_from_a_provider_thread_drain_on_the_host_thread",
+        test_records_from_a_provider_thread_drain_on_the_host_thread
+    );
+    run_test("Runtime_log_level_from_the_config_silences_a_level", test_log_level_from_the_config_silences_a_level);
+    run_test(
+        "Runtime_records_enqueued_before_shutdown_drain_afterward",
+        test_records_enqueued_before_shutdown_drain_afterward
     );
     run_test(
         "Runtime_exactly_one_terminal_per_accepted_request", test_runtime_exactly_one_terminal_per_accepted_request

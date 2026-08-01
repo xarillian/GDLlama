@@ -102,7 +102,7 @@ std::optional<String> apply_constraint_overlay(const Dictionary& request, Chorus
         return std::nullopt;
 
     const std::string key = present.front();
-    const Variant value = request[String(key.c_str())];
+    const Variant value = request[godot_chorus::to_godot_string(key)];
 
     if (value.get_type() == Variant::NIL) {
         patch.constraint = Chorus::ConfigPatch<Chorus::OutputConstraint>::clear();
@@ -183,7 +183,7 @@ std::optional<String> merge_provider_dictionary_overrides(
 
         auto converted = godot_chorus::variant_to_option_value(value);
         if (!converted)
-            return String("[Chorus] generate(): provider_options key '") + String(key.c_str()) +
+            return String("[Chorus] generate(): provider_options key '") + godot_chorus::to_godot_string(key) +
                    String("' has an unsupported value.");
         target[key] = std::move(*converted);
     }

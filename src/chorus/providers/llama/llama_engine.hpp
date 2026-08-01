@@ -15,7 +15,7 @@ class LlamaEngine : public InferenceEngine {
     LlamaEngine();
     ~LlamaEngine() override;
 
-    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config) override;
+    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override;
     bool is_initialized() const override;
 
     EngineCapabilities capabilities() const override;
@@ -33,6 +33,6 @@ class LlamaEngine : public InferenceEngine {
     mutable std::mutex _lifecycle_mutex;
     std::shared_ptr<LlamaScheduler> scheduler;
     bool _initialized = false;
-    Chorus::LogCallback _log;
+    Chorus::Logger _log;
 };
 } // namespace Chorus

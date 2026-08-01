@@ -257,7 +257,7 @@ void test_transient_decode_failure_recovers() {
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     Chorus::ChorusRequest big;
     big.id = 1;
@@ -319,7 +319,7 @@ void test_higher_priority_request_served_first() {
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     auto make_handler = [&](int64_t id) {
         return [&, id](const Chorus::ChorusSignal& sig) {
@@ -383,7 +383,7 @@ void test_slot_reusable_after_request_completes() {
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     auto run_one = [&](int64_t id) -> int {
         tokens = 0;
@@ -445,7 +445,7 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     for (int64_t id = 1; id <= 4; ++id) {
         Chorus::ChorusRequest req;

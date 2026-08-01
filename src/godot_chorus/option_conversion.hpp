@@ -11,11 +11,32 @@
 
 #include "chorus/core/provider_option_value.hpp"
 
-// Private helper shared by the Godot adapter's translation units: recursively
-// converts a Variant (bool/int/float/String/Array/Dictionary) into the
-// host-neutral Chorus::ProviderOptionValue. Returns nullopt on any unsupported type
-// so callers can reject rather than silently drop values.
+// Private helpers shared by the Godot adapter's translation units, converting
+// between Variant and the host-neutral Chorus types in both directions.
 namespace godot_chorus {
+
+/*
+ * Builds a godot::String from UTF-8 text.
+ *
+ * Every string crossing this boundary (model output, prompts, stop markers,
+ * grammar source, paths, session ids) is UTF-8, and godot-cpp's
+ * `String(const char*)` constructor reads Latin-1, so it garbles anything
+ * multi-byte. Use this for every std::string the adapter hands to Godot; the
+ * `String::utf8()` accessor is its inverse.
+ */
+inline godot::String to_godot_string(const std::string& text) {
+    return godot::String::utf8(text.c_str(), static_cast<int64_t>(text.size()));
+}
+
+/*
+ * Recursively converts a Variant (bool/int/float/String/Array/Dictionary) into
+ * the host-neutral Chorus::ProviderOptionValue.
+ *
+ * Returns:
+ *  - `std::optional<Chorus::ProviderOptionValue>`: the converted value.
+ *  - `std::nullopt`: the Variant holds an unsupported type, so callers can
+ *    reject rather than silently drop it.
+ */
 
 inline std::optional<Chorus::ProviderOptionValue> variant_to_option_value(const godot::Variant& v) {
     using godot::Array;

@@ -1,5 +1,6 @@
 #include "test_utils.hpp"
 #include "chorus/providers/llama/llama_utils.hpp"
+#include "silent_llama_log.hpp"
 
 #include "llama.h"
 
@@ -14,6 +15,9 @@ static const std::string UTILS_MODEL_PATH = "tests/models/gemma-3-270m-it-F16.gg
 
 // RAII helper that loads a minimal llama model + context for use in tests.
 struct LlamaContextFixture {
+    // First member, so it outlives the frees below and llama stays quiet
+    // through teardown as well as load.
+    SilentLlamaLog quiet;
     llama_model* model = nullptr;
     llama_context* context = nullptr;
 

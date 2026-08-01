@@ -7,17 +7,17 @@ EchoEngine::~EchoEngine() {
     shutdown();
 }
 
-std::optional<ChorusError> EchoEngine::initialize(const ChorusConfig& config) {
-    _log = config.log_callback;
+std::optional<ChorusError> EchoEngine::initialize(const ChorusConfig& config, Logger logger) {
+    _log = std::move(logger);
 
     if (_initialized) {
-        chorus_log(_log, LogLevel::Warn, "EchoEngine is already initialized.");
+        _log.warn("Engine is already initialized");
         return std::nullopt;
     }
 
     // No model asset is needed; any InitialModelSpec is accepted and unread by design.
     if (!config.provider_options.empty()) {
-        chorus_log(_log, LogLevel::Error, "EchoEngine accepts no provider options.");
+        _log.error("Engine accepts no provider options");
         return ChorusError::UnsupportedOption;
     }
 
@@ -38,7 +38,7 @@ void EchoEngine::submit_request(const ChorusRequest& chorus_request) {
     }
 
     if (!accepted) {
-        chorus_log(_log, LogLevel::Error, "Attempting to submit request to uninitialized engine.");
+        _log.for_request(chorus_request.id, chorus_request.session_id).error("Request submitted to a stopped engine");
 
         if (chorus_request.on_event) {
             ChorusSignal error_sig;
@@ -209,11 +209,7 @@ std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest
                 names += ", ";
             names += ignored[i];
         }
-        chorus_log(
-            _log,
-            LogLevel::Warn,
-            "EchoEngine ignoring content controls (" + names + "); echoed output makes no content claims."
-        );
+        _log.warn("Ignoring content controls; echoed output makes no content claims", {{"controls", names}});
     }
     return std::nullopt;
 }

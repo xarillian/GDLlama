@@ -39,7 +39,7 @@ std::vector<std::string> to_stop_vector(const PackedStringArray& value) {
 PackedStringArray to_packed_string_array(const std::vector<std::string>& value) {
     PackedStringArray stop;
     for (const auto& entry : value)
-        stop.push_back(String(entry.c_str()));
+        stop.push_back(godot_chorus::to_godot_string(entry));
     return stop;
 }
 
@@ -205,7 +205,7 @@ void ChorusGenerationDefaults::set_constraint_source(const String& source) {
     _patch.constraint.value.source = std::string(source.utf8().get_data());
 }
 String ChorusGenerationDefaults::get_constraint_source() const {
-    return String(_patch.constraint.value.source.c_str());
+    return godot_chorus::to_godot_string(_patch.constraint.value.source);
 }
 
 // ===========================================================================

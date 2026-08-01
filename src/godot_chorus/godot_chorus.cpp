@@ -6,8 +6,11 @@
 
 #include "chorus/engine_factory.hpp"
 #include "godot_chorus/generation_request_normalizer.hpp"
+#include "godot_chorus/option_conversion.hpp"
 #include "godot_chorus/provider_option_properties.hpp"
 
+#include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
@@ -49,6 +52,8 @@ static Chorus::Provider to_chorus_provider(GodotChorus::ProviderChoice provider)
     return provider == GodotChorus::PROVIDER_ECHO ? Chorus::Provider::Echo : Chorus::Provider::Llama;
 }
 
+using godot_chorus::to_godot_string;
+
 static bool
 is_prerequisite_for_any_option(const Chorus::ProviderOptionDescriptors& declared_options, const std::string& key) {
     for (const auto& option : declared_options) {
@@ -70,6 +75,24 @@ int GodotChorus::to_godot(Chorus::TurnOutcome outcome) {
         return TURN_ERRORED;
     }
     return TURN_NONE;
+}
+
+int GodotChorus::to_godot(Chorus::LogLevel level) {
+    switch (level) {
+    case Chorus::LogLevel::Debug:
+        return LOG_DEBUG;
+    case Chorus::LogLevel::Info:
+        return LOG_INFO;
+    case Chorus::LogLevel::Warn:
+        return LOG_WARN;
+    case Chorus::LogLevel::Error:
+        return LOG_ERROR;
+    case Chorus::LogLevel::Fatal:
+        return LOG_FATAL;
+    case Chorus::LogLevel::Off:
+        return LOG_OFF;
+    }
+    return LOG_INFO;
 }
 
 int GodotChorus::to_godot(Chorus::ChorusError e) {
@@ -114,15 +137,109 @@ void GodotChorus::_notification(int p_what) {
     }
 }
 
+// The setting name lives here rather than in the composition root so the
+// declaration and every read of it stay in one file.
+static const char* LOG_LEVEL_SETTING = "chorus/logging/min_level";
+
+// The levels a host may ask for, in LogLevelCode order.
+static const char* LOG_LEVEL_HINT = "Debug,Info,Warning,Error,Fatal,Off";
+
+void GodotChorus::register_project_settings() {
+    ProjectSettings* settings = ProjectSettings::get_singleton();
+    if (settings == nullptr)
+        return;
+
+    // has_feature("editor") separates an editor or debug run from an exported
+    // game, which is the line the two defaults are drawn along.
+    const bool in_editor = OS::get_singleton() != nullptr && OS::get_singleton()->has_feature("editor");
+    const int64_t default_level = in_editor ? LOG_INFO : (int64_t)Chorus::log_level_default;
+
+    if (!settings->has_setting(LOG_LEVEL_SETTING))
+        settings->set_setting(LOG_LEVEL_SETTING, default_level);
+
+    // Declared every launch, not only when the setting is first created: the
+    // hint and initial value live in memory, and a project that saved a custom
+    // value would otherwise lose the dropdown on its next editor start.
+    Dictionary info;
+    info["name"] = LOG_LEVEL_SETTING;
+    info["type"] = Variant::INT;
+    info["hint"] = PROPERTY_HINT_ENUM;
+    info["hint_string"] = LOG_LEVEL_HINT;
+    settings->add_property_info(info);
+    settings->set_initial_value(LOG_LEVEL_SETTING, default_level);
+}
+
+Chorus::LogLevel GodotChorus::effective_log_level() const {
+    int64_t level = _override_log_level ? _log_level : (int64_t)Chorus::log_level_default;
+
+    if (!_override_log_level) {
+        ProjectSettings* settings = ProjectSettings::get_singleton();
+        if (settings != nullptr && settings->has_setting(LOG_LEVEL_SETTING))
+            level = (int64_t)settings->get_setting(LOG_LEVEL_SETTING);
+    }
+
+    // A project file is editable by hand, so an out-of-range value reaches
+    // here; the quiet default beats undefined behavior on the enum.
+    if (level < LOG_DEBUG || level > LOG_OFF)
+        return Chorus::log_level_default;
+    return (Chorus::LogLevel)level;
+}
+
+void GodotChorus::drain_logs() {
+    for (const auto& record : _runtime.poll_logs()) {
+        const String line = to_godot_string(Chorus::format_log_record(record));
+        switch (record.level) {
+        case Chorus::LogLevel::Debug:
+        case Chorus::LogLevel::Info:
+            UtilityFunctions::print(line);
+            break;
+        case Chorus::LogLevel::Warn:
+            UtilityFunctions::push_warning(line);
+            break;
+        case Chorus::LogLevel::Error:
+        case Chorus::LogLevel::Fatal:
+            // push_error drives the debugger's error panel and trips
+            // break-on-error, so it is reserved for what a developer must act on.
+            UtilityFunctions::push_error(line);
+            break;
+        case Chorus::LogLevel::Off:
+            break; // a threshold; no record carries it
+        }
+
+        Dictionary fields;
+        for (const auto& field : record.fields) {
+            const String key = to_godot_string(field.first);
+            if (const auto* integer = std::get_if<int64_t>(&field.second))
+                fields[key] = *integer;
+            else if (const auto* number = std::get_if<double>(&field.second))
+                fields[key] = *number;
+            else if (const auto* flag = std::get_if<bool>(&field.second))
+                fields[key] = *flag;
+            else
+                fields[key] = to_godot_string(std::get<std::string>(field.second));
+        }
+
+        emit_signal(
+            "log_message",
+            to_godot(record.level),
+            to_godot_string(record.message),
+            fields,
+            record.request_id.value_or(-1),
+            record.session_id ? to_godot_string(*record.session_id) : String()
+        );
+    }
+}
+
 void GodotChorus::_process(double /*delta*/) {
+    drain_logs();
     for (const auto& event : _runtime.poll()) {
-        const String session = event.session_id ? String(event.session_id->c_str()) : String();
+        const String session = event.session_id ? to_godot_string(*event.session_id) : String();
         switch (event.kind) {
         case Chorus::RuntimeEvent::Kind::Token:
-            emit_signal("token_generated", event.request_id, session, String(event.text.c_str()));
+            emit_signal("token_generated", event.request_id, session, to_godot_string(event.text));
             break;
         case Chorus::RuntimeEvent::Kind::ReasoningToken:
-            emit_signal("reasoning_token_generated", event.request_id, session, String(event.text.c_str()));
+            emit_signal("reasoning_token_generated", event.request_id, session, to_godot_string(event.text));
             break;
         case Chorus::RuntimeEvent::Kind::HistoryTruncated:
             emit_signal("history_truncated", session, event.dropped);
@@ -132,17 +249,17 @@ void GodotChorus::_process(double /*delta*/) {
                 "generation_complete",
                 event.request_id,
                 session,
-                String(event.text.c_str()),
-                String(event.reasoning.c_str())
+                to_godot_string(event.text),
+                to_godot_string(event.reasoning)
             );
             break;
         case Chorus::RuntimeEvent::Kind::Error:
             emit_signal(
-                "generation_error", event.request_id, session, to_godot(event.error), String(event.text.c_str())
+                "generation_error", event.request_id, session, to_godot(event.error), to_godot_string(event.text)
             );
             break;
         case Chorus::RuntimeEvent::Kind::EngineFailed:
-            emit_signal("engine_failed", to_godot(event.error), String(event.text.c_str()));
+            emit_signal("engine_failed", to_godot(event.error), to_godot_string(event.text));
             break;
         }
     }
@@ -159,22 +276,7 @@ bool GodotChorus::load_model() {
     }
 
     Chorus::ChorusConfig config;
-    config.log_callback = [](Chorus::LogLevel level, const std::string& msg) {
-        String godot_msg = String("[Chorus] ") + String(msg.c_str());
-        switch (level) {
-        case Chorus::LogLevel::Debug:
-        case Chorus::LogLevel::Info:
-            UtilityFunctions::print(godot_msg);
-            break;
-        case Chorus::LogLevel::Warn:
-            UtilityFunctions::push_warning(godot_msg);
-            break;
-        case Chorus::LogLevel::Error:
-        case Chorus::LogLevel::Fatal:
-            UtilityFunctions::push_error(godot_msg);
-            break;
-        }
-    };
+    config.log_level = effective_log_level();
     if (_provider != PROVIDER_ECHO) {
         config.model.model_id = _model_path.get_file().get_basename().utf8().get_data();
         config.model.format = Chorus::ModelFormat::Gguf;
@@ -188,6 +290,10 @@ bool GodotChorus::load_model() {
 
     auto engine = Chorus::make_engine(to_chorus_provider(_provider));
     auto err = _runtime.load_engine(std::move(engine), config);
+    // Before the verdict: a load logs the provider's own account of what
+    // happened, and a failure code with no account is the complaint this
+    // whole channel exists to answer.
+    drain_logs();
     if (err.has_value()) {
         UtilityFunctions::push_error(String("[Chorus] Model load failed: ") + chorus_error_name(err.value()));
         return false;
@@ -217,7 +323,7 @@ int64_t GodotChorus::generate(const Dictionary& request) {
     if (!result.ok()) {
         String message = String("[Chorus] generate() rejected: ") + chorus_error_name(result.error);
         if (!result.message.empty())
-            message += String(" - ") + String(result.message.c_str());
+            message += String(" - ") + to_godot_string(result.message);
         if (result.error == Chorus::ChorusError::EngineNotReady)
             message += ". Call load_model() first.";
         UtilityFunctions::push_error(message);
@@ -241,7 +347,7 @@ int64_t GodotChorus::regenerate(const String& session, const Dictionary& overrid
     if (!result.ok()) {
         String message = String("[Chorus] regenerate() rejected: ") + chorus_error_name(result.error);
         if (!result.message.empty())
-            message += String(" - ") + String(result.message.c_str());
+            message += String(" - ") + to_godot_string(result.message);
         if (result.error == Chorus::ChorusError::EngineNotReady)
             message += ". Call load_model() first.";
         UtilityFunctions::push_error(message);
@@ -273,8 +379,8 @@ int64_t GodotChorus::active_request_for_session(const String& session) const {
 
 static Dictionary chat_message_to_dict(const Chorus::ChatMessage& message) {
     Dictionary dict;
-    dict["role"] = String(message.role.c_str());
-    dict["content"] = String(message.content.c_str());
+    dict["role"] = to_godot_string(message.role);
+    dict["content"] = to_godot_string(message.content);
     return dict;
 }
 
@@ -339,7 +445,7 @@ bool GodotChorus::edit_message(const String& session, int64_t index, const Strin
 PackedStringArray GodotChorus::list_conversations() const {
     PackedStringArray out;
     for (const auto& session : _runtime.list_conversations())
-        out.push_back(String(session.c_str()));
+        out.push_back(to_godot_string(session));
     return out;
 }
 
@@ -372,7 +478,7 @@ String GodotChorus::render_chat_prompt(const String& session, const String& temp
         std::string(template_override.utf8().get_data()),
         std::get<std::vector<Chorus::InjectedMessage>>(parsed)
     );
-    return rendered.has_value() ? String(rendered->c_str()) : String();
+    return rendered.has_value() ? to_godot_string(*rendered) : String();
 }
 
 // ===========================================================================
@@ -417,7 +523,7 @@ bool GodotChorus::_set(const StringName& name, const Variant& value) {
     auto coerced = godot_chorus::coerce_to_descriptor(*descriptor, value);
     if (!coerced) {
         UtilityFunctions::push_error(
-            String("[Chorus] ") + String(descriptor->key.c_str()) + String(": wrong value type for this option.")
+            String("[Chorus] ") + to_godot_string(descriptor->key) + String(": wrong value type for this option.")
         );
         return true; // handled: the property exists, the value did not fit
     }
@@ -498,6 +604,19 @@ String GodotChorus::get_chat_template() const {
     return _chat_template;
 }
 
+void GodotChorus::set_override_log_level(bool enabled) {
+    _override_log_level = enabled;
+}
+bool GodotChorus::get_override_log_level() const {
+    return _override_log_level;
+}
+void GodotChorus::set_log_level(int64_t level) {
+    _log_level = level;
+}
+int64_t GodotChorus::get_log_level() const {
+    return _log_level;
+}
+
 void GodotChorus::push_host_defaults() {
     // Rebuilt per call rather than pushed from the setters: the assigned
     // ChorusGenerationDefaults is a Resource a script may edit in place, and
@@ -511,6 +630,7 @@ void GodotChorus::push_host_defaults() {
 // Utility
 // ===========================================================================
 
+// @TODO hello? does this helper belong in the Godot wrapper? It's a math thing and can be used elsewhere!
 float GodotChorus::similarity_cos(PackedFloat32Array array1, PackedFloat32Array array2) const {
     if (array1.size() != array2.size() || array1.is_empty()) {
         UtilityFunctions::push_error("[Chorus] similarity_cos: arrays must be non-empty and the same size.");
@@ -565,6 +685,17 @@ void GodotChorus::_bind_methods() {
     ADD_SIGNAL(
         MethodInfo("engine_failed", PropertyInfo(Variant::INT, "error_code"), PropertyInfo(Variant::STRING, "message"))
     );
+    // One diagnostic, as the provider stated it: a stable message plus its
+    // typed fields, so a project can group and filter instead of parsing
+    // sentences. request_id is -1 and session "" when the record names no work.
+    ADD_SIGNAL(MethodInfo(
+        "log_message",
+        PropertyInfo(Variant::INT, "level"),
+        PropertyInfo(Variant::STRING, "message"),
+        PropertyInfo(Variant::DICTIONARY, "fields"),
+        PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::STRING, "session")
+    ));
 
     // --- ErrorCode enum ---
     BIND_ENUM_CONSTANT(ERR_NONE);
@@ -590,6 +721,14 @@ void GodotChorus::_bind_methods() {
     BIND_ENUM_CONSTANT(TURN_COMPLETED);
     BIND_ENUM_CONSTANT(TURN_CANCELLED);
     BIND_ENUM_CONSTANT(TURN_ERRORED);
+
+    // --- LogLevelCode enum ---
+    BIND_ENUM_CONSTANT(LOG_DEBUG);
+    BIND_ENUM_CONSTANT(LOG_INFO);
+    BIND_ENUM_CONSTANT(LOG_WARN);
+    BIND_ENUM_CONSTANT(LOG_ERROR);
+    BIND_ENUM_CONSTANT(LOG_FATAL);
+    BIND_ENUM_CONSTANT(LOG_OFF);
 
     // --- Core methods ---
     ClassDB::bind_method(D_METHOD("load_model"), &GodotChorus::load_model);
@@ -652,5 +791,14 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::STRING, "chat_template", PROPERTY_HINT_MULTILINE_TEXT, ""),
         "set_chat_template",
         "get_chat_template"
+    );
+
+    ClassDB::bind_method(D_METHOD("set_override_log_level", "enabled"), &GodotChorus::set_override_log_level);
+    ClassDB::bind_method(D_METHOD("get_override_log_level"), &GodotChorus::get_override_log_level);
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "override_log_level"), "set_override_log_level", "get_override_log_level");
+    ClassDB::bind_method(D_METHOD("set_log_level", "level"), &GodotChorus::set_log_level);
+    ClassDB::bind_method(D_METHOD("get_log_level"), &GodotChorus::get_log_level);
+    ADD_PROPERTY(
+        PropertyInfo(Variant::INT, "log_level", PROPERTY_HINT_ENUM, LOG_LEVEL_HINT), "set_log_level", "get_log_level"
     );
 }

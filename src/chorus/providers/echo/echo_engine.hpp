@@ -25,7 +25,7 @@ class EchoEngine : public InferenceEngine {
     EchoEngine();
     ~EchoEngine() override;
 
-    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config) override;
+    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override;
     bool is_initialized() const override;
 
     EngineCapabilities capabilities() const override;
@@ -48,7 +48,7 @@ class EchoEngine : public InferenceEngine {
     std::thread _worker;
     bool _running = false;
     bool _initialized = false;
-    Chorus::LogCallback _log;
+    Chorus::Logger _log;
     // Content controls are accepted-and-inert (see validate_request); the
     // one-per-lifetime warning keeps the discard from being silent.
     mutable std::atomic<bool> _warned_ignored{false};

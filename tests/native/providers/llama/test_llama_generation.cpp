@@ -1,4 +1,5 @@
 #include "chorus/providers/llama/llama_generation.hpp"
+#include "silent_llama_log.hpp"
 #include "test_utils.hpp"
 
 #include <cmath>
@@ -16,6 +17,9 @@ namespace {
 constexpr const char* kModelPath = "tests/models/gemma-3-270m-it-F16.gguf";
 
 struct LlamaModelFixture {
+    // First member, so it outlives the free below and llama stays quiet
+    // through teardown as well as load.
+    SilentLlamaLog quiet;
     llama_model* model = nullptr;
 
     bool load() {

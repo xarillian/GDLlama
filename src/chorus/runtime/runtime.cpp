@@ -20,7 +20,8 @@ ChorusRuntime::load_engine(std::unique_ptr<InferenceEngine> engine, const Chorus
         cancel_live_requests();
     }
 
-    auto err = engine->initialize(config);
+    Logger logger(LogChannel::sink_for(_log_channel), config.log_level, engine->capabilities().provider_id);
+    auto err = engine->initialize(config, std::move(logger));
     if (err.has_value())
         return err; // engine destroyed on scope exit; runtime stays unloaded
 
@@ -245,6 +246,11 @@ std::vector<RuntimeEvent> ChorusRuntime::poll() {
         events.push_back(std::move(failure));
     }
     return events;
+}
+
+std::vector<LogRecord> ChorusRuntime::poll_logs() {
+    assert_host_thread();
+    return _log_channel->drain();
 }
 
 void ChorusRuntime::stop_all() {

@@ -1,5 +1,6 @@
 #include "chorus/core/common.hpp"
 #include "chorus/providers/echo/echo_engine.hpp"
+#include "collecting_sink.hpp"
 #include "engine_contract_suite.hpp"
 #include "test_utils.hpp"
 
@@ -21,7 +22,7 @@ void test_echo_initializes_without_a_model_file() {
     ASSERT_TRUE(!engine.is_initialized());
 
     Chorus::ChorusConfig config; // empty InitialModelSpec deliberately: Echo needs no model
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
     ASSERT_TRUE(engine.is_initialized());
 
     engine.shutdown();
@@ -34,7 +35,7 @@ void test_echo_streams_prompt_word_by_word_then_stops() {
 
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     Chorus::ChorusRequest req;
     req.id = 7;
@@ -98,7 +99,7 @@ void test_echo_capabilities_deterministic_across_init() {
     Chorus::EchoEngine engine;
     auto before = engine.capabilities();
     Chorus::ChorusConfig config;
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
     auto after = engine.capabilities();
     ASSERT_EQ(before.provider_id, std::string("echo"));
     ASSERT_EQ(after.provider_id, before.provider_id);
@@ -120,12 +121,9 @@ void test_echo_capabilities_deterministic_across_init() {
 void test_echo_ignores_content_controls_with_one_warning() {
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
-    std::vector<Chorus::LogLevel> warns;
-    config.log_callback = [&](Chorus::LogLevel level, const std::string& message) {
-        if (level == Chorus::LogLevel::Warn && message.find("ignoring content controls") != std::string::npos)
-            warns.push_back(level);
-    };
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    CollectingSink sink;
+    ASSERT_TRUE(!engine.initialize(config, sink.logger("echo")).has_value());
+    const std::string ignored_warning = "Ignoring content controls; echoed output makes no content claims";
 
     Chorus::ChorusRequest req;
     req.id = 1;
@@ -137,7 +135,14 @@ void test_echo_ignores_content_controls_with_one_warning() {
 
     // Second sighting stays quiet: one warning per engine lifetime.
     ASSERT_TRUE(!engine.validate_request(req).has_value());
-    ASSERT_EQ(warns.size(), size_t{1});
+    ASSERT_EQ(sink.count(ignored_warning), size_t{1});
+
+    // The discarded controls ride a field, not the sentence: a host can list
+    // them without parsing the message back apart.
+    const auto records = sink.records();
+    const auto* controls = find_log_field(records.front(), "controls");
+    ASSERT_TRUE(controls != nullptr);
+    ASSERT_TRUE(std::get<std::string>(*controls).find("temperature") != std::string::npos);
 
     // Namespace-addressed options are demands, not content controls.
     req = {};
@@ -154,7 +159,7 @@ void test_echo_accepts_session_id_as_correlation() {
     // Correlation is universal: native_sessions=false must not reject it.
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
     Chorus::ChorusRequest req;
     req.id = 4;
     req.prompt = "hi";
@@ -172,7 +177,7 @@ void test_echo_max_tokens_counts_word_chunks() {
 
         Chorus::EchoEngine engine;
         Chorus::ChorusConfig config;
-        if (engine.initialize(config).has_value()) {
+        if (engine.initialize(config, {}).has_value()) {
             g_tests_failed++;
             return std::vector<Chorus::ChorusSignal>{};
         }
@@ -232,7 +237,7 @@ void test_echo_max_tokens_counts_word_chunks() {
 void test_echo_rejects_max_tokens_below_negative_sentinel() {
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     Chorus::ChorusRequest request;
     request.id = 14;
@@ -251,7 +256,7 @@ void test_echo_cancels_active_request_reentrantly_once() {
 
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     Chorus::ChorusRequest request;
     request.id = 20;
@@ -296,7 +301,7 @@ void test_echo_cancels_queued_request_without_affecting_another() {
 
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     Chorus::ChorusRequest active;
     active.id = 30;
@@ -386,7 +391,7 @@ void test_echo_shutdown_drains_active_and_queued_requests_before_returning() {
 
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     Chorus::ChorusRequest active;
     active.id = 40;
@@ -473,7 +478,7 @@ void test_echo_shutdown_waits_for_queued_cancellation_callback() {
 
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     Chorus::ChorusRequest active;
     active.id = 50;
@@ -568,7 +573,7 @@ void test_echo_shutdown_waits_for_queued_cancellation_callback() {
 void test_echo_conformance_matrix() {
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
-    ASSERT_TRUE(!engine.initialize(config).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
     const auto caps = engine.capabilities();
     ASSERT_EQ(caps.common_generation_options.size(), size_t{1});
@@ -623,7 +628,7 @@ void test_echo_terminal_invariant_one_per_request() {
 
         Chorus::EchoEngine engine;
         Chorus::ChorusConfig config;
-        ASSERT_TRUE(!engine.initialize(config).has_value());
+        ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
         Chorus::ChorusRequest request;
         request.id = 61;
@@ -656,7 +661,7 @@ void test_echo_terminal_invariant_one_per_request() {
 
         Chorus::EchoEngine engine;
         Chorus::ChorusConfig config;
-        ASSERT_TRUE(!engine.initialize(config).has_value());
+        ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
         Chorus::ChorusRequest request;
         request.id = 62;
@@ -697,7 +702,7 @@ void test_echo_terminal_invariant_one_per_request() {
 
         Chorus::EchoEngine engine;
         Chorus::ChorusConfig config;
-        ASSERT_TRUE(!engine.initialize(config).has_value());
+        ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
         Chorus::ChorusRequest active;
         active.id = 63;
@@ -763,7 +768,7 @@ void test_echo_terminal_invariant_one_per_request() {
 
 void test_echo_messages_echoes_last_user_message() {
     Chorus::EchoEngine engine;
-    ASSERT_TRUE(!engine.initialize(Chorus::ChorusConfig{}).has_value());
+    ASSERT_TRUE(!engine.initialize(Chorus::ChorusConfig{}, {}).has_value());
 
     std::mutex mutex;
     std::string text;
@@ -795,7 +800,7 @@ void test_echo_messages_echoes_last_user_message() {
 
 void test_echo_accepts_chat_template_and_thinking_as_inert() {
     Chorus::EchoEngine engine;
-    ASSERT_TRUE(!engine.initialize(Chorus::ChorusConfig{}).has_value());
+    ASSERT_TRUE(!engine.initialize(Chorus::ChorusConfig{}, {}).has_value());
 
     Chorus::ChorusRequest with_template;
     with_template.chat_template = "{{ bogus }}";

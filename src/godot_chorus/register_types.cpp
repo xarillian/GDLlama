@@ -15,6 +15,7 @@ void initialize_chorus_module(ModuleInitializationLevel p_level) {
     }
     GDREGISTER_CLASS(ChorusGenerationDefaults);
     GDREGISTER_CLASS(GodotChorus);
+    GodotChorus::register_project_settings();
 }
 
 void uninitialize_chorus_module(ModuleInitializationLevel p_level) {

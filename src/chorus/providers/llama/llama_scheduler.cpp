@@ -26,7 +26,7 @@ bool LlamaScheduler::load_model_from_file(const Chorus::LlamaLoadConfig& config)
 
     model = llama_model_load_from_file(config.weights_path.c_str(), model_params);
     if (!model) {
-        Chorus::chorus_log(_log, Chorus::LogLevel::Error, "Failed to load model from " + config.weights_path);
+        _log.error("Failed to load model weights", {{"path", config.weights_path}});
         return false;
     }
 
@@ -41,7 +41,7 @@ bool LlamaScheduler::init_context(const Chorus::LlamaLoadConfig& config) {
 
     context = llama_init_from_model(model, ctx_params);
     if (!context) {
-        Chorus::chorus_log(_log, Chorus::LogLevel::Error, "Failed to create Llama context.");
+        _log.error("Failed to create the inference context", {{"context_size", (int64_t)config.context_size}});
         return false;
     }
 
@@ -60,12 +60,16 @@ void LlamaScheduler::init_slots(int count) {
     }
 }
 
-std::optional<Chorus::ChorusError> LlamaScheduler::initialize(const Chorus::ChorusConfig& config) {
-    _log = config.log_callback;
+std::optional<Chorus::ChorusError>
+LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) {
+    _log = std::move(logger);
+    // Acquired before anything is loaded, so llama's own account of a failed
+    // model load reaches the host instead of the process's stderr.
+    _llama_log_bridge = Chorus::LlamaLogBridge::acquire(_log);
 
     auto parsed = Chorus::parse_llama_load_config(config);
     if (auto* rejection = std::get_if<Chorus::RequestRejection>(&parsed)) {
-        Chorus::chorus_log(_log, Chorus::LogLevel::Error, rejection->message);
+        _log.error("Rejected load options", {{"detail", rejection->message}});
         return rejection->error;
     }
     const Chorus::LlamaLoadConfig& load_config = std::get<Chorus::LlamaLoadConfig>(parsed);
@@ -80,11 +84,11 @@ std::optional<Chorus::ChorusError> LlamaScheduler::initialize(const Chorus::Chor
     _batch_capacity = static_cast<int32_t>(load_config.n_batch);
 
     if (static_cast<int64_t>(load_config.num_slots) * load_config.tokens_per_tick > load_config.n_batch) {
-        Chorus::chorus_log(
-            _log,
-            Chorus::LogLevel::Warn,
-            "num_slots * tokens_per_tick exceeds n_batch; per-tick batch demand will be clamped to the logical "
-            "batch capacity (n_batch)."
+        _log.warn(
+            "Per-tick batch demand exceeds n_batch and will be clamped to it",
+            {{"num_slots", (int64_t)load_config.num_slots},
+             {"tokens_per_tick", (int64_t)load_config.tokens_per_tick},
+             {"n_batch", (int64_t)load_config.n_batch}}
         );
     }
 
@@ -112,7 +116,7 @@ std::optional<Chorus::ChorusError> LlamaScheduler::initialize(const Chorus::Chor
     } catch (const std::exception& e) {
         // No usable template: chat requests will reject at ingest and
         // render_chat_prompt returns nullopt; raw-prompt generation still works.
-        Chorus::chorus_log(_log, Chorus::LogLevel::Warn, std::string("Chat templates unavailable: ") + e.what());
+        _log.warn("Chat templates unavailable", {{"detail", e.what()}});
     }
 
     {
@@ -153,6 +157,9 @@ void LlamaScheduler::shutdown() {
     }
     _chat_templates.reset();
     _model_info = std::nullopt;
+    // Last: llama_model_free and llama_free log on their way out, and those
+    // lines belong to this engine's host.
+    _llama_log_bridge.reset();
 }
 
 std::optional<Chorus::RenderedPrompt> LlamaScheduler::render_chat_prompt(
@@ -618,7 +625,8 @@ void LlamaScheduler::ingest_new_requests() {
         }
         if (terminal) {
             if (terminal->error == Chorus::ChorusError::Tokenize)
-                Chorus::chorus_log(_log, Chorus::LogLevel::Error, "Tokenization produced no tokens; dropping request.");
+                _log.for_request(chorus_request.id, chorus_request.session_id)
+                    .error("Tokenization produced no tokens; dropping the request");
             emit_terminal(std::move(*terminal));
         }
     }
@@ -662,7 +670,7 @@ bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
 int LlamaScheduler::run_inference() {
     int rc = llama_decode(context, *batch);
     if (rc != 0) {
-        Chorus::chorus_log(_log, Chorus::LogLevel::Error, "llama_decode failed with code " + std::to_string(rc) + ".");
+        _log.error("Decode failed", {{"code", (int64_t)rc}});
     }
     return rc;
 }
@@ -694,7 +702,7 @@ void LlamaScheduler::worker_loop() {
         if (decode_rc != 0) {
             fail_busy_slots(Chorus::ChorusError::Decode);
             if (decode_rc < 0) {
-                Chorus::chorus_log(_log, Chorus::LogLevel::Fatal, "Decode failed unrecoverably; stopping engine.");
+                _log.fatal("Decode failed unrecoverably; stopping the engine", {{"code", (int64_t)decode_rc}});
                 {
                     std::lock_guard<std::mutex> lock(queue_mutex);
                     is_running = false;

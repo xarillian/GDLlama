@@ -32,7 +32,7 @@ void test_reasoning_model_splits_channels() {
     }
 
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(make_reasoning_config()).has_value());
+    ASSERT_TRUE(!engine.initialize(make_reasoning_config(), {}).has_value());
 
     std::mutex mutex;
     std::string content, reasoning;
@@ -71,7 +71,7 @@ void test_reasoning_model_splits_channels() {
 void test_thinking_disabled_yields_no_reasoning() {
     SKIP_IF_MODEL_TESTS_DISABLED();
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(make_reasoning_config()).has_value());
+    ASSERT_TRUE(!engine.initialize(make_reasoning_config(), {}).has_value());
 
     std::mutex mutex;
     std::string content, reasoning;

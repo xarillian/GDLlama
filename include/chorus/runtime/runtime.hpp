@@ -155,6 +155,12 @@ class ChorusRuntime {
     // Drains pending engine signals into host-facing events.
     std::vector<RuntimeEvent> poll();
 
+    // Drains buffered log records. Host-thread-only, like poll(); call it
+    // beside poll(). Logs ride their own channel because log and token volumes
+    // differ by orders of magnitude, so ordering between this stream and
+    // poll()'s is explicitly not guaranteed. Within this stream it is FIFO.
+    std::vector<LogRecord> poll_logs();
+
     // Stops and destroys the engine. Every live request receives exactly one
     // Cancelled terminal on a later poll(). is_loaded() is false afterward.
     void stop_all();
@@ -225,6 +231,11 @@ class ChorusRuntime {
     };
 
     std::unique_ptr<InferenceEngine> _engine;
+
+    // Outlives every engine, and the sinks handed out over it hold it alive on
+    // their own: a provider thread that somehow survives its engine still has
+    // somewhere to write instead of a dangling reference.
+    std::shared_ptr<LogChannel> _log_channel = std::make_shared<LogChannel>();
 
     // Host-thread-only. Set once poll() has told the host that the current
     // engine died, so the report happens exactly once per engine instance.

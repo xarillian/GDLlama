@@ -115,7 +115,7 @@ void skip(const std::string& reason) {
 
 std::unique_ptr<Chorus::InferenceEngine> start_engine(const EngineUnderTest& subject) {
     auto engine = subject.make_engine();
-    if (engine->initialize(subject.make_config()).has_value())
+    if (engine->initialize(subject.make_config(), {}).has_value())
         return nullptr;
     return engine;
 }

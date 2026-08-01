@@ -31,7 +31,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     bool hold_requests = false;                              // accept but emit nothing (request stays in flight)
     bool emit_cancelled_on_cancel = false;                   // emit one Cancelled terminal for a matching held request
     bool emit_error_during_shutdown = false;                 // emit Error for held requests inside shutdown()
-    bool log_on_initialize_from_worker = false;              // exercise log-callback pass-through
+    bool log_on_initialize_from_worker = false;              // log from a thread the host does not own
     bool supports_render = false;                            // render_chat_prompt returns text + word-count tokens
     std::optional<uint32_t> mock_per_request_context;        // reported via loaded_model_info()
     // When non-empty, submit_request emits exactly these channel-tagged tokens
@@ -49,14 +49,13 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     std::string last_chat_template;                 // template of the last submitted request
     Chorus::GenerationConfig last_config;           // resolved config of the last submitted request
 
-    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config) override {
+    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override {
         initialize_calls++;
+        _log = std::move(logger);
         if (seen_model_id)
             *seen_model_id = config.model.model_id;
-        if (log_on_initialize_from_worker && config.log_callback) {
-            std::thread([cb = config.log_callback] {
-                Chorus::chorus_log(cb, Chorus::LogLevel::Info, "from worker");
-            }).join();
+        if (log_on_initialize_from_worker) {
+            std::thread([log = _log] { log.info("From worker"); }).join();
         }
         if (fail_initialize_with.has_value())
             return fail_initialize_with;
@@ -256,5 +255,6 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     }
 
     bool _initialized = false;
+    Chorus::Logger _log;
     std::vector<Chorus::ChorusRequest> _held;
 };

@@ -13,8 +13,8 @@ LlamaEngine::~LlamaEngine() {
     shutdown();
 }
 
-std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config) {
-    _log = config.log_callback;
+std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config, Logger logger) {
+    _log = std::move(logger);
 
     bool already_initialized = false;
     bool holds_dead_scheduler = false;
@@ -27,25 +27,25 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config) {
         holds_dead_scheduler = _initialized && !already_initialized;
     }
     if (already_initialized) {
-        chorus_log(_log, LogLevel::Warn, "LlamaEngine is already initialized.");
+        _log.warn("Engine is already initialized");
         return std::nullopt;
     }
     if (holds_dead_scheduler) {
-        chorus_log(_log, LogLevel::Warn, "Re-initializing LlamaEngine after engine failure.");
+        _log.warn("Re-initializing engine after a failure");
         shutdown();
     }
 
     if (config.model.format != ModelFormat::Gguf && config.model.format != ModelFormat::Auto) {
-        chorus_log(_log, LogLevel::Error, "LlamaEngine loads GGUF only.");
+        _log.error("Engine loads GGUF only", {{"model", config.model.model_id}});
         return ChorusError::UnsupportedModelFormat;
     }
 
     try {
         auto next_scheduler = std::make_shared<LlamaScheduler>();
 
-        auto err = next_scheduler->initialize(config);
+        auto err = next_scheduler->initialize(config, _log);
         if (err.has_value()) {
-            chorus_log(_log, LogLevel::Error, "Failed to initialize LlamaScheduler.");
+            _log.error("Scheduler failed to initialize");
             return err;
         }
 
@@ -56,7 +56,7 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config) {
         }
         return std::nullopt;
     } catch (const std::exception& e) {
-        chorus_log(_log, LogLevel::Error, std::string("Exception during initialization: ") + e.what());
+        _log.error("Exception during initialization", {{"detail", e.what()}});
         return ChorusError::Unknown;
     }
 }
@@ -69,7 +69,7 @@ void LlamaEngine::submit_request(const ChorusRequest& chorus_request) {
             accepted = scheduler->push_request(chorus_request);
     }
     if (!accepted) {
-        chorus_log(_log, LogLevel::Error, "Attempting to submit request to uninitialized engine.");
+        _log.for_request(chorus_request.id, chorus_request.session_id).error("Request submitted to a stopped engine");
 
         if (chorus_request.on_event) {
             ChorusSignal error_sig;

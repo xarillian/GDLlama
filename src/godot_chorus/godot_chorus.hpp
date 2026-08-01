@@ -64,8 +64,27 @@ class GodotChorus : public godot::Node {
         TURN_ERRORED,
     };
 
+    // Mirrors Chorus::LogLevel: the severity a log_message signal carries, and
+    // the verbosity a node asks for. LOG_OFF is a threshold only; no record
+    // arrives carrying it.
+    enum LogLevelCode {
+        LOG_DEBUG,
+        LOG_INFO,
+        LOG_WARN,
+        LOG_ERROR,
+        LOG_FATAL,
+        LOG_OFF,
+    };
+
     static int to_godot(Chorus::ChorusError e);
     static int to_godot(Chorus::TurnOutcome outcome);
+    static int to_godot(Chorus::LogLevel level);
+
+    // Declares chorus/logging/min_level so it appears in Project Settings, which
+    // is where a Godot developer looks for verbosity. Called once at module
+    // initialization; the editor gets Info and above, an export template Warn
+    // and above, because a player's console is not a debug channel.
+    static void register_project_settings();
 
     // --- Core API ---
 
@@ -171,6 +190,15 @@ class GodotChorus : public godot::Node {
     // accepts it as inert (content controls are vacuous on the test double).
     void set_chat_template(const godot::String& chat_template);
     godot::String get_chat_template() const;
+    // Verbosity for the engine this node loads: the least severe LogLevelCode
+    // worth reporting. The pair is the usual override idiom, with the
+    // chorus/logging/min_level project setting deciding when the override is
+    // off. Takes effect at the next load_model(), since the level travels with
+    // the engine's config.
+    void set_override_log_level(bool enabled);
+    bool get_override_log_level() const;
+    void set_log_level(int64_t level);
+    int64_t get_log_level() const;
 
     // --- Utility ---
     float similarity_cos(godot::PackedFloat32Array array1, godot::PackedFloat32Array array2) const;
@@ -185,6 +213,13 @@ class GodotChorus : public godot::Node {
     // against each request. Called from every entry point that submits or
     // renders, so the node never has to decide where an ambient value applies.
     void push_host_defaults();
+
+    // Drains the runtime's log channel and presents it: console routing that
+    // respects what each Godot channel means, plus the log_message signal for
+    // projects that want their own presentation.
+    void drain_logs();
+    // The node's override when it is on, else the project setting.
+    Chorus::LogLevel effective_log_level() const;
 
     // The selected provider's self-description, fetched from the factory and
     // cached because the inspector asks for the property list constantly.
@@ -211,6 +246,9 @@ class GodotChorus : public godot::Node {
     // Node-default jinja chat template; "" = the model's embedded template.
     godot::String _chat_template;
 
+    bool _override_log_level = false;
+    int64_t _log_level = (int64_t)Chorus::log_level_default;
+
     // The bound property: null when the user has not assigned a resource, so
     // scene serialization stays clean. effective_generation_defaults() supplies
     // the internal fallback when unset.
@@ -221,3 +259,4 @@ class GodotChorus : public godot::Node {
 VARIANT_ENUM_CAST(GodotChorus::ErrorCode);
 VARIANT_ENUM_CAST(GodotChorus::ProviderChoice);
 VARIANT_ENUM_CAST(GodotChorus::TurnOutcomeCode);
+VARIANT_ENUM_CAST(GodotChorus::LogLevelCode);
