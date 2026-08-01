@@ -33,47 +33,43 @@ inline constexpr LogLevel log_level_default = LogLevel::Warn;
 using LogValue = std::variant<int64_t, double, bool, std::string>;
 using LogField = std::pair<std::string, LogValue>;
 
-/*
- * One diagnostic, as the producer stated it.
- *
- * `LogRecord::message` is stable text: two occurrences of one failure carry the
- * same message and differ only in `LogRecord::fields`. Values go in the fields
- * and are never interpolated into the message.
- */
 struct LogRecord {
     LogLevel level = LogLevel::Info;
+
     std::string message;
     std::vector<LogField> fields;
 
-    // Set when the record concerns one request, unset when it concerns the
-    // engine as a whole.
+    // Set when the record concerns one request.
+    // Unset when it concerns the engine as a whole.
     std::optional<RequestId> request_id;
     std::optional<SessionId> session_id;
 
-    std::string source; // who produced it: "llama", "echo", "runtime"
+    // Who produced it: e.g.: "llama", "echo", "runtime"
+    std::string source;
 };
 
-/*
- * Where a record goes once a producer has built it.
- *
- * Invoked on the thread that produced the record, so an implementation must be
- * thread-safe.
- */
+/// Receives a record on the thread that produced it; must be thread-safe.
 using LogSink = std::function<void(LogRecord)>;
 
-/// One record as a line: "[Chorus] ERROR: Decode failed (code=-1, sequence=3)".
+/*
+ * Whether one call takes the synchronous stderr path alongside the sink.
+ *
+ * `StderrEcho::Suppress` is for a caller that writes the line itself, such as
+ * one fanning a record out to several `Logger`s that stderr is owed once.
+ */
+enum class StderrEcho { Severe, Suppress };
+
+/// One record as a line, e.g. "[Chorus] ERROR: Decode failed (code=-1, sequence=3)".
 std::string format_log_record(const LogRecord& record);
 
 /*
- * A producer's handle on the log channel.
+ * Reports that something happened.
  *
- * Cheap to copy and safe to hold across threads. Carries the sink, the
- * threshold, and the producer's name. A default-constructed `Logger` holds
- * `LogLevel::Off` and discards everything, so a provider that was never given
- * one still runs.
+ * Each call at or above the threshold becomes a `LogRecord` and goes to a
+ * `LogSink`. Copy a `Logger` freely and hold it across threads.
  *
- * Records at `LogLevel::Error` and `LogLevel::Fatal` go to stderr as they are
- * produced, in addition to the sink; `Logger::without_stderr_echo` opts out.
+ * `LogLevel::Error` and `LogLevel::Fatal` also reach stderr as they are built,
+ * so a crash leaves evidence.
  */
 class Logger {
   public:
@@ -88,8 +84,10 @@ class Logger {
      */
     bool enabled(LogLevel level) const;
 
-    /// Builds a record and hands it to the sink. Below the threshold, does nothing.
-    void log(LogLevel level, std::string message, std::vector<LogField> fields = {}) const;
+    /// The general form behind the level-named helpers.
+    void log(
+        LogLevel level, std::string message, std::vector<LogField> fields = {}, StderrEcho echo = StderrEcho::Severe
+    ) const;
 
     /// `Logger::log` at one fixed level.
     void debug(std::string message, std::vector<LogField> fields = {}) const;
@@ -101,22 +99,9 @@ class Logger {
     /// Returns a copy that stamps `id` and `session` on every record it produces.
     Logger for_request(RequestId id, std::optional<SessionId> session = std::nullopt) const;
 
-    /*
-     * Returns a copy whose records carry `source` instead of this one's.
-     *
-     * For code that logs on behalf of something that is not itself, such as a
-     * provider routing a vendor library's output. Sink, threshold, and request
-     * identity carry over unchanged.
-     */
+    /// Returns a copy that stamps `source` on every record it produces, as when
+    /// relaying a vendor library's output.
     Logger with_source(std::string source) const;
-
-    /*
-     * Returns a copy that writes no record to stderr, leaving that to the
-     * caller.
-     *
-     * Sink, threshold, source, and request identity carry over unchanged.
-     */
-    Logger without_stderr_echo() const;
 
   private:
     LogSink _sink;
@@ -124,7 +109,6 @@ class Logger {
     std::string _source;
     std::optional<RequestId> _request_id;
     std::optional<SessionId> _session_id;
-    bool _echo_severe = true;
 };
 
 /*
@@ -153,10 +137,8 @@ class LogChannel {
     std::vector<LogRecord> drain();
 
     /*
-     * Returns a `LogSink` that pushes into `channel`.
-     *
-     * The sink shares ownership of `channel`, so it stays writable for as long
-     * as any `Logger` holds it.
+     * Returns:
+     *  - `Chorus::LogSink`
      */
     static LogSink sink_for(std::shared_ptr<LogChannel> channel);
 

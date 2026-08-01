@@ -61,8 +61,8 @@ class LlamaLogAssembler {
  * hosts see both engines' vendor output. Multiplexing to every registered
  * logger is the deliberate choice: a duplicated line is diagnosable and a
  * missing one is not. The synchronous stderr echo for severe records is the
- * exception: the bridge writes it once per record itself, so it never
- * multiplies with the number of registrations.
+ * exception: the fan-out suppresses it and the bridge writes one line per
+ * record itself, so it never multiplies with the number of registrations.
  */
 class LlamaLogBridge {
     // Public only so make_shared can reach the constructor; a caller cannot

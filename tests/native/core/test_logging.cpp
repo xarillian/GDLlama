@@ -159,12 +159,12 @@ void test_a_severe_record_also_goes_to_stderr() {
 }
 
 // A producer fanning one record out to several loggers owes stderr one line,
-// not one per subscriber, so it silences the copies and echoes once itself.
-void test_without_stderr_echo_silences_the_synchronous_path_only() {
+// not one per subscriber, so it suppresses the echo and writes it once itself.
+void test_suppressing_the_echo_silences_the_synchronous_path_only() {
     CollectingSink sink;
     std::stringstream captured;
     std::streambuf* previous = std::cerr.rdbuf(captured.rdbuf());
-    sink.logger("llama").without_stderr_echo().error("Decode failed");
+    sink.logger("llama").log(Chorus::LogLevel::Error, "Decode failed", {}, Chorus::StderrEcho::Suppress);
     std::cerr.rdbuf(previous);
 
     ASSERT_EQ(captured.str(), std::string());
@@ -290,9 +290,7 @@ int run_logging_tests() {
     run_test("Log_request_scoped_logger_may_name_no_session", test_a_request_scoped_logger_may_name_no_session);
 
     run_test("Log_severe_record_also_goes_to_stderr", test_a_severe_record_also_goes_to_stderr);
-    run_test(
-        "Log_without_stderr_echo_silences_stderr_only", test_without_stderr_echo_silences_the_synchronous_path_only
-    );
+    run_test("Log_suppressed_echo_silences_stderr_only", test_suppressing_the_echo_silences_the_synchronous_path_only);
 
     run_test("Log_channel_drains_in_order_and_empties", test_the_channel_drains_in_production_order_and_empties);
     run_test("Log_channel_overflow_drops_oldest_and_reports", test_overflow_drops_the_oldest_and_reports_the_count);

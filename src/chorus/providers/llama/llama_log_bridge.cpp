@@ -59,9 +59,9 @@ void deliver(ggml_log_level level, const char* text, void* /*user_data*/) {
     Registry& reg = registry();
     std::lock_guard<std::mutex> lock(reg.mutex);
     for (const auto& record : reg.assembler.feed(static_cast<int>(level), text)) {
-        // The registered loggers were handed out without their own stderr
-        // echo, so a severe vendor record reaches stderr once per record here,
-        // not once per registration. Echoed only when some registration would
+        // A severe vendor record is owed one stderr line however many engines
+        // are registered, so the fan-out below suppresses the per-logger echo
+        // and it is written once here. Echoed only when some registration would
         // have kept it, which is what a lone logger would have done.
         if (record.level == LogLevel::Error || record.level == LogLevel::Fatal) {
             bool kept_by_anyone = false;
@@ -74,7 +74,7 @@ void deliver(ggml_log_level level, const char* text, void* /*user_data*/) {
         // so with two live engines the choice is a duplicated line or a
         // missing one.
         for (const auto& entry : reg.loggers)
-            entry.second.log(record.level, record.message, record.fields);
+            entry.second.log(record.level, record.message, record.fields, StderrEcho::Suppress);
     }
 }
 
@@ -143,9 +143,7 @@ LlamaLogBridge::LlamaLogBridge(Registration, Logger logger) {
     Registry& reg = registry();
     std::lock_guard<std::mutex> lock(reg.mutex);
     _id = reg.next_id++;
-    // No per-logger stderr echo: deliver() writes the one line a severe
-    // vendor record is owed, however many engines are registered.
-    reg.loggers.emplace(_id, logger.with_source(vendor_source).without_stderr_echo());
+    reg.loggers.emplace(_id, logger.with_source(vendor_source));
     if (!reg.installed) {
         llama_log_get(&reg.previous_callback, &reg.previous_user_data);
         llama_log_set(deliver, nullptr);

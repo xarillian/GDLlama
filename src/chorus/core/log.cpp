@@ -86,7 +86,7 @@ bool Logger::enabled(LogLevel level) const {
     return level >= _minimum && level != LogLevel::Off;
 }
 
-void Logger::log(LogLevel level, std::string message, std::vector<LogField> fields) const {
+void Logger::log(LogLevel level, std::string message, std::vector<LogField> fields, StderrEcho echo) const {
     if (!enabled(level))
         return;
 
@@ -101,7 +101,7 @@ void Logger::log(LogLevel level, std::string message, std::vector<LogField> fiel
     // Severe records take the synchronous path as well: a segfault mid-decode
     // still leaves evidence, at the price of a host seeing two failures a
     // session twice. '\n' rather than std::endl, since stderr is unbuffered.
-    if (_echo_severe && (level == LogLevel::Error || level == LogLevel::Fatal))
+    if (echo == StderrEcho::Severe && (level == LogLevel::Error || level == LogLevel::Fatal))
         std::cerr << format_log_record(record) << '\n';
 
     if (_sink)
@@ -139,12 +139,6 @@ Logger Logger::with_source(std::string source) const {
     Logger renamed = *this;
     renamed._source = std::move(source);
     return renamed;
-}
-
-Logger Logger::without_stderr_echo() const {
-    Logger quiet = *this;
-    quiet._echo_severe = false;
-    return quiet;
 }
 
 // ---------------------------------------------------------------------------
