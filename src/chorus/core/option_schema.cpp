@@ -5,38 +5,43 @@
 namespace Chorus {
 
 const ProviderOptionDescriptor*
-find_option_descriptor(const ProviderOptionDescriptors& schema, const std::string& key) {
-    for (const auto& descriptor : schema) {
-        if (descriptor.key == key)
-            return &descriptor;
+find_option_descriptor(const ProviderOptionDescriptors& declared_options, const std::string& key) {
+    for (const auto& option : declared_options) {
+        if (option.key == key)
+            return &option;
     }
+
     return nullptr;
 }
 
-bool option_is_enabled(
-    const ProviderOptionDescriptors& schema, const ProviderOptionDescriptor& descriptor, const ProviderOptionMap& stored
+bool is_prerequisite_option_enabled(
+    const ProviderOptionDescriptors& declared_options,
+    const ProviderOptionDescriptor& option,
+    const ProviderOptionMap& configured_values
 ) {
-    if (!descriptor.enabled_by)
-        return true;
+    if (!option.prerequisite_option)
+        return true; // an option with no prerequisite is always live
 
-    if (const auto it = stored.find(*descriptor.enabled_by); it != stored.end()) {
+    if (const auto it = configured_values.find(*option.prerequisite_option); it != configured_values.end()) {
         const auto* as_bool = std::get_if<bool>(&it->second);
         return as_bool && *as_bool;
     }
-    if (const auto* gate = find_option_descriptor(schema, *descriptor.enabled_by)) {
-        const auto* as_bool = std::get_if<bool>(&gate->default_value);
+    if (const auto* prerequisite = find_option_descriptor(declared_options, *option.prerequisite_option)) {
+        const auto* as_bool = std::get_if<bool>(&prerequisite->default_value);
         return as_bool && *as_bool;
     }
-    return false; // a gate naming an option the provider does not declare
+
+    return false;
 }
 
-ProviderOptionMap resolve_option_defaults(const ProviderOptionDescriptors& schema, const ProviderOptionMap& stored) {
+ProviderOptionMap
+resolve_option_defaults(const ProviderOptionDescriptors& declared_options, const ProviderOptionMap& configured_values) {
     ProviderOptionMap resolved;
-    for (const auto& descriptor : schema) {
-        if (!option_is_enabled(schema, descriptor, stored))
+    for (const auto& option : declared_options) {
+        if (!is_prerequisite_option_enabled(declared_options, option, configured_values))
             continue;
-        const auto it = stored.find(descriptor.key);
-        resolved[descriptor.key] = it != stored.end() ? it->second : descriptor.default_value;
+        const auto it = configured_values.find(option.key);
+        resolved[option.key] = it != configured_values.end() ? it->second : option.default_value;
     }
     return resolved;
 }

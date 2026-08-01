@@ -16,8 +16,8 @@
 // inspector's vocabulary and nothing else.
 namespace godot_chorus {
 
-// `enabled` false marks the property read-only rather than hiding it: a gated
-// option that vanishes reads as a bug, one that greys out reads as a gate.
+// `enabled` false marks the property read-only rather than hiding it: an option that vanishes
+// when its prerequisite goes off reads as a bug, one that greys out reads as a dependency.
 godot::PropertyInfo property_info_for(const Chorus::ProviderOptionDescriptor& descriptor, bool enabled);
 
 godot::Variant option_value_to_variant(const Chorus::ProviderOptionValue& value);

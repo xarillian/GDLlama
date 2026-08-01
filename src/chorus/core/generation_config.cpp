@@ -3,8 +3,8 @@
 namespace Chorus {
 namespace {
 
-// One applier for both knob shapes: assigning an empty Target{} is "unset"
-// for an optional knob and "empty list" for a plain one.
+// One applier for both field shapes: assigning an empty Target{} is "unset"
+// for an optional field and "empty list" for a plain one.
 template <typename Target, typename T> void apply_patch(Target& target, const ConfigPatch<T>& patch) {
     switch (patch.action) {
     case PatchAction::Inherit:
@@ -60,7 +60,7 @@ void erase_option_path(ProviderOptionMap& options, const std::string& path) {
 GenerationConfig apply_generation_patch(const GenerationConfig& base, const GenerationConfigPatch& patch) {
     GenerationConfig merged = base;
     // Both structs are destructured in full so this function refuses to
-    // compile when a knob is added without its apply line.
+    // compile when a generation option is added without its apply line.
     auto& [max_tokens, temperature, top_k, top_p, seed, frequency_penalty, presence_penalty, stop, constraint, thinking, provider_options] =
         merged;
     const auto& [p_max_tokens, p_temperature, p_top_k, p_top_p, p_seed, p_frequency_penalty, p_presence_penalty, p_stop, p_constraint, p_thinking, p_provider_options, p_provider_option_erasures] =

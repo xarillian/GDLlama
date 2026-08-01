@@ -126,7 +126,7 @@ void test_load_option_still_rejects_unknown_keys() {
     ASSERT_TRUE(rejection->message.find("warp_factor") != std::string::npos);
 }
 
-void test_load_option_rejects_cpu_with_explicit_gpu_controls() {
+void test_load_option_rejects_cpu_with_explicit_gpu_options() {
     auto expect_rejection = [](const std::string& key, int64_t value) {
         auto config = make_gguf_config(MODEL_PATH);
         config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {key, value}};
@@ -504,7 +504,7 @@ int run_llama_scheduler_tests() {
     run_test("load option rejects narrowing overflow", test_load_option_rejects_narrowing_overflow);
     run_test("load option still rejects unknown keys", test_load_option_still_rejects_unknown_keys);
     run_test(
-        "load option rejects CPU with explicit GPU controls", test_load_option_rejects_cpu_with_explicit_gpu_controls
+        "load option rejects CPU with explicit GPU options", test_load_option_rejects_cpu_with_explicit_gpu_options
     );
     run_test(
         "load option accepts CPU with explicit zero GPU layers",

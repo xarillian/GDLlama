@@ -79,13 +79,13 @@ void test_llama_rejects_options_outside_the_declaration() {
     ASSERT_TRUE(std::get<Chorus::RequestRejection>(mistyped).error == Chorus::ChorusError::UnsupportedOption);
 }
 
-// The gate is advice to hosts, not enforcement: a host that ignores it and
-// sends a gated-off option still gets an honest rejection.
-void test_llama_gated_options_still_reject_when_sent() {
+// The declaration is advice to hosts, not enforcement: a host that ignores it
+// and sends an option whose prerequisite is off still gets an honest rejection.
+void test_llama_options_with_unmet_prerequisite_still_reject_when_sent() {
     const auto parsed = parse({{"use_gpu", false}, {"main_gpu", int64_t{2}}});
     ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(parsed));
 
-    // ... and the declared gate is what keeps a host from sending them.
+    // ... and the declared prerequisite is what keeps a host from sending them.
     const auto resolved =
         Chorus::resolve_option_defaults(Chorus::llama_load_option_descriptors(), {{"use_gpu", false}});
     ASSERT_TRUE(resolved.find("main_gpu") == resolved.end());
@@ -110,7 +110,10 @@ int run_llama_load_option_tests() {
     );
     run_test("Llama descriptor bounds are accepted", test_llama_descriptor_bounds_are_accepted);
     run_test("Llama rejects options outside the declaration", test_llama_rejects_options_outside_the_declaration);
-    run_test("Llama gated options still reject when sent", test_llama_gated_options_still_reject_when_sent);
+    run_test(
+        "Llama options with unmet prerequisite still reject when sent",
+        test_llama_options_with_unmet_prerequisite_still_reject_when_sent
+    );
     run_test(
         "Normalizer convenience keys exist in the provider declaration",
         test_normalizer_convenience_keys_exist_in_the_provider_declaration

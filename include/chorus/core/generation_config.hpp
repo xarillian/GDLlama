@@ -30,7 +30,7 @@ struct OutputConstraint {
 };
 
 /*
- * Generation knobs every provider understands, plus options addressed to one
+ * Generation options every provider understands, plus options addressed to one
  * provider by namespace, e.g. provider_options["llama"]["repeat_penalty"].
  *
  * Unset fields use the provider's default for the loaded model; a set field is a
@@ -69,12 +69,12 @@ struct GenerationConfig {
 enum class PatchAction { Inherit, Set, Clear };
 
 /*
- * One layer's instruction for a single knob.
+ * One layer's instruction for a single generation option.
  *
  * Generation config is layered: provider defaults beneath host defaults beneath per-request
- * overrides. A layer says one of three things about a knob: leave what is below alone (Inherit),
+ * overrides. A layer says one of three things about an option: leave what is below alone (Inherit),
  * set it, or clear it back to the bottom. std::optional can say only two of those, so the third
- * state rides along explicitly. Clear resets to empty: unset for an optional knob, the empty
+ * state rides along explicitly. Clear resets to empty: unset for an optional field, the empty
  * list for stop.
  */
 template <typename T> struct ConfigPatch {
@@ -124,7 +124,7 @@ void erase_option_path(ProviderOptionMap& options, const std::string& path);
 /*
  * Folds one config layer onto the config below it.
  *
- * Each knob obeys its ConfigPatch action; provider_options merge; the
+ * Each generation option obeys its ConfigPatch action; provider_options merge; the
  * erasures run last, so one patch can both set options and drop inherited
  * ones.
  */

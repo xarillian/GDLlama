@@ -49,9 +49,10 @@ static Chorus::Provider to_chorus_provider(GodotChorus::ProviderChoice provider)
     return provider == GodotChorus::PROVIDER_ECHO ? Chorus::Provider::Echo : Chorus::Provider::Llama;
 }
 
-static bool gates_another_option(const Chorus::ProviderOptionDescriptors& schema, const std::string& key) {
-    for (const auto& descriptor : schema) {
-        if (descriptor.enabled_by && *descriptor.enabled_by == key)
+static bool
+is_prerequisite_for_any_option(const Chorus::ProviderOptionDescriptors& declared_options, const std::string& key) {
+    for (const auto& option : declared_options) {
+        if (option.prerequisite_option && *option.prerequisite_option == key)
             return true;
     }
     return false;
@@ -421,8 +422,8 @@ bool GodotChorus::_set(const StringName& name, const Variant& value) {
         return true; // handled: the property exists, the value did not fit
     }
     _load_options[descriptor->key] = std::move(*coerced);
-    if (gates_another_option(load_option_descriptors(), descriptor->key))
-        notify_property_list_changed(); // the options it governs just changed state
+    if (is_prerequisite_for_any_option(load_option_descriptors(), descriptor->key))
+        notify_property_list_changed(); // the options naming it just changed state
     return true;
 }
 
@@ -443,7 +444,7 @@ void GodotChorus::_get_property_list(List<PropertyInfo>* list) const {
         return;
     list->push_back(PropertyInfo(Variant::NIL, "Provider Options", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_GROUP));
     for (const auto& descriptor : descriptors) {
-        const bool enabled = Chorus::option_is_enabled(descriptors, descriptor, _load_options);
+        const bool enabled = Chorus::is_prerequisite_option_enabled(descriptors, descriptor, _load_options);
         list->push_back(godot_chorus::property_info_for(descriptor, enabled));
     }
 }

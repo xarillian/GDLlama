@@ -17,10 +17,10 @@ enum class SchedulingAuthority {
 };
 
 /*
- * One knob in a provider's generation config schema.
+ * One option in a provider's declared option schema.
  *
- * Hosts build their configuration UI from these descriptors instead of hardcoding the knobs
- * per provider. The descriptor is a single source of truth for a knob's name, default, and
+ * Hosts build their configuration UI from these descriptors instead of hardcoding the options
+ * per provider. The descriptor is a single source of truth for an option's name, default, and
  * editor hints.
  */
 struct ProviderOptionDescriptor {
@@ -34,7 +34,17 @@ struct ProviderOptionDescriptor {
     std::optional<double> maximum;
     std::optional<double> step;
 
-    std::optional<std::string> enabled_by;
+    /*
+     * Names another option in this same schema that must be on for this one to apply.
+     *
+     * The named option must be declared bool. This option applies only while that bool
+     * resolves true, whether from a configured value or from the named option's own default.
+     * Empty in the common case: an option with no prerequisite is always live.
+     *
+     * For example, llama's `gpu_layers` names `use_gpu`, so a CPU-only load drops the layer
+     * count rather than sending a number the provider would reject.
+     */
+    std::optional<std::string> prerequisite_option;
 };
 
 using ProviderOptionDescriptors = std::vector<ProviderOptionDescriptor>;
@@ -69,13 +79,45 @@ struct EngineCapabilities {
     ProviderOptionDescriptors load_options;
 };
 
-/// Finds a descriptor by key; nullptr when the schema doesn't declare it.
-const ProviderOptionDescriptor* find_option_descriptor(const ProviderOptionDescriptors& schema, const std::string& key);
+/*
+ * Looks up one option in a provider's option schema.
+ *
+ * Returns:
+ *  - A pointer to the descriptor whose key matches
+ *  - A nullptr when the schema declares no such key.
+ *
+ * The pointer borrows the schema's storage and stays valid
+ * until the schema is modified or destroyed; callers must not free it.
+ */
+const ProviderOptionDescriptor*
+find_option_descriptor(const ProviderOptionDescriptors& declared_options, const std::string& key);
 
-bool option_is_enabled(
-    const ProviderOptionDescriptors& schema, const ProviderOptionDescriptor& descriptor, const ProviderOptionMap& stored
+/*
+ * Answers whether the option named as a prerequisite is switched on.
+ *
+ * An option that names no prerequisite is always live, so this is true for most of a schema.
+ * Otherwise the named option must resolve to boolean true, from a configured value if the
+ * host set one and from its own declared default if not. A prerequisite the provider never
+ * declared, or one declared as some type other than bool, can never be satisfied, and the
+ * option naming it stays off.
+ *
+ * Callers who need to know if an option is enabled should use this function.
+ */
+bool is_prerequisite_option_enabled(
+    const ProviderOptionDescriptors& declared_options,
+    const ProviderOptionDescriptor& option,
+    const ProviderOptionMap& configured_values
 );
 
-ProviderOptionMap resolve_option_defaults(const ProviderOptionDescriptors& schema, const ProviderOptionMap& stored);
+/*
+ * Flattens a schema and the host's configured values into the map a provider is sent.
+ *
+ * Every declared option resolves to its configured value, or to its declared default when the
+ * host set none. Options whose prerequisite is unmet are dropped, and configured values
+ * the schema does not declare are ignored: a provider receives what it declared and nothing
+ * else.
+ */
+ProviderOptionMap
+resolve_option_defaults(const ProviderOptionDescriptors& declared_options, const ProviderOptionMap& configured_values);
 
 } // namespace Chorus

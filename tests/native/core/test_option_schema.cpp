@@ -32,7 +32,7 @@ void test_option_schema_fills_declared_defaults() {
 
     ASSERT_EQ(std::get<int64_t>(resolved.at("threads")), int64_t{4});
     ASSERT_TRUE(std::get<bool>(resolved.at("use_gpu")));
-    // The gate defaults to true, so the option it governs is present.
+    // use_gpu defaults true, so gpu_index resolves alongside it.
     ASSERT_EQ(std::get<int64_t>(resolved.at("gpu_index")), int64_t{0});
 }
 
@@ -45,22 +45,22 @@ void test_option_schema_stored_value_beats_default() {
     ASSERT_EQ(std::get<int64_t>(resolved.at("gpu_index")), int64_t{0}); // untouched keys still resolve
 }
 
-void test_option_schema_drops_gated_off_options() {
+void test_option_schema_drops_options_whose_prerequisite_is_off() {
     const auto descriptors = schema();
     Chorus::ProviderOptionMap stored{{"use_gpu", false}, {"gpu_index", int64_t{3}}};
 
     const auto resolved = Chorus::resolve_option_defaults(descriptors, stored);
     ASSERT_TRUE(resolved.find("gpu_index") == resolved.end());
-    // Only the gated option leaves; the gate and its peers stay.
+    // Only gpu_index leaves; use_gpu and its peers stay.
     ASSERT_TRUE(std::get<bool>(resolved.at("use_gpu")) == false);
     ASSERT_EQ(std::get<int64_t>(resolved.at("threads")), int64_t{4});
 }
 
-void test_option_schema_gate_naming_unknown_option_disables() {
+void test_option_schema_prerequisite_naming_unknown_option_disables() {
     const auto descriptors = schema();
     const auto resolved = Chorus::resolve_option_defaults(descriptors, {});
-    // A gate the provider never declared cannot be satisfied; dropping the
-    // option beats sending one whose precondition nothing can establish.
+    // orphan names no_such_option, which the schema never declares. A prerequisite nothing
+    // can establish is never met, so dropping the option beats sending it.
     ASSERT_TRUE(resolved.find("orphan") == resolved.end());
 }
 
@@ -80,9 +80,13 @@ int run_option_schema_tests() {
     run_test("Option schema finds declared keys", test_option_schema_finds_declared_keys);
     run_test("Option schema fills declared defaults", test_option_schema_fills_declared_defaults);
     run_test("Option schema stored value beats default", test_option_schema_stored_value_beats_default);
-    run_test("Option schema drops gated-off options", test_option_schema_drops_gated_off_options);
     run_test(
-        "Option schema gate naming unknown option disables", test_option_schema_gate_naming_unknown_option_disables
+        "Option schema drops options whose prerequisite is off",
+        test_option_schema_drops_options_whose_prerequisite_is_off
+    );
+    run_test(
+        "Option schema prerequisite naming unknown option disables",
+        test_option_schema_prerequisite_naming_unknown_option_disables
     );
     run_test(
         "Option schema ignores keys outside the declaration", test_option_schema_ignores_keys_outside_the_declaration
