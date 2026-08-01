@@ -134,8 +134,9 @@ typedef struct chorus_event {
     int32_t dropped;
 } chorus_event;
 
-/* Log sink, installed at runtime creation. May be called during any chorus_*
- * call on the runtime's thread; must not call back into the runtime. */
+/* Log sink, installed at runtime creation. A provider may log from a thread of
+ * its own, so this is called on no particular thread and must be thread-safe;
+ * it must not call back into the runtime. */
 typedef void (*chorus_log_callback)(chorus_log_level level, const char* message, void* user_data);
 
 /* ========================================================================

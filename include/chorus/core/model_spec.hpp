@@ -50,7 +50,7 @@ struct ModelAsset {
  * building a different engine, which keeps two models from ever being resident at once.
  */
 struct InitialModelSpec {
-    std::string model_id; // Caller-selected model name, e.g. "gemma3 270M F16"
+    std::string model_id; // Caller's own label for this model, e.g. "village-elder"
     ModelFormat format = ModelFormat::Auto;
     std::vector<ModelAsset> assets;
     ProviderOptionMap provider_options;
@@ -65,10 +65,12 @@ struct InitialModelSpec {
  * cannot determine them.
  */
 struct LoadedModelInfo {
-    std::string model_id;
-    std::string family; // architecture family, e.g. "gemma3"
+    std::string model_id; // echoed back from InitialModelSpec; the one field here the caller chose
+    std::string family;   // architecture family, e.g. "gemma3"
     ModelFormat format = ModelFormat::Auto;
-    std::string quantization; // display string, e.g. "gemma3 270M F16"
+    // How the provider describes the weights it loaded, in the provider's own
+    // wording, e.g. llama's "gemma3 270M F16". Not a bare quantization tag.
+    std::string quantization;
 
     std::vector<Modality> input_modalities;
     std::vector<Modality> output_modalities;

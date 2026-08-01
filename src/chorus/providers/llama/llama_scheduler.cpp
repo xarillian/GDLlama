@@ -694,7 +694,7 @@ void LlamaScheduler::worker_loop() {
         if (decode_rc != 0) {
             fail_busy_slots(Chorus::ChorusError::Decode);
             if (decode_rc < 0) {
-                Chorus::chorus_log(_log, Chorus::LogLevel::Fatal, "Fatal decode error; stopping engine.");
+                Chorus::chorus_log(_log, Chorus::LogLevel::Fatal, "Decode failed unrecoverably; stopping engine.");
                 {
                     std::lock_guard<std::mutex> lock(queue_mutex);
                     is_running = false;
