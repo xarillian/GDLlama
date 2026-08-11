@@ -64,7 +64,7 @@ void test_depth_zero_appends_at_end_and_depth_clamps_to_pin() {
 
 void test_equal_clamped_depths_preserve_order() {
     // Two injections that BOTH clamp to the pin boundary must keep array
-    // order (Codex r2: naive clamping inserts at the same index and reverses).
+    // order. Naive clamping inserts at the same index and reverses it.
     std::vector<ChatMessage> history{{"system", "persona"}, {"user", "q"}};
     std::vector<InjectedMessage> inject{{{"system", "first"}, 99}, {{"system", "second"}, 99}};
     auto placed = Chorus::place_injections(history, inject);

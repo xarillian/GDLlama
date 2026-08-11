@@ -20,7 +20,7 @@ using RenderProbe = std::function<std::optional<int32_t>(const std::vector<ChatM
 // clamped to just after the leading system run). Equal depths keep array order.
 std::vector<ChatMessage> place_injections(std::vector<ChatMessage> base, const std::vector<InjectedMessage>& inject);
 
-// Spec #5-F: pin the leading system run and all injections, drop the oldest
+// Pin the leading system run and all injections, then drop the oldest
 // non-pinned message until the probe fits the budget. Once dropping begins,
 // the window is advanced to the next user turn (strict-alternation templates
 // reject assistant-led windows; orphaned replies are dangling context).

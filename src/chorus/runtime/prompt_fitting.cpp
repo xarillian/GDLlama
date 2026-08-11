@@ -18,7 +18,7 @@ size_t leading_system_run(const std::vector<ChatMessage>& messages) {
 std::vector<ChatMessage> place_injections(std::vector<ChatMessage> base, const std::vector<InjectedMessage>& inject) {
     const size_t pin = leading_system_run(base);
     // Clamped insertions all target the pin boundary; without a moving floor,
-    // each lands at the same index and equal-depth order reverses (Codex r2).
+    // each lands at the same index and equal-depth order reverses.
     size_t clamped = 0;
     for (const auto& injected : inject) {
         const size_t pin_effective = pin + clamped;

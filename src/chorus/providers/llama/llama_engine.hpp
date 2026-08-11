@@ -33,7 +33,6 @@ class LlamaEngine : public InferenceEngine {
 
     mutable std::mutex _lifecycle_mutex;
     std::shared_ptr<LlamaScheduler> scheduler;
-    bool _initialized = false;
     Chorus::Logger _log;
 };
 } // namespace Chorus

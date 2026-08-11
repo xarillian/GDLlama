@@ -16,9 +16,6 @@ LlamaScheduler::~LlamaScheduler() {
 bool LlamaScheduler::load_model_from_file(const Chorus::LlamaLoadConfig& config) {
     llama_model_params model_params = Chorus::make_llama_model_params(config, _no_offload_devices);
 
-    // @todo Add a host-agnostic progress callback here (via ChorusConfig, like log_callback);
-    //       the binding layer wires it to whatever UI the host uses. Core must not know the host.
-
     model = llama_model_load_from_file(config.weights_path.c_str(), model_params);
     if (!model) {
         _log.error("Failed to load model weights", {{"path", config.weights_path}});
@@ -101,8 +98,9 @@ LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger lo
     try {
         _chat_templates = common_chat_templates_init(model, /*chat_template_override=*/"");
     } catch (const std::exception& e) {
-        // No usable template: chat requests will reject at ingest and
-        // render_chat_prompt returns nullopt; raw-prompt generation still works.
+        // Embedded chat templates are unavailable. Explicit overrides still
+        // work; without one, chat requests reject at ingest and
+        // render_chat_prompt returns nullopt. Raw-prompt generation still works.
         _log.warn("Chat templates unavailable", {{"detail", e.what()}});
     }
 
@@ -152,22 +150,12 @@ void LlamaScheduler::shutdown() {
 std::optional<Chorus::RenderedPrompt> LlamaScheduler::render_chat_prompt(
     const std::vector<Chorus::ChatMessage>& messages, const std::string& template_override, bool enable_thinking
 ) const {
-    if (!model || !_chat_templates)
+    if (!model)
         return std::nullopt;
-    // Serialize template application against the worker's ingest path -- no
-    // upstream thread-safety guarantee for common_chat_templates_apply.
-    std::lock_guard<std::mutex> template_lock(_template_mutex);
-    const common_chat_templates* tmpls = _chat_templates.get();
-    common_chat_templates_ptr override_templates;
-    if (!template_override.empty()) {
-        try {
-            override_templates = common_chat_templates_init(model, template_override);
-        } catch (const std::exception&) {
-            return std::nullopt;
-        }
-        tmpls = override_templates.get();
-    }
-    auto rendered = Chorus::render_llama_chat(tmpls, messages, enable_thinking);
+    auto rendered = [&] {
+        std::lock_guard<std::mutex> template_lock(_template_mutex);
+        return Chorus::render_llama_chat(model, _chat_templates.get(), template_override, messages, enable_thinking);
+    }();
     if (std::holds_alternative<Chorus::RequestRejection>(rendered))
         return std::nullopt;
     auto& render = std::get<Chorus::LlamaChatRender>(rendered);
@@ -490,48 +478,35 @@ void LlamaScheduler::ingest_new_requests() {
         std::vector<std::string> stop_sequences = std::move(admitted.stop);
         auto sampler = Chorus::make_llama_sampler(model, std::move(admitted));
 
-        // #5: a non-empty messages list renders through the chat template
-        // (embedded or per-request override) and supersedes the raw prompt.
+        // A non-empty messages list renders through the chat template and
+        // supersedes the raw prompt.
         std::vector<int32_t> tokens;
         std::optional<Chorus::LlamaChatParseStream> parse_stream;
         std::optional<Chorus::RequestRejection> render_rejection;
         if (!chorus_request.messages.empty()) {
-            std::lock_guard<std::mutex> template_lock(_template_mutex);
-            const common_chat_templates* tmpls = _chat_templates.get();
-            common_chat_templates_ptr override_templates;
-            if (!chorus_request.chat_template.empty()) {
-                try {
-                    override_templates = common_chat_templates_init(model, chorus_request.chat_template);
-                    tmpls = override_templates.get();
-                } catch (const std::exception& e) {
-                    render_rejection = Chorus::RequestRejection{
-                        Chorus::ChorusError::InvalidRequest, std::string("Invalid chat_template: ") + e.what()
-                    };
-                }
-            }
-            if (!render_rejection && !tmpls) {
-                render_rejection = Chorus::RequestRejection{
-                    Chorus::ChorusError::InvalidRequest, "No chat template available for messages."
-                };
-            }
-            if (!render_rejection) {
-                const bool thinking = chorus_request.gen_config.thinking.value_or(true);
-                auto rendered = Chorus::render_llama_chat(tmpls, chorus_request.messages, thinking);
-                if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered)) {
-                    render_rejection = *rejection;
-                } else {
-                    auto& render = std::get<Chorus::LlamaChatRender>(rendered);
-                    tokens = Chorus::LlamaUtils::tokenize(
-                        context, render.prompt, /*add_special=*/true, /*parse_special=*/true
-                    );
-                    for (auto& stop : render.additional_stops)
-                        stop_sequences.push_back(std::move(stop));
-                    // The request flag controls template rendering, not channel
-                    // separation. Some reasoning templates ignore the flag and
-                    // still open a think block, so capability alone selects the
-                    // parser.
-                    parse_stream = Chorus::make_llama_chat_parse_stream(render);
-                }
+            auto rendered = [&] {
+                std::lock_guard<std::mutex> template_lock(_template_mutex);
+                return Chorus::render_llama_chat(
+                    model,
+                    _chat_templates.get(),
+                    chorus_request.chat_template,
+                    chorus_request.messages,
+                    chorus_request.gen_config.thinking.value_or(true)
+                );
+            }();
+            if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered)) {
+                render_rejection = *rejection;
+            } else {
+                auto& render = std::get<Chorus::LlamaChatRender>(rendered);
+                tokens =
+                    Chorus::LlamaUtils::tokenize(context, render.prompt, /*add_special=*/true, /*parse_special=*/true);
+                for (auto& stop : render.additional_stops)
+                    stop_sequences.push_back(std::move(stop));
+                // The request flag controls template rendering, not channel
+                // separation. Some reasoning templates ignore the flag and
+                // still open a think block, so capability alone selects the
+                // parser.
+                parse_stream = Chorus::make_llama_chat_parse_stream(render);
             }
         } else {
             tokens = Chorus::LlamaUtils::tokenize(context, chorus_request.prompt, true);

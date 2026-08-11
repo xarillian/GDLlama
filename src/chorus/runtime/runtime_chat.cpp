@@ -199,8 +199,8 @@ SubmitResult ChorusRuntime::regenerate(const GenerationRequest& request) {
     ChorusRequest engine_request = make_engine_request(resolved);
     engine_request.messages = std::move(turn.messages);
 
-    // The pop itself happens inside submit_engine_request's commit point:
-    // after validation, before dispatch (see Task 6's ordering note).
+    // The pop happens inside submit_engine_request's commit point, after
+    // validation and before dispatch.
     return submit_engine_request(resolved, std::move(engine_request), turn.dropped, history_it->second.messages.back());
 }
 

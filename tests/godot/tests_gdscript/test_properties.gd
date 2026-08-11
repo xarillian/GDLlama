@@ -100,9 +100,4 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(chorus.num_slots == 7, "expected num_slots to survive a provider round-trip")
 	)
 
-	# TODO: chat_template round-trips and defaults to ""
-	# TODO: generation_defaults defaults to null until a ChorusGenerationDefaults resource is assigned
-	# TODO: regenerate(session) with no overrides argument (DEFVAL) doesn't error
-	# TODO: render_chat_prompt(session) with defaulted template_override/inject doesn't error
-
 	chorus.queue_free()

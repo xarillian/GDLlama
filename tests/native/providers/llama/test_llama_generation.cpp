@@ -750,7 +750,7 @@ void test_llama_generation_conformance_matrix() {
         {"thinking",
          [](Chorus::GenerationConfig& c) { c.thinking = false; },
          [](const Chorus::ResolvedLlamaGeneration& r) {
-             // Honored at chat-render time (#5), not in the sampler: the
+             // Honored at chat-render time, not in the sampler: the
              // resolver's whole contract for this option is "accepted".
              (void)r;
          }}

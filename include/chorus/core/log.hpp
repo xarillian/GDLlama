@@ -20,8 +20,6 @@ enum class LogLevel { Debug, Info, Warn, Error, Fatal, Off };
 
 const char* log_level_name(LogLevel level);
 
-/// The threshold a host reports at unless it names another.
-// @todo what the hell does this docstring mean? literally nothing
 inline constexpr LogLevel log_level_default = LogLevel::Warn;
 
 using LogValue = std::variant<int64_t, double, bool, std::string>;

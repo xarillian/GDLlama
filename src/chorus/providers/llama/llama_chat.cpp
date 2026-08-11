@@ -17,8 +17,26 @@ common_chat_msg to_common(const ChatMessage& message) {
 
 } // namespace
 
-std::variant<LlamaChatRender, RequestRejection>
-render_llama_chat(const common_chat_templates* tmpls, const std::vector<ChatMessage>& messages, bool enable_thinking) {
+std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
+    const llama_model* model,
+    const common_chat_templates* defaults,
+    const std::string& template_override,
+    const std::vector<ChatMessage>& messages,
+    bool enable_thinking
+) {
+    common_chat_templates_ptr override_templates;
+    const common_chat_templates* templates = defaults;
+    if (!template_override.empty()) {
+        try {
+            override_templates = common_chat_templates_init(model, template_override);
+            templates = override_templates.get();
+        } catch (const std::exception& e) {
+            return RequestRejection{ChorusError::InvalidRequest, std::string("Invalid chat_template: ") + e.what()};
+        }
+    }
+    if (!templates)
+        return RequestRejection{ChorusError::InvalidRequest, "No chat template available for messages."};
+
     common_chat_templates_inputs inputs;
     inputs.messages.reserve(messages.size());
     for (const auto& message : messages)
@@ -29,7 +47,7 @@ render_llama_chat(const common_chat_templates* tmpls, const std::vector<ChatMess
     inputs.reasoning_format = COMMON_REASONING_FORMAT_AUTO;
 
     try {
-        common_chat_params params = common_chat_templates_apply(tmpls, inputs);
+        common_chat_params params = common_chat_templates_apply(templates, inputs);
         LlamaChatRender render;
         render.prompt = std::move(params.prompt);
         render.additional_stops = std::move(params.additional_stops);
@@ -76,8 +94,8 @@ LlamaChatParseStream::Delta LlamaChatParseStream::push(const std::string& piece)
         return Delta{piece, {}};
     _raw += piece;
 
-    // Pre-content throttle (spec F2): while the think block is open, parse
-    // only once ~1/16th of the already-parsed size has newly accumulated,
+    // While the think block is open, parse only once about 1/16th of the
+    // already-parsed size has newly accumulated,
     // keeping the parse-over-everything cost amortized-linear per request.
     // Costs only reasoning-channel latency; skipped bytes surface on the next
     // parse or in finalize. Content streams token-granular: once it starts,
@@ -89,8 +107,8 @@ LlamaChatParseStream::Delta LlamaChatParseStream::push(const std::string& piece)
     try {
         _parsed_bytes = _raw.size();
         Delta delta = diff_against_previous(common_chat_parse(_raw, /*is_partial=*/true, _params));
-        // Identity flip (spec F2): the parser passed a pure-content piece
-        // through verbatim, so everything so far is attributed. We field no
+        // The parser passed a pure-content piece through verbatim, so
+        // everything so far is attributed. We field no
         // tool calls, and every format's no-tools grammar ends in
         // content(rest) (chat.cpp builders), so everything after is content
         // too: retire the per-piece full reparse. Revisit if tool-call

@@ -10,9 +10,9 @@
 
 // Reusable, shared generation defaults for one or more GodotChorus nodes. Every
 // scalar is an override flag paired with a typed value; disabled overrides
-// contribute nothing when merged onto a request (spec 3c-D overlay semantics).
-// The Godot-facing state is backed directly by a Chorus::GenerationConfigPatch
-// so to_patch() reuses Task 1's overlay vocabulary rather than re-deriving it.
+// contribute nothing when merged onto a request. The Godot-facing state is
+// backed directly by a Chorus::GenerationConfigPatch so to_patch() reuses the
+// same overlay vocabulary.
 class ChorusGenerationDefaults : public godot::Resource {
     GDCLASS(ChorusGenerationDefaults, godot::Resource);
 

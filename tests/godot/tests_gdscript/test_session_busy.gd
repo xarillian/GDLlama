@@ -21,8 +21,5 @@ static func run_tests(parent: Node) -> void:
 		await chorus.generation_complete
 	)
 
-	# TODO: import_conversation_history() on a busy session fails with SessionBusy
-	# TODO: after the live request drains, the session accepts a new request again
-
 	chorus.stop_all()
 	chorus.queue_free()

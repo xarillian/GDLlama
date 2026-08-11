@@ -288,7 +288,7 @@ void test_injected_messages_reach_engine_but_not_history() {
 
 void test_render_reservation_matches_generation() {
     // Same session, two different max_tokens: the fitted window must differ,
-    // and render_prompt must track the config it is given (Codex 1.4).
+    // and render_prompt must track the config it is given.
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->supports_render = true;
@@ -349,7 +349,7 @@ void test_inspection_equals_consumption() {
 }
 
 void test_two_sessions_accumulate_independent_histories() {
-    // Spec testing bullet: multi-session isolation through real turns.
+    // Exercise multi-session isolation through real turns.
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->tokens = {};
@@ -531,7 +531,7 @@ void test_request_overrides_layer_onto_host_defaults() {
 }
 
 void test_rejected_chat_submit_leaves_no_session_trace() {
-    // Codex 1.3: a rejected sessioned submit must not create an empty lane.
+    // A rejected sessioned submit must not create an empty lane.
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->reject_with = Chorus::RequestRejection{Chorus::ChorusError::UnsupportedOption, "nope"};
@@ -588,7 +588,7 @@ void test_regenerate_restores_old_reply_on_cancel() {
 }
 
 void test_regenerate_restores_old_reply_on_engine_error() {
-    // Spec: Cancelled AND Errored both restore (Codex 3.2 flagged the gap).
+    // Cancelled and Errored both restore the replaced reply.
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->emit_error_instead_of_stop = true;

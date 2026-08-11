@@ -636,7 +636,6 @@ void GodotChorus::push_host_defaults() {
 // Utility
 // ===========================================================================
 
-// @TODO hello? does this helper belong in the Godot wrapper? It's a math thing and can be used elsewhere!
 float GodotChorus::similarity_cos(PackedFloat32Array array1, PackedFloat32Array array2) const {
     if (array1.size() != array2.size() || array1.is_empty()) {
         UtilityFunctions::push_error("[Chorus] similarity_cos: arrays must be non-empty and the same size.");

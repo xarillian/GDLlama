@@ -24,9 +24,5 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(error_code == GodotChorus.ERR_CANCELLED, "expected error_code == ERR_CANCELLED")
 	)
 
-	# TODO: cancel_request() on an unknown/already-finished id returns false
-	# TODO: active_request_for_session() reflects the live request, then -1 after it drains
-	# TODO: stop_all() cancels every live request across sessions
-
 	chorus.stop_all()
 	chorus.queue_free()

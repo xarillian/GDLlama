@@ -26,11 +26,5 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(chorus.export_conversation_history(session).is_empty(), "expected history to be empty after clearing")
 	)
 
-	# TODO: edit_message index matrix: -1 and -size succeed, -size-1 and size reject
-	# TODO: list_conversations() reflects active sessions
-	# TODO: reset_context() clears every session at once
-	# TODO: last_turn_outcome() reports TURN_COMPLETED after a normal turn, TURN_CANCELLED after cancel_request()
-	# TODO: regenerate(session) replaces the last assistant line
-
 	chorus.stop_all()
 	chorus.queue_free()

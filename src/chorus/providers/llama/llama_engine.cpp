@@ -16,11 +16,8 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config, L
     bool holds_dead_scheduler = false;
     {
         std::lock_guard<std::mutex> lock(_lifecycle_mutex);
-        already_initialized = _initialized && scheduler && scheduler->is_healthy();
-        // Deliberately the raw flag, not is_initialized(): a failed engine
-        // reports itself uninitialized, and this is the branch that frees what
-        // it still holds.
-        holds_dead_scheduler = _initialized && !already_initialized;
+        already_initialized = scheduler && scheduler->is_healthy();
+        holds_dead_scheduler = scheduler && !already_initialized;
     }
     if (already_initialized) {
         _log.warn("Engine is already initialized");
@@ -48,7 +45,6 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config, L
         {
             std::lock_guard<std::mutex> lock(_lifecycle_mutex);
             scheduler = std::move(next_scheduler);
-            _initialized = true;
         }
         return std::nullopt;
     } catch (const std::exception& e) {
@@ -89,7 +85,6 @@ void LlamaEngine::shutdown() {
     {
         std::lock_guard<std::mutex> lock(_lifecycle_mutex);
         stopped_scheduler = std::move(scheduler);
-        _initialized = false;
     }
     if (stopped_scheduler)
         stopped_scheduler->shutdown();
@@ -97,10 +92,7 @@ void LlamaEngine::shutdown() {
 
 bool LlamaEngine::is_initialized() const {
     std::lock_guard<std::mutex> lock(_lifecycle_mutex);
-    // A worker that hit a fatal decode stops its scheduler without touching
-    // _initialized, so the flag alone would keep claiming readiness for an
-    // engine that rejects everything sent to it.
-    return _initialized && scheduler && scheduler->is_healthy();
+    return scheduler && scheduler->is_healthy();
 }
 
 EngineCapabilities LlamaEngine::capabilities() const {
@@ -113,8 +105,7 @@ EngineCapabilities LlamaEngine::capabilities() const {
     caps.scheduling = SchedulingAuthority::ChorusManaged;
     caps.streaming = true;
     caps.cancellation = true;
-    caps.prompt_rendering = true; // #5
-    // native_sessions arrives with #9, embeddings with #6.
+    caps.prompt_rendering = true;
     caps.common_generation_options = llama_common_generation_option_names();
     caps.provider_generation_options = llama_provider_generation_option_names();
     caps.load_options = llama_load_option_descriptors();
@@ -138,7 +129,7 @@ std::optional<RequestRejection> LlamaEngine::validate_request(const ChorusReques
     if (!current_scheduler || !current_scheduler->is_healthy())
         return RequestRejection{ChorusError::EngineNotReady, "LlamaEngine is not initialized."};
     if (request.type == RequestType::Embedding)
-        return RequestRejection{ChorusError::UnsupportedFeature, "Embeddings arrive with workstream #6."};
+        return RequestRejection{ChorusError::UnsupportedFeature, "LlamaEngine does not produce embeddings."};
     return validate_llama_request(request);
 }
 

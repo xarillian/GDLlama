@@ -220,9 +220,7 @@ CHORUS_API const char* chorus_last_error_message(const chorus_runtime* rt);
  * ======================================================================== */
 
 /* Load-time provider options (context_size, gpu_layers, ...). Key vocabulary
- * is the provider's; unknown keys are rejected at load, never dropped.
- * TODO(deviations #1): enumerate keys from provider self-description once
- * the contract exposes option metadata, instead of documenting them here. */
+ * is the provider's; unknown keys are rejected at load, never dropped. */
 CHORUS_API chorus_options* chorus_options_new(void);
 CHORUS_API void chorus_options_free(chorus_options* opts);
 CHORUS_API void chorus_options_set_int(chorus_options* opts, const char* key, int64_t value);
@@ -346,9 +344,7 @@ CHORUS_API void chorus_chat_messages_free(chorus_chat_message* messages, size_t 
 CHORUS_API chorus_error chorus_history_clear(chorus_runtime* rt, const char* session);
 
 /* Rewrite one message's content in place. index negative = from the end
- * (-1 = last). TODO(deviations #3): forwards to the runtime's edit verb once
- * it exists; until then the shim composes export/mutate/import like the
- * Godot adapter does. */
+ * (-1 = last). */
 CHORUS_API chorus_error
 chorus_history_edit_message(chorus_runtime* rt, const char* session, int64_t index, const char* content);
 

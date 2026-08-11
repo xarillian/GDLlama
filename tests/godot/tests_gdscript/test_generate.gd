@@ -40,10 +40,5 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(session_by_request_id.get(second_id, "") == expected_session_2, "expected the second request's signal to report session" + expected_session_2)
 	)
 
-	# TODO: missing 'prompt' key returns -1, no signal fires
-	# TODO: stream: true fires token_generated one or more times before generation_complete
-	# TODO: an unknown provider_options key is rejected (generate() returns -1)
-	# TODO: regenerate(session) with no prior turn fails cleanly
-
 	chorus.stop_all()
 	chorus.queue_free()

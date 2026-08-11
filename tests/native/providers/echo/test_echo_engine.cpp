@@ -74,8 +74,8 @@ void test_echo_streams_prompt_word_by_word_then_stops() {
 }
 
 void test_echo_submit_before_initialize_signals_engine_not_ready() {
-    // Pinned in the spec (2026-07-08): pre-init submit mirrors LlamaEngine exactly,
-    // so a test passing on Echo cannot silently fail on Llama.
+    // Pre-init submit mirrors LlamaEngine so a test passing on Echo cannot
+    // silently fail on Llama.
     Chorus::EchoEngine engine;
 
     bool errored = false;

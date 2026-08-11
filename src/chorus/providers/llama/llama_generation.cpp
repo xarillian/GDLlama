@@ -76,7 +76,7 @@ constexpr std::array<const char*, 10> kCommonOptions{
     "presence_penalty",
     "constraint",
     "stop",
-    "thinking", // honored at chat-render time (#5), not in the sampler
+    "thinking", // honored at chat-render time, not in the sampler
 };
 
 constexpr std::array<OptionDescriptor, 23> kProviderOptions{{

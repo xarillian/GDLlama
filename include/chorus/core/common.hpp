@@ -72,7 +72,6 @@ struct RequestRejection {
  * A message spliced into a conversation at a fixed distance from its end.
  *
  * depth == 0 lands after the last message, depth == N lands N messages earlier.
- * @todo this is a code smell. It should live further out.
  */
 struct InjectedMessage {
     ChatMessage message;

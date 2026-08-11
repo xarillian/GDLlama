@@ -40,7 +40,7 @@ class LlamaScheduler {
 
     const std::optional<Chorus::LoadedModelInfo>& model_info() const { return _model_info; }
 
-    // Host-thread render hook (#5): the exact templated prompt + token count
+    // Host-thread render hook: the exact templated prompt and token count
     // for `messages`. Safe beside the running worker; template application is
     // serialized via _template_mutex (no upstream thread-safety guarantee).
     std::optional<Chorus::RenderedPrompt> render_chat_prompt(
@@ -93,8 +93,8 @@ class LlamaScheduler {
 
         common_sampler_ptr sampler;
         std::optional<Chorus::StopSequenceFilter> stop_filter;
-        // #5: present when the render advertised thinking support; Task 10
-        // wires it into token emission (reasoning/content channel split).
+        // Present when the render advertised thinking support; token emission
+        // uses it to split reasoning and content channels.
         std::optional<Chorus::LlamaChatParseStream> parse_stream;
         // UTF-8 boundary guards for the emission paths the stop filter does
         // not cover: reasoning deltas, and content when no filter is set.
@@ -140,7 +140,7 @@ class LlamaScheduler {
     std::shared_ptr<Chorus::LlamaLogBridge> _llama_log_bridge;
     std::optional<Chorus::LoadedModelInfo> _model_info;
 
-    // #5 chat templates, initialized from the model at load. Reached from the
+    // Chat templates initialized from the model at load. Reached from the
     // worker (ingest) and the host (render_chat_prompt); llama.cpp declares no
     // thread-safety for common_chat_templates_apply, so every application
     // takes _template_mutex first.

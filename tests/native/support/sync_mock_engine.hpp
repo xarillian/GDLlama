@@ -24,7 +24,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     bool emit_duplicate_stop = false;   // broken: second Stop after the first
     bool emit_token_after_stop = false; // broken: trailing Token after Stop
     int64_t rogue_extra_id = -1;        // broken: if >= 0, emit a Token for this unknown id
-    bool emit_embedding_event = false;  // pre-#6 kind the runtime must drop
+    bool emit_embedding_event = false;  // event kind the runtime currently drops
     Chorus::ChorusError fail_submit_with = Chorus::ChorusError::None; // inline Error instead of tokens
     bool emit_error_instead_of_stop = false;                 // tokens flow, then Error terminal (partial-output shape)
     std::optional<Chorus::ChorusError> fail_initialize_with; // make initialize() fail

@@ -113,10 +113,6 @@ SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
     ChorusRequest engine_request = make_engine_request(resolved);
 
     if (request.session_id) {
-        // Chat turn (#5): presence of a session means continuation. Build the
-        // prospective message list WITHOUT mutating the store (find, never
-        // operator[] -- a rejection must leave no trace, not even an empty
-        // lane in list_conversations()); commit happens on acceptance.
         if (request.prompt.empty())
             return SubmitResult{-1, ChorusError::InvalidRequest, "Chat turns require a non-empty prompt."};
         std::vector<ChatMessage> prospective;
@@ -141,7 +137,7 @@ SubmitResult ChorusRuntime::submit_engine_request(
     std::optional<ChatMessage> replaced_reply
 ) {
     const GenerationRequest& request = resolved.request;
-    const int64_t id = _next_request_id.fetch_add(1);
+    const RequestId id = _next_request_id++;
     engine_request.id = id;
     engine_request.on_event = [this](ChorusSignal& sig) { enqueue_signal(sig); };
 

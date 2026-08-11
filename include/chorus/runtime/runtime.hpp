@@ -16,8 +16,8 @@
 
 namespace Chorus {
 
-// Terminal state of a session's most recent chat turn (spec #5-C). Protected
-// metadata: read-only to hosts, never rendered into the prompt.
+// Terminal state of a session's most recent chat turn. Protected metadata:
+// read-only to hosts, never rendered into the prompt.
 enum class TurnOutcome { None, Completed, Cancelled, Errored };
 
 // What a host hands the runtime. No id, no callback: those are runtime business.
@@ -36,8 +36,8 @@ struct GenerationRequest {
     // from one that merely drifted down from a host's ambient settings.
     GenerationConfigPatch overrides;
 
-    // #5: per-request ephemeral injections (fitted copy only) and an optional
-    // chat-template override. Only meaningful on sessioned (chat) requests.
+    // Per-request ephemeral injections, applied only to the fitted copy, and
+    // an optional chat-template override. Only meaningful on chat requests.
     std::vector<InjectedMessage> inject;
     std::string chat_template;
 };
@@ -113,7 +113,7 @@ class ChorusRuntime {
 
     [[nodiscard]] SubmitResult submit(const GenerationRequest& request);
 
-    // Reroll the session's last assistant line (#5-C). request.prompt must be
+    // Reroll the session's last assistant line. request.prompt must be
     // empty; all other request fields (priority, stream, config, inject,
     // chat_template) apply to the rerolled turn. On Complete the new reply
     // replaces the old; on Cancelled/Error the old reply is restored.
@@ -124,7 +124,7 @@ class ChorusRuntime {
     bool is_request_active(RequestId id) const;
     std::optional<RequestId> active_request_for_session(const SessionId& session_id) const;
 
-    // --- Conversation history (#5). Host-thread-only, like everything else.
+    // Conversation history. Host-thread-only, like everything else.
     // import/clear on a busy session (and reset with ANY busy session) return
     // SessionBusy: mutating a lane mid-turn would desync terminal rollback.
     std::optional<ChorusError> import_conversation_history(const SessionId& session, std::vector<ChatMessage> history);
@@ -141,7 +141,7 @@ class ChorusRuntime {
     TurnOutcome last_turn_outcome(const SessionId& session) const;
 
     // The exact fitted prompt generation would consume for this session right
-    // now, without generating. Pass the SAME overrides you generate with -- the
+    // now, without generating. Pass the same overrides you generate with; the
     // host defaults apply underneath either way, and the resolved max_tokens
     // and thinking drive the fitting reservation.
     // nullopt: unknown session, no engine, or no provider rendering.
@@ -205,7 +205,7 @@ class ChorusRuntime {
     // Applies a chat turn's terminal to its session lane (append or rollback).
     void finish_turn(const LiveRequest& live, TurnOutcome outcome, const std::string& text);
 
-    // A chat turn's message list after budget fitting (spec #5-F), or the
+    // A chat turn's message list after budget fitting, or the
     // rejection to surface. Keeps prompt_fitting types out of this public
     // header while sparing callers an out-parameter.
     struct FittedTurn {
@@ -223,7 +223,7 @@ class ChorusRuntime {
         bool streaming = false;
         std::string accumulated_text;
         std::optional<SessionId> session_id;
-        // #5 chat-turn bookkeeping. A sessioned request IS a chat turn:
+        // A sessioned request is a chat turn:
         // Complete appends the assistant reply, Cancelled/Error rolls back.
         std::string accumulated_reasoning;
         // Present iff this turn is a regenerate: the assistant reply this turn
@@ -246,7 +246,7 @@ class ChorusRuntime {
 
     HostDefaults _host_defaults;
 
-    std::atomic<RequestId> _next_request_id{0};
+    RequestId _next_request_id = 0;
 
     // Written by engine threads via enqueue_signal, drained by poll().
     std::mutex _pending_mutex;
@@ -257,14 +257,14 @@ class ChorusRuntime {
     std::unordered_map<RequestId, LiveRequest> _live_requests;
 
     // Reverse index for session lookup and exclusivity. A session is busy from
-    // submit until its terminal event is DRAINED by poll() -- not merely
+    // submit until its terminal event is drained by poll(), not merely
     // emitted. Visible consequence: after stop_all()/replacement, a same-frame
     // resubmission for that session gets SessionBusy until the next poll()
     // drains the synthesized Cancelled terminal. Deliberate: drain-time release
-    // guarantees per-session event ordering (#5's history append relies on it).
+    // guarantees per-session event ordering for history updates.
     std::unordered_map<SessionId, RequestId> _request_by_session;
 
-    // #5 conversation store (host-thread-only). Explicit-only lifecycle:
+    // Conversation store with a host-thread-only, explicit lifecycle:
     // lanes live until clear_conversation_history() or reset_context().
     struct ConversationHistory {
         std::vector<ChatMessage> messages;

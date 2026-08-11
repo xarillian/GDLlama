@@ -1791,7 +1791,7 @@ void test_llama_two_slot_one_cancels_one_completes() {
     ASSERT_TRUE(state->complete_terminals[0].type == Chorus::EventType::Stop);
 }
 
-// --- #5 chat support: render path, messages ingest, fitting against the real model ---
+// Chat support using the real model.
 
 namespace {
 
@@ -1892,8 +1892,8 @@ void test_capabilities_and_model_info_report_rendering() {
 
 void test_multi_turn_conversation_stays_contextual() {
     SKIP_IF_MODEL_TESTS_DISABLED();
-    // Spec integration bullet: a 2-3 turn conversation is coherent. Exercised
-    // at the RUNTIME level so history assembly itself is under test.
+    // Exercise a multi-turn conversation at the runtime layer so history
+    // assembly itself is under test.
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), make_chat_config()).has_value());
 
@@ -1918,8 +1918,7 @@ void test_multi_turn_conversation_stays_contextual() {
 
 void test_model_truncation_preserves_system_message() {
     SKIP_IF_MODEL_TESTS_DISABLED();
-    // Spec integration bullet: truncation drops oldest while preserving
-    // system. Tiny context (num_slots=1) forces a real truncation, then the
+    // A tiny context (num_slots=1) forces a real truncation, then the
     // render hook proves the system message survived in the fitted window.
     Chorus::ChorusRuntime runtime;
     auto config = make_gguf_config(MODEL_PATH);
