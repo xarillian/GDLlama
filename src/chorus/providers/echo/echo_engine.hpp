@@ -22,7 +22,6 @@ namespace Chorus {
 // echoed prompts say nothing about how real dialogue reads or paces.
 class EchoEngine : public InferenceEngine {
   public:
-    EchoEngine();
     ~EchoEngine() override;
 
     std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override;

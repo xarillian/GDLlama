@@ -38,9 +38,6 @@ class LlamaChatParseStream {
     explicit LlamaChatParseStream(common_chat_parser_params params);
     Delta push(const std::string& piece); // accumulate + partial parse + diff
     Delta finalize();                     // final full parse + diff
-    // True once the parser has retired (identity flip or break-once) and
-    // pieces flow straight through as content.
-    bool content_passthrough() const { return _passthrough; }
 
   private:
     Delta diff_against_previous(const common_chat_msg& parsed);

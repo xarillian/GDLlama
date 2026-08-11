@@ -137,15 +137,6 @@ void test_final_content_without_stop_filter_drops_incomplete_utf8_tail() {
     ASSERT_EQ(result.safe_text, std::string("A"));
 }
 
-void test_stop_filter_reset_discards_pending_state() {
-    Chorus::StopSequenceFilter filter({"<END>"});
-    filter.push("held <E");
-    filter.reset();
-    ASSERT_EQ(filter.flush(), "");
-    auto result = filter.push("fresh");
-    ASSERT_EQ(result.safe_text, "fresh");
-}
-
 void test_stop_filter_rejects_identical_markers() {
     auto rejection = Chorus::validate_stop_sequences({"<END>", "<END>"});
     ASSERT_TRUE(rejection.has_value());
@@ -210,7 +201,6 @@ int run_stop_sequence_filter_tests() {
         "Final content without stop filter drops incomplete UTF-8 tail",
         test_final_content_without_stop_filter_drops_incomplete_utf8_tail
     );
-    run_test("Stop filter reset discards pending state", test_stop_filter_reset_discards_pending_state);
     run_test("Stop filter rejects identical markers", test_stop_filter_rejects_identical_markers);
     run_test("Stop filter rejects empty marker", test_stop_filter_rejects_empty_marker);
     run_test("Stop filter rejects prefix markers short first", test_stop_filter_rejects_prefix_markers_short_first);

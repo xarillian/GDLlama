@@ -141,20 +141,16 @@ void test_parse_stream_throttles_pre_content_parses() {
     ASSERT_EQ(content, std::string("done"));
 }
 
-void test_parse_stream_flips_to_passthrough_after_content() {
-    // Spec F2: once the parser proves itself an identity on pure content (the
-    // think block closed; we field no tool calls), it retires and pieces flow
-    // through at zero parse cost. Pieces mirror the splits test: this
-    // template's partial parse only moves to content when the close tag
-    // straddles pieces, which is also the realistic token-stream shape.
+void test_parse_stream_keeps_streaming_after_content_starts() {
+    // Once the think block closes, subsequent content must surface exactly
+    // once. Pieces mirror the splits test: this template's partial parse only
+    // moves to content when the close tag straddles pieces, which is also the
+    // realistic token-stream shape.
     Chorus::LlamaChatParseStream stream(think_parser_params());
-    ASSERT_TRUE(!stream.content_passthrough());
     std::string content;
     for (const std::string piece : {"<th", "ink>let me ", "reason</think", ">the answer "})
         content += stream.push(piece).content;
-    ASSERT_TRUE(!stream.content_passthrough()); // content flowing, identity not yet proven
-    content += stream.push("is 4").content;     // identity on pure content => flip
-    ASSERT_TRUE(stream.content_passthrough());
+    content += stream.push("is 4").content;
     auto delta = stream.push(" tail");
     ASSERT_EQ(delta.content, std::string(" tail"));
     ASSERT_TRUE(delta.reasoning.empty());
@@ -202,7 +198,10 @@ int run_llama_chat_tests() {
         "LlamaChat_parse_stream_no_dup_after_empty_partial", test_parse_stream_never_duplicates_after_empty_partial
     );
     run_test("LlamaChat_parse_stream_throttles_pre_content", test_parse_stream_throttles_pre_content_parses);
-    run_test("LlamaChat_parse_stream_flips_to_passthrough", test_parse_stream_flips_to_passthrough_after_content);
+    run_test(
+        "LlamaChat_parse_stream_keeps_streaming_after_content_starts",
+        test_parse_stream_keeps_streaming_after_content_starts
+    );
     run_test(
         "LlamaChat_deepseek_thinking_off_separates_reasoning", test_deepseek_thinking_off_still_separates_reasoning
     );

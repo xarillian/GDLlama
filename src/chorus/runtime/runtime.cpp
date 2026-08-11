@@ -69,6 +69,16 @@ ChorusRuntime::ResolvedRequest ChorusRuntime::resolve_request(const GenerationRe
     return resolved;
 }
 
+ChorusRequest ChorusRuntime::make_engine_request(const ResolvedRequest& resolved) {
+    ChorusRequest engine_request;
+    engine_request.session_id = resolved.request.session_id;
+    engine_request.priority = resolved.request.priority;
+    engine_request.prompt = resolved.request.prompt;
+    engine_request.gen_config = resolved.config;
+    engine_request.chat_template = resolved.chat_template;
+    return engine_request;
+}
+
 SubmitResult ChorusRuntime::not_ready() const {
     return _engine ? SubmitResult{-1, ChorusError::EngineNotReady, "The engine has failed; load it again."}
                    : SubmitResult{-1, ChorusError::EngineNotReady, "No engine is loaded."};
@@ -100,12 +110,7 @@ SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
             -1, ChorusError::InvalidRequest, "inject/chat_template/thinking are chat controls; they require a session."
         };
 
-    ChorusRequest engine_request;
-    engine_request.session_id = request.session_id;
-    engine_request.priority = request.priority;
-    engine_request.prompt = request.prompt;
-    engine_request.gen_config = resolved.config;
-    engine_request.chat_template = resolved.chat_template;
+    ChorusRequest engine_request = make_engine_request(resolved);
 
     if (request.session_id) {
         // Chat turn (#5): presence of a session means continuation. Build the

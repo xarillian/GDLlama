@@ -29,7 +29,6 @@ struct llama_batch;
 
 class LlamaScheduler {
   public:
-    LlamaScheduler();
     ~LlamaScheduler();
 
     std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger);
@@ -63,6 +62,7 @@ class LlamaScheduler {
         Chorus::TokenChannel channel = Chorus::TokenChannel::Content; // meaningful on Token events
     };
 
+    std::optional<TerminalEvent> take_cancellation_terminal_locked(const Chorus::ChorusRequest& request);
     void ingest_new_requests();
     bool process_control_requests();
     void emit_terminal(TerminalEvent terminal);

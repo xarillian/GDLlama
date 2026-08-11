@@ -22,7 +22,6 @@ class StopSequenceFilter {
     StopFilterResult push(std::string_view piece);
     StopFilterResult finish(std::string_view final_piece);
     std::string flush();
-    void reset();
 
   private:
     std::vector<std::string> _markers;

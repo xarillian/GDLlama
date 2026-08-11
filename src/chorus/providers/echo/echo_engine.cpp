@@ -1,8 +1,6 @@
 #include "chorus/providers/echo/echo_engine.hpp"
 
 namespace Chorus {
-EchoEngine::EchoEngine() {}
-
 EchoEngine::~EchoEngine() {
     shutdown();
 }

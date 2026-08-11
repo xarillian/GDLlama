@@ -9,16 +9,11 @@
 // LIFECYCLE
 // --------------------------------------------------------------------------
 
-LlamaScheduler::LlamaScheduler() {}
-
 LlamaScheduler::~LlamaScheduler() {
     shutdown();
 }
 
 bool LlamaScheduler::load_model_from_file(const Chorus::LlamaLoadConfig& config) {
-    if (model)
-        return true;
-
     llama_model_params model_params = Chorus::make_llama_model_params(config, _no_offload_devices);
 
     // @todo Add a host-agnostic progress callback here (via ChorusConfig, like log_callback);
@@ -34,9 +29,6 @@ bool LlamaScheduler::load_model_from_file(const Chorus::LlamaLoadConfig& config)
 }
 
 bool LlamaScheduler::init_context(const Chorus::LlamaLoadConfig& config) {
-    if (context)
-        return true;
-
     llama_context_params ctx_params = Chorus::make_llama_context_params(config);
 
     context = llama_init_from_model(model, ctx_params);
@@ -51,13 +43,8 @@ bool LlamaScheduler::init_context(const Chorus::LlamaLoadConfig& config) {
 void LlamaScheduler::init_slots(int count) {
     slots.clear();
     slots.resize(count);
-    for (int i = 0; i < count; ++i) {
+    for (int i = 0; i < count; ++i)
         slots[i].id = i;
-        slots[i].is_busy = false;
-        slots[i].n_past = 0;
-        slots[i].n_decoded = 0;
-        slots[i].input_cursor = 0;
-    }
 }
 
 std::optional<Chorus::ChorusError>
@@ -246,10 +233,6 @@ void LlamaScheduler::release_slot(int slot_id) {
 
     slot.current_request = {};
     slot.current_input_tokens.clear();
-    slot.n_past = 0;
-    slot.n_decoded = 0;
-    slot.input_cursor = 0;
-    slot.max_tokens = -1;
     slot.is_busy = false;
 }
 
@@ -414,6 +397,20 @@ bool LlamaScheduler::process_control_requests() {
 // CORE PROCESSING
 // --------------------------------------------------------------------------
 
+std::optional<LlamaScheduler::TerminalEvent>
+LlamaScheduler::take_cancellation_terminal_locked(const Chorus::ChorusRequest& request) {
+    const bool stopped = !is_running;
+    if (!stopped && _cancel_requested.erase(request.id) == 0)
+        return std::nullopt;
+
+    return TerminalEvent{
+        request,
+        Chorus::EventType::Error,
+        Chorus::ChorusError::Cancelled,
+        stopped ? "Request cancelled: engine stopped." : "Request cancelled.",
+    };
+}
+
 void LlamaScheduler::ingest_new_requests() {
     std::vector<PendingRequestPtr> pending_requests;
     {
@@ -431,14 +428,7 @@ void LlamaScheduler::ingest_new_requests() {
         std::optional<TerminalEvent> controlled_terminal;
         {
             std::lock_guard<std::mutex> lock(queue_mutex);
-            if (!is_running || _cancel_requested.erase(chorus_request.id) > 0) {
-                controlled_terminal = TerminalEvent{
-                    chorus_request,
-                    Chorus::EventType::Error,
-                    Chorus::ChorusError::Cancelled,
-                    is_running ? "Request cancelled." : "Request cancelled: engine stopped.",
-                };
-            }
+            controlled_terminal = take_cancellation_terminal_locked(chorus_request);
         }
         if (controlled_terminal) {
             emit_terminal(std::move(*controlled_terminal));
@@ -451,20 +441,15 @@ void LlamaScheduler::ingest_new_requests() {
                 TerminalEvent terminal;
                 {
                     std::lock_guard<std::mutex> lock(queue_mutex);
-                    const bool cancelled = !is_running || _cancel_requested.erase(chorus_request.id) > 0;
-                    terminal = cancelled
-                                   ? TerminalEvent{
-                                         chorus_request,
-                                         Chorus::EventType::Error,
-                                         Chorus::ChorusError::Cancelled,
-                                         is_running ? "Request cancelled." : "Request cancelled: engine stopped.",
-                                     }
-                                   : TerminalEvent{
-                                         chorus_request,
-                                         Chorus::EventType::Error,
-                                         rejection->error,
-                                         rejection->message,
-                                     };
+                    if (auto cancelled = take_cancellation_terminal_locked(chorus_request))
+                        terminal = std::move(*cancelled);
+                    else
+                        terminal = TerminalEvent{
+                            chorus_request,
+                            Chorus::EventType::Error,
+                            rejection->error,
+                            rejection->message,
+                        };
                 }
                 emit_terminal(std::move(terminal));
                 continue;
@@ -477,15 +462,10 @@ void LlamaScheduler::ingest_new_requests() {
             TerminalEvent terminal;
             {
                 std::lock_guard<std::mutex> lock(queue_mutex);
-                const bool cancelled = !is_running || _cancel_requested.erase(chorus_request.id) > 0;
-                terminal = cancelled
-                               ? TerminalEvent{
-                                     chorus_request,
-                                     Chorus::EventType::Error,
-                                     Chorus::ChorusError::Cancelled,
-                                     is_running ? "Request cancelled." : "Request cancelled: engine stopped.",
-                                 }
-                               : TerminalEvent{chorus_request, Chorus::EventType::Stop, Chorus::ChorusError::None, {}};
+                if (auto cancelled = take_cancellation_terminal_locked(chorus_request))
+                    terminal = std::move(*cancelled);
+                else
+                    terminal = TerminalEvent{chorus_request, Chorus::EventType::Stop, Chorus::ChorusError::None, {}};
             }
             emit_terminal(std::move(terminal));
             continue;
@@ -493,13 +473,8 @@ void LlamaScheduler::ingest_new_requests() {
 
         {
             std::lock_guard<std::mutex> lock(queue_mutex);
-            if (!is_running || _cancel_requested.erase(chorus_request.id) > 0) {
-                controlled_terminal = TerminalEvent{
-                    chorus_request,
-                    Chorus::EventType::Error,
-                    Chorus::ChorusError::Cancelled,
-                    is_running ? "Request cancelled." : "Request cancelled: engine stopped.",
-                };
+            if (auto cancelled = take_cancellation_terminal_locked(chorus_request)) {
+                controlled_terminal = std::move(*cancelled);
             } else if (find_free_slot() == -1) {
                 request_queue.push(std::move(pending));
             }
@@ -512,7 +487,6 @@ void LlamaScheduler::ingest_new_requests() {
             continue;
 
         Chorus::ResolvedLlamaGeneration admitted = std::move(resolved);
-        pending->resolved.reset();
         std::vector<std::string> stop_sequences = std::move(admitted.stop);
         auto sampler = Chorus::make_llama_sampler(model, std::move(admitted));
 
@@ -566,13 +540,8 @@ void LlamaScheduler::ingest_new_requests() {
         std::optional<TerminalEvent> terminal;
         {
             std::lock_guard<std::mutex> lock(queue_mutex);
-            if (!is_running || _cancel_requested.erase(chorus_request.id) > 0) {
-                terminal = TerminalEvent{
-                    chorus_request,
-                    Chorus::EventType::Error,
-                    Chorus::ChorusError::Cancelled,
-                    is_running ? "Request cancelled." : "Request cancelled: engine stopped.",
-                };
+            if (auto cancelled = take_cancellation_terminal_locked(chorus_request)) {
+                terminal = std::move(*cancelled);
             } else if (render_rejection) {
                 // Checked before tokens.empty(): a failed render leaves tokens
                 // empty and must not masquerade as a Tokenize error.

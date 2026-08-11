@@ -189,6 +189,16 @@ RequestRejection option_rejection(
     };
 }
 
+RequestRejection option_rejection(const OptionDescriptor& descriptor, const ProviderOptionValue& value) {
+    return option_rejection(
+        "llama",
+        descriptor.public_key,
+        expected_type(descriptor.value_kind),
+        received_type(value),
+        allowed_range(descriptor.range_policy)
+    );
+}
+
 const OptionDescriptor* find_descriptor(const std::string& key) {
     for (const auto& descriptor : kProviderOptions) {
         if (key == descriptor.public_key)
@@ -442,15 +452,8 @@ void assign_bool(common_params_sampling& sampling, TargetMember target, bool val
 std::optional<RequestRejection> apply_provider_option(
     ResolvedLlamaGeneration& resolved, const OptionDescriptor& descriptor, const ProviderOptionValue& value
 ) {
-    if (!matches_kind(value, descriptor.value_kind)) {
-        return option_rejection(
-            "llama",
-            descriptor.public_key,
-            expected_type(descriptor.value_kind),
-            received_type(value),
-            allowed_range(descriptor.range_policy)
-        );
-    }
+    if (!matches_kind(value, descriptor.value_kind))
+        return option_rejection(descriptor, value);
 
     if (descriptor.target_member == TargetMember::SamplerOrder)
         return apply_sampler_order(resolved.sampling, std::get<ProviderOptionList>(value));
@@ -460,29 +463,15 @@ std::optional<RequestRejection> apply_provider_option(
     switch (descriptor.value_kind) {
     case ProviderOptionValueKind::Int64: {
         const auto integer = std::get<int64_t>(value);
-        if (!integer_in_range(integer, descriptor.range_policy)) {
-            return option_rejection(
-                "llama",
-                descriptor.public_key,
-                expected_type(descriptor.value_kind),
-                received_type(value),
-                allowed_range(descriptor.range_policy)
-            );
-        }
+        if (!integer_in_range(integer, descriptor.range_policy))
+            return option_rejection(descriptor, value);
         assign_integer(resolved.sampling, descriptor.target_member, static_cast<int32_t>(integer));
         return std::nullopt;
     }
     case ProviderOptionValueKind::Double: {
         const auto number = std::get<double>(value);
-        if (!double_in_range(number, descriptor.range_policy)) {
-            return option_rejection(
-                "llama",
-                descriptor.public_key,
-                expected_type(descriptor.value_kind),
-                received_type(value),
-                allowed_range(descriptor.range_policy)
-            );
-        }
+        if (!double_in_range(number, descriptor.range_policy))
+            return option_rejection(descriptor, value);
         assign_double(resolved.sampling, descriptor.target_member, static_cast<float>(number));
         return std::nullopt;
     }

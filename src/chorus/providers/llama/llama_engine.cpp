@@ -5,10 +5,6 @@
 
 namespace Chorus {
 
-LlamaEngine::LlamaEngine() {
-    // constructor can be empty -- `initialize` does the work
-}
-
 LlamaEngine::~LlamaEngine() {
     shutdown();
 }
@@ -125,23 +121,20 @@ EngineCapabilities LlamaEngine::capabilities() const {
     return caps;
 }
 
+std::shared_ptr<LlamaScheduler> LlamaEngine::scheduler_snapshot() const {
+    std::lock_guard<std::mutex> lock(_lifecycle_mutex);
+    return scheduler;
+}
+
 std::optional<LoadedModelInfo> LlamaEngine::loaded_model_info() const {
-    std::shared_ptr<LlamaScheduler> current_scheduler;
-    {
-        std::lock_guard<std::mutex> lock(_lifecycle_mutex);
-        current_scheduler = scheduler;
-    }
+    auto current_scheduler = scheduler_snapshot();
     if (!current_scheduler)
         return std::nullopt;
     return current_scheduler->model_info();
 }
 
 std::optional<RequestRejection> LlamaEngine::validate_request(const ChorusRequest& request) const {
-    std::shared_ptr<LlamaScheduler> current_scheduler;
-    {
-        std::lock_guard<std::mutex> lock(_lifecycle_mutex);
-        current_scheduler = scheduler;
-    }
+    auto current_scheduler = scheduler_snapshot();
     if (!current_scheduler || !current_scheduler->is_healthy())
         return RequestRejection{ChorusError::EngineNotReady, "LlamaEngine is not initialized."};
     if (request.type == RequestType::Embedding)
@@ -152,11 +145,7 @@ std::optional<RequestRejection> LlamaEngine::validate_request(const ChorusReques
 std::optional<RenderedPrompt> LlamaEngine::render_chat_prompt(
     const std::vector<ChatMessage>& messages, const std::string& template_override, bool enable_thinking
 ) const {
-    std::shared_ptr<LlamaScheduler> current_scheduler;
-    {
-        std::lock_guard<std::mutex> lock(_lifecycle_mutex);
-        current_scheduler = scheduler;
-    }
+    auto current_scheduler = scheduler_snapshot();
     if (!current_scheduler || !current_scheduler->is_healthy())
         return std::nullopt;
     return current_scheduler->render_chat_prompt(messages, template_override, enable_thinking);

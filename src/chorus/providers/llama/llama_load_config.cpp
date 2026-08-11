@@ -30,16 +30,12 @@ const char* value_shape(const ProviderOptionValue& value) {
 // undeclared key, so a descriptor removed without its parse arm (or the
 // reverse) surfaces as a rejection rather than a silently ignored option.
 std::optional<RequestRejection> check_against_schema(const std::string& key, const ProviderOptionValue& value) {
-    for (const auto& descriptor : llama_load_option_descriptors()) {
-        if (descriptor.key != key)
-            continue;
-        if (value.index() != descriptor.default_value.index())
-            return unsupported(
-                "Llama load option '" + key + "' must be " + value_shape(descriptor.default_value) + "."
-            );
-        return std::nullopt;
-    }
-    return unsupported("Unknown llama load option '" + key + "'");
+    const auto* descriptor = find_option_descriptor(llama_load_option_descriptors(), key);
+    if (!descriptor)
+        return unsupported("Unknown llama load option '" + key + "'");
+    if (value.index() != descriptor->default_value.index())
+        return unsupported("Llama load option '" + key + "' must be " + value_shape(descriptor->default_value) + ".");
+    return std::nullopt;
 }
 
 } // namespace

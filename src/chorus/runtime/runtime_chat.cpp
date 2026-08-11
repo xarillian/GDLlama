@@ -196,11 +196,7 @@ SubmitResult ChorusRuntime::regenerate(const GenerationRequest& request) {
         return std::get<SubmitResult>(fitted);
     auto& turn = std::get<FittedTurn>(fitted);
 
-    ChorusRequest engine_request;
-    engine_request.session_id = request.session_id;
-    engine_request.priority = request.priority;
-    engine_request.gen_config = resolved.config;
-    engine_request.chat_template = resolved.chat_template;
+    ChorusRequest engine_request = make_engine_request(resolved);
     engine_request.messages = std::move(turn.messages);
 
     // The pop itself happens inside submit_engine_request's commit point:

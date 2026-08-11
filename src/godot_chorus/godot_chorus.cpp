@@ -55,6 +55,20 @@ static Chorus::Provider to_chorus_provider(GodotChorus::ProviderChoice provider)
 
 using godot_chorus::to_godot_string;
 
+static int64_t report_submit_result(const char* operation, const Chorus::SubmitResult& result) {
+    if (result.ok())
+        return result.request_id;
+
+    String message =
+        String("[Chorus] ") + String(operation) + String("() rejected: ") + chorus_error_name(result.error);
+    if (!result.message.empty())
+        message += String(" - ") + to_godot_string(result.message);
+    if (result.error == Chorus::ChorusError::EngineNotReady)
+        message += ". Call load_model() first.";
+    UtilityFunctions::push_error(message);
+    return -1;
+}
+
 static bool
 is_prerequisite_for_any_option(const Chorus::ProviderOptionDescriptors& declared_options, const std::string& key) {
     for (const auto& option : declared_options) {
@@ -331,17 +345,7 @@ int64_t GodotChorus::generate(const Dictionary& request) {
     }
 
     auto& gen_request = std::get<Chorus::GenerationRequest>(normalized);
-    auto result = _runtime.submit(gen_request);
-    if (!result.ok()) {
-        String message = String("[Chorus] generate() rejected: ") + chorus_error_name(result.error);
-        if (!result.message.empty())
-            message += String(" - ") + to_godot_string(result.message);
-        if (result.error == Chorus::ChorusError::EngineNotReady)
-            message += ". Call load_model() first.";
-        UtilityFunctions::push_error(message);
-        return -1;
-    }
-    return result.request_id;
+    return report_submit_result("generate", _runtime.submit(gen_request));
 }
 
 int64_t GodotChorus::regenerate(const String& session, const Dictionary& overrides) {
@@ -355,17 +359,7 @@ int64_t GodotChorus::regenerate(const String& session, const Dictionary& overrid
 
     auto& gen_request = std::get<Chorus::GenerationRequest>(normalized);
     gen_request.session_id = std::string(session.utf8().get_data());
-    auto result = _runtime.regenerate(gen_request);
-    if (!result.ok()) {
-        String message = String("[Chorus] regenerate() rejected: ") + chorus_error_name(result.error);
-        if (!result.message.empty())
-            message += String(" - ") + to_godot_string(result.message);
-        if (result.error == Chorus::ChorusError::EngineNotReady)
-            message += ". Call load_model() first.";
-        UtilityFunctions::push_error(message);
-        return -1;
-    }
-    return result.request_id;
+    return report_submit_result("regenerate", _runtime.regenerate(gen_request));
 }
 
 // ===========================================================================

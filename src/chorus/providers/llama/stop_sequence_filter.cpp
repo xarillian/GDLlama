@@ -80,10 +80,6 @@ std::string StopSequenceFilter::flush() {
     return result;
 }
 
-void StopSequenceFilter::reset() {
-    _pending.clear();
-}
-
 StopFilterResult finish_content_stream(
     StopSequenceFilter* stop_filter, wlib::Utf8Chunker& content_chunker, std::string_view final_piece
 ) {

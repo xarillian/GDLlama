@@ -187,6 +187,7 @@ class ChorusRuntime {
         std::string chat_template;
     };
     ResolvedRequest resolve_request(const GenerationRequest& request) const;
+    static ChorusRequest make_engine_request(const ResolvedRequest& resolved);
 
     struct LiveRequest; // fwd for the chat-turn helpers below
     // Shared submit tail: id assignment, validation, live-state install,
