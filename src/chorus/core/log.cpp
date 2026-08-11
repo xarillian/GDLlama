@@ -1,10 +1,48 @@
 #include "chorus/core/log.hpp"
 
+#include <chrono>
 #include <iostream>
+#include <syncstream>
 #include <utility>
 
 namespace Chorus {
 namespace {
+
+void append_hex_escape(std::string& out, unsigned char byte) {
+    static constexpr char digits[] = "0123456789ABCDEF";
+    out += "\\x";
+    out += digits[byte >> 4];
+    out += digits[byte & 0x0F];
+}
+
+void append_text(std::string& out, const std::string& text, bool escape_field_delimiters) {
+    for (const unsigned char byte : text) {
+        switch (byte) {
+        case '\\':
+            out += "\\\\";
+            continue;
+        case '\n':
+            out += "\\n";
+            continue;
+        case '\r':
+            out += "\\r";
+            continue;
+        case '\t':
+            out += "\\t";
+            continue;
+        default:
+            break;
+        }
+
+        if (byte < 0x20 || byte == 0x7F) {
+            append_hex_escape(out, byte);
+            continue;
+        }
+        if (escape_field_delimiters && (byte == ',' || byte == '=' || byte == '(' || byte == ')'))
+            out += '\\';
+        out += static_cast<char>(byte);
+    }
+}
 
 void append_value(std::string& out, const LogValue& value) {
     if (const auto* integer = std::get_if<int64_t>(&value))
@@ -14,7 +52,7 @@ void append_value(std::string& out, const LogValue& value) {
     else if (const auto* flag = std::get_if<bool>(&value))
         out += *flag ? "true" : "false";
     else
-        out += std::get<std::string>(value);
+        append_text(out, std::get<std::string>(value), true);
 }
 
 } // namespace
@@ -32,19 +70,20 @@ const char* log_level_name(LogLevel level) {
     case LogLevel::Fatal:
         return "FATAL";
     case LogLevel::Off:
-        return "OFF"; // a threshold, never a record's own level
+        return "OFF";
     }
-    return "UNKNOWN"; // unreachable for a declared level; keeps a widened enum honest
+
+    return "UNKNOWN"; // should be unreachable
 }
 
 std::string format_log_record(const LogRecord& record) {
     std::string line = "[Chorus] ";
     line += log_level_name(record.level);
     line += ": ";
-    line += record.message;
+    append_text(line, record.message, false);
 
-    // Identity reads as a field like any other, so one glance finds it in a
-    // line and one parse finds it in a log file.
+    // Identity reads as a field like any other, so one glance finds it beside
+    // the values that describe the event.
     const bool has_identity = record.request_id.has_value() || record.session_id.has_value();
     if (!record.fields.empty() || has_identity) {
         line += " (";
@@ -60,11 +99,12 @@ std::string format_log_record(const LogRecord& record) {
         }
         if (record.session_id) {
             separate();
-            line += "session=" + *record.session_id;
+            line += "session=";
+            append_text(line, *record.session_id, true);
         }
         for (const auto& field : record.fields) {
             separate();
-            line += field.first;
+            append_text(line, field.first, true);
             line += '=';
             append_value(line, field.second);
         }
@@ -73,12 +113,16 @@ std::string format_log_record(const LogRecord& record) {
     return line;
 }
 
+void write_log_record_to_stderr(const LogRecord& record) {
+    std::osyncstream output(std::cerr);
+    output << format_log_record(record) << '\n' << std::flush;
+}
+
 // ---------------------------------------------------------------------------
 // Logger
 // ---------------------------------------------------------------------------
 
-Logger::Logger(LogSink sink, LogLevel minimum, std::string source)
-    : _sink(std::move(sink)), _minimum(minimum), _source(std::move(source)) {}
+Logger::Logger(LogSink sink, LogLevel minimum) : _sink(std::move(sink)), _minimum(minimum) {}
 
 bool Logger::enabled(LogLevel level) const {
     // LogLevel::Off sits above every real level, so a Logger left at it, or
@@ -93,16 +137,15 @@ void Logger::log(LogLevel level, std::string message, std::vector<LogField> fiel
     LogRecord record;
     record.level = level;
     record.message = std::move(message);
+    record.timestamp = std::chrono::system_clock::now();
     record.fields = std::move(fields);
     record.request_id = _request_id;
     record.session_id = _session_id;
-    record.source = _source;
 
-    // Severe records take the synchronous path as well: a segfault mid-decode
-    // still leaves evidence, at the price of a host seeing two failures a
-    // session twice. '\n' rather than std::endl, since stderr is unbuffered.
-    if (echo == StderrEcho::Severe && (level == LogLevel::Error || level == LogLevel::Fatal))
-        std::cerr << format_log_record(record) << '\n';
+    // Severe records take the synchronous path as well, so a crash mid-decode
+    // still leaves evidence before the host drains the channel.
+    if (echo == StderrEcho::Severe && level >= LogLevel::Error)
+        write_log_record_to_stderr(record);
 
     if (_sink)
         _sink(std::move(record));
@@ -135,12 +178,6 @@ Logger Logger::for_request(RequestId id, std::optional<SessionId> session) const
     return stamped;
 }
 
-Logger Logger::with_source(std::string source) const {
-    Logger renamed = *this;
-    renamed._source = std::move(source);
-    return renamed;
-}
-
 // ---------------------------------------------------------------------------
 // LogChannel
 // ---------------------------------------------------------------------------
@@ -150,30 +187,40 @@ LogChannel::LogChannel(size_t capacity) : _capacity(capacity == 0 ? 1 : capacity
 void LogChannel::push(LogRecord record) {
     std::lock_guard<std::mutex> lock(_mutex);
     while (_records.size() >= _capacity) {
+        // A loss is an event like any other and is stamped where it happens.
+        // Drains are what stop when a host stalls, so by the time one collects
+        // the report its own clock reading can be seconds late.
+        if (_dropped == 0)
+            _first_drop = std::chrono::system_clock::now();
+
         _records.pop_front();
         ++_dropped;
     }
+
     _records.push_back(std::move(record));
 }
 
 std::vector<LogRecord> LogChannel::drain() {
     std::deque<LogRecord> taken;
     uint64_t dropped = 0;
+    std::chrono::system_clock::time_point first_drop;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         taken.swap(_records);
         dropped = std::exchange(_dropped, 0);
+        first_drop = _first_drop;
     }
 
     std::vector<LogRecord> records;
     records.reserve(taken.size() + (dropped > 0 ? 1 : 0));
     if (dropped > 0) {
-        // Leads the batch: the loss happened before everything that survived.
+        // The prefix describes the batch rather than taking part in the
+        // surviving records' production order.
         LogRecord report;
         report.level = LogLevel::Warn;
         report.message = "Log records dropped";
+        report.timestamp = first_drop;
         report.fields = {{"count", static_cast<int64_t>(dropped)}};
-        report.source = "runtime";
         records.push_back(std::move(report));
     }
     for (auto& record : taken)

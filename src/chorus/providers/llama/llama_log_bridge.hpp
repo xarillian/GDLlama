@@ -15,9 +15,9 @@ namespace Chorus {
  *
  * llama writes a line in pieces: an opening fragment carrying the level, then
  * `GGML_LOG_LEVEL_CONT` fragments continuing it, and its own trailing newline.
- * Our records are whole messages, so fragments accumulate here until one
- * arrives ending in a newline, and emerge as a single record at the level of
- * the fragment that opened the line.
+ * Our records are whole messages, so fragments accumulate here until each
+ * newline, and emerge as one record per physical line at the level of the
+ * fragment that opened it.
  *
  * Not thread-safe on its own: the bridge that owns one serializes access.
  */
@@ -81,14 +81,9 @@ class LlamaLogBridge {
      * registration.
      *
      * Returns a handle whose destruction deregisters the logger and, when it
-     * was the last, restores llama's previous callback. Records are signed
-     * `source = "llama.cpp"`, distinct from the provider's own "llama", which
-     * is what lets a host mute vendor chatter and keep Chorus's diagnostics.
+     * was the last, restores llama's previous callback.
      */
     static std::shared_ptr<LlamaLogBridge> acquire(Logger logger);
-
-    /// The source every record routed through the bridge carries.
-    static constexpr const char* vendor_source = "llama.cpp";
 
   private:
     uint64_t _id = 0;

@@ -2,6 +2,7 @@
 #include "collecting_sink.hpp"
 #include "test_utils.hpp"
 
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -19,7 +20,7 @@
 
 void test_a_level_below_the_threshold_produces_no_record() {
     CollectingSink sink;
-    Chorus::Logger log = sink.logger("test", Chorus::log_level_default); // Warn and above
+    Chorus::Logger log = sink.logger(Chorus::log_level_default); // Warn and above
 
     log.debug("Swallowed");
     log.info("Also swallowed");
@@ -31,7 +32,7 @@ void test_a_level_below_the_threshold_produces_no_record() {
 
 void test_enabled_reports_the_threshold_it_was_built_with() {
     CollectingSink sink;
-    Chorus::Logger log = sink.logger("test", Chorus::log_level_default);
+    Chorus::Logger log = sink.logger(Chorus::log_level_default);
 
     ASSERT_TRUE(!log.enabled(Chorus::LogLevel::Debug));
     ASSERT_TRUE(!log.enabled(Chorus::LogLevel::Info));
@@ -52,7 +53,7 @@ void test_a_default_constructed_logger_discards_everything() {
 // silence without the runtime having to special-case an absent logger.
 void test_the_off_threshold_admits_nothing() {
     CollectingSink sink;
-    Chorus::Logger log = sink.logger("test", Chorus::LogLevel::Off);
+    Chorus::Logger log = sink.logger(Chorus::LogLevel::Off);
 
     ASSERT_TRUE(!log.enabled(Chorus::LogLevel::Debug));
     ASSERT_TRUE(!log.enabled(Chorus::LogLevel::Fatal));
@@ -67,7 +68,7 @@ void test_the_off_threshold_admits_nothing() {
 
 void test_a_record_carries_its_fields_typed() {
     CollectingSink sink;
-    Chorus::Logger log = sink.logger("llama");
+    Chorus::Logger log = sink.logger();
 
     log.error(
         "Decode failed", {{"code", -1}, {"sequence", 3}, {"fatal", true}, {"seconds", 0.5f}, {"stage", "decode"}}
@@ -75,7 +76,6 @@ void test_a_record_carries_its_fields_typed() {
 
     const auto records = sink.records();
     ASSERT_EQ(records.size(), size_t{1});
-    ASSERT_EQ(records[0].source, "llama");
     ASSERT_TRUE(records[0].level == Chorus::LogLevel::Error);
     ASSERT_EQ(std::get<int64_t>(*find_log_field(records[0], "code")), int64_t{-1});
     ASSERT_EQ(std::get<int64_t>(*find_log_field(records[0], "sequence")), int64_t{3});
@@ -88,7 +88,7 @@ void test_a_record_carries_its_fields_typed() {
 // their fields, which is what lets a host group, filter, and count them.
 void test_the_same_failure_twice_produces_the_same_message() {
     CollectingSink sink;
-    Chorus::Logger log = sink.logger("llama");
+    Chorus::Logger log = sink.logger();
 
     log.error("Decode failed", {{"code", -1}});
     log.error("Decode failed", {{"code", -2}});
@@ -104,7 +104,7 @@ void test_the_same_failure_twice_produces_the_same_message() {
 
 void test_a_for_request_logger_stamps_every_record_it_produces() {
     CollectingSink sink;
-    Chorus::Logger base = sink.logger("llama");
+    Chorus::Logger base = sink.logger();
     Chorus::Logger scoped = base.for_request(42, std::string("npc_7/dialogue"));
 
     scoped.warn("First");
@@ -120,7 +120,7 @@ void test_a_for_request_logger_stamps_every_record_it_produces() {
 
 void test_the_base_logger_is_unchanged_by_for_request() {
     CollectingSink sink;
-    Chorus::Logger base = sink.logger("llama");
+    Chorus::Logger base = sink.logger();
     (void)base.for_request(42, std::string("npc_7"));
 
     base.warn("Engine-wide");
@@ -131,7 +131,7 @@ void test_the_base_logger_is_unchanged_by_for_request() {
 
 void test_a_request_scoped_logger_may_name_no_session() {
     CollectingSink sink;
-    Chorus::Logger scoped = sink.logger("llama").for_request(7);
+    Chorus::Logger scoped = sink.logger().for_request(7);
 
     scoped.warn("Stateless");
 
@@ -143,14 +143,38 @@ void test_a_request_scoped_logger_may_name_no_session() {
 // The synchronous stderr path
 // ---------------------------------------------------------------------------
 
+class FlushCountingBuffer : public std::stringbuf {
+  public:
+    int sync() override {
+        ++flushes;
+        return std::stringbuf::sync();
+    }
+
+    int flushes = 0;
+};
+
+void test_stderr_writer_emits_one_flushed_line() {
+    Chorus::LogRecord record;
+    record.level = Chorus::LogLevel::Error;
+    record.message = "Decode failed";
+
+    FlushCountingBuffer captured;
+    std::streambuf* previous = std::cerr.rdbuf(&captured);
+    Chorus::write_log_record_to_stderr(record);
+    std::cerr.rdbuf(previous);
+
+    ASSERT_EQ(captured.str(), "[Chorus] ERROR: Decode failed\n");
+    ASSERT_TRUE(captured.flushes > 0);
+}
+
 // Async delivery otherwise loses the last message before a crash, which is
 // exactly the message worth having.
 void test_a_severe_record_also_goes_to_stderr() {
     CollectingSink sink;
     std::stringstream captured;
     std::streambuf* previous = std::cerr.rdbuf(captured.rdbuf());
-    sink.logger("llama").error("Decode failed", {{"code", -1}});
-    sink.logger("llama").info("Routine");
+    sink.logger().error("Decode failed", {{"code", -1}});
+    sink.logger().info("Routine");
     std::cerr.rdbuf(previous);
 
     ASSERT_TRUE(captured.str().find("Decode failed") != std::string::npos);
@@ -164,7 +188,7 @@ void test_suppressing_the_echo_silences_the_synchronous_path_only() {
     CollectingSink sink;
     std::stringstream captured;
     std::streambuf* previous = std::cerr.rdbuf(captured.rdbuf());
-    sink.logger("llama").log(Chorus::LogLevel::Error, "Decode failed", {}, Chorus::StderrEcho::Suppress);
+    sink.logger().log(Chorus::LogLevel::Error, "Decode failed", {}, Chorus::StderrEcho::Suppress);
     std::cerr.rdbuf(previous);
 
     ASSERT_EQ(captured.str(), std::string());
@@ -173,7 +197,7 @@ void test_suppressing_the_echo_silences_the_synchronous_path_only() {
 }
 
 // ---------------------------------------------------------------------------
-// The channel
+// Timestamps
 // ---------------------------------------------------------------------------
 
 Chorus::LogRecord numbered_record(int64_t n) {
@@ -182,6 +206,56 @@ Chorus::LogRecord numbered_record(int64_t n) {
     record.fields = {{"n", n}};
     return record;
 }
+
+// A record is stamped where it is produced. A host collects later, on its own
+// thread at its own cadence, so a stamp taken at collection would report when
+// someone looked rather than when anything happened.
+void test_a_record_is_stamped_when_produced_not_when_drained() {
+    auto channel = std::make_shared<Chorus::LogChannel>(8);
+    Chorus::Logger log(Chorus::LogChannel::sink_for(channel), Chorus::LogLevel::Debug);
+
+    const auto before = std::chrono::system_clock::now();
+    log.warn("Produced");
+    const auto after = std::chrono::system_clock::now();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    auto drained = channel->drain();
+
+    ASSERT_EQ(drained.size(), size_t{1});
+    ASSERT_TRUE(drained[0].timestamp >= before);
+    ASSERT_TRUE(drained[0].timestamp <= after); // and so well before the drain
+}
+
+// The report is batch metadata prefixed to the surviving records. Its timestamp
+// says when loss began, independent of the records' production ordering.
+void test_the_drop_report_is_stamped_with_the_first_loss() {
+    Chorus::LogChannel channel(1);
+    auto stamped = [](int64_t n, std::chrono::system_clock::time_point at) {
+        Chorus::LogRecord record = numbered_record(n);
+        record.timestamp = at;
+        return record;
+    };
+
+    const auto start = std::chrono::system_clock::now();
+    channel.push(stamped(1, start));
+    const auto before_loss = std::chrono::system_clock::now();
+    channel.push(stamped(2, start)); // evicts 1: the burst begins here
+    const auto after_loss = std::chrono::system_clock::now();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto much_later = std::chrono::system_clock::now();
+    channel.push(stamped(3, much_later));
+
+    auto drained = channel.drain();
+    ASSERT_EQ(drained.size(), size_t{2});
+    ASSERT_EQ(drained[0].message, "Log records dropped");
+    ASSERT_TRUE(drained[0].timestamp >= before_loss);
+    ASSERT_TRUE(drained[0].timestamp <= after_loss);
+    ASSERT_TRUE(drained[0].timestamp < much_later);
+}
+
+// ---------------------------------------------------------------------------
+// The channel
+// ---------------------------------------------------------------------------
 
 void test_the_channel_drains_in_production_order_and_empties() {
     Chorus::LogChannel channel(8);
@@ -226,9 +300,31 @@ void test_the_drop_count_resets_after_it_surfaces() {
     ASSERT_EQ(drained[0].message, "Record");
 }
 
+// Severity does not change queue order. After a stalled host, the newest window
+// is more useful than an old warning followed by a hole in the stream.
+void test_overflow_drops_the_oldest_record_regardless_of_level() {
+    Chorus::LogChannel channel(3);
+    auto at_level = [](Chorus::LogLevel level, int64_t n) {
+        Chorus::LogRecord record = numbered_record(n);
+        record.level = level;
+        return record;
+    };
+
+    channel.push(at_level(Chorus::LogLevel::Warn, 1));
+    channel.push(at_level(Chorus::LogLevel::Info, 2));
+    channel.push(at_level(Chorus::LogLevel::Info, 3));
+    channel.push(at_level(Chorus::LogLevel::Info, 4));
+
+    auto drained = channel.drain();
+    ASSERT_EQ(drained.size(), size_t{4}); // one drop report plus three survivors
+    ASSERT_EQ(std::get<int64_t>(*find_log_field(drained[1], "n")), int64_t{2});
+    ASSERT_EQ(std::get<int64_t>(*find_log_field(drained[2], "n")), int64_t{3});
+    ASSERT_EQ(std::get<int64_t>(*find_log_field(drained[3], "n")), int64_t{4});
+}
+
 void test_many_producer_threads_lose_nothing_within_capacity() {
     auto channel = std::make_shared<Chorus::LogChannel>(4096);
-    Chorus::Logger log(Chorus::LogChannel::sink_for(channel), Chorus::LogLevel::Debug, "test");
+    Chorus::Logger log(Chorus::LogChannel::sink_for(channel), Chorus::LogLevel::Debug);
 
     std::vector<std::thread> producers;
     for (int t = 0; t < 4; ++t) {
@@ -270,6 +366,19 @@ void test_format_omits_the_parenthesis_when_there_is_nothing_to_put_in_it() {
     ASSERT_EQ(Chorus::format_log_record(record), "[Chorus] INFO: Engine is already initialized");
 }
 
+void test_format_escapes_text_that_would_break_the_line_or_fields() {
+    Chorus::LogRecord record;
+    record.level = Chorus::LogLevel::Error;
+    record.message = "Failure\nnext\\part";
+    record.session_id = "npc,\t1";
+    record.fields = {{"de=tail", std::string("x)\r")}};
+
+    ASSERT_EQ(
+        Chorus::format_log_record(record),
+        "[Chorus] ERROR: Failure\\nnext\\\\part (session=npc\\,\\t1, de\\=tail=x\\)\\r)"
+    );
+}
+
 int run_logging_tests() {
     std::cout << "\n--- Structured logging ---\n";
 
@@ -289,17 +398,28 @@ int run_logging_tests() {
     run_test("Log_base_logger_is_unchanged_by_for_request", test_the_base_logger_is_unchanged_by_for_request);
     run_test("Log_request_scoped_logger_may_name_no_session", test_a_request_scoped_logger_may_name_no_session);
 
+    run_test("Log_stderr_writer_emits_one_flushed_line", test_stderr_writer_emits_one_flushed_line);
     run_test("Log_severe_record_also_goes_to_stderr", test_a_severe_record_also_goes_to_stderr);
     run_test("Log_suppressed_echo_silences_stderr_only", test_suppressing_the_echo_silences_the_synchronous_path_only);
+
+    run_test("Log_record_is_stamped_when_produced", test_a_record_is_stamped_when_produced_not_when_drained);
+    run_test("Log_drop_report_stamped_with_first_loss", test_the_drop_report_is_stamped_with_the_first_loss);
 
     run_test("Log_channel_drains_in_order_and_empties", test_the_channel_drains_in_production_order_and_empties);
     run_test("Log_channel_overflow_drops_oldest_and_reports", test_overflow_drops_the_oldest_and_reports_the_count);
     run_test("Log_channel_drop_count_resets_after_it_surfaces", test_the_drop_count_resets_after_it_surfaces);
+    run_test(
+        "Log_channel_overflow_drops_oldest_regardless_of_level",
+        test_overflow_drops_the_oldest_record_regardless_of_level
+    );
     run_test("Log_channel_survives_many_producer_threads", test_many_producer_threads_lose_nothing_within_capacity);
 
     run_test("Log_format_puts_identity_and_fields_in_one_line", test_format_puts_identity_and_fields_in_one_line);
     run_test(
         "Log_format_omits_empty_parenthesis", test_format_omits_the_parenthesis_when_there_is_nothing_to_put_in_it
+    );
+    run_test(
+        "Log_format_escapes_line_and_field_delimiters", test_format_escapes_text_that_would_break_the_line_or_fields
     );
 
     return g_tests_failed;

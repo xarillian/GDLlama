@@ -24,6 +24,16 @@ void test_a_single_terminated_fragment_becomes_one_record() {
     ASSERT_TRUE(records[0].level == Chorus::LogLevel::Info);
 }
 
+void test_one_callback_with_two_lines_becomes_two_records() {
+    Chorus::LlamaLogAssembler assembler;
+
+    auto records = assembler.feed(GGML_LOG_LEVEL_INFO, "first line\nsecond line\n");
+
+    ASSERT_EQ(records.size(), size_t{2});
+    ASSERT_EQ(records[0].message, "first line");
+    ASSERT_EQ(records[1].message, "second line");
+}
+
 void test_cont_fragments_join_into_one_record() {
     Chorus::LlamaLogAssembler assembler;
 
@@ -107,8 +117,8 @@ void test_flush_emits_an_unterminated_line() {
     ASSERT_TRUE(!assembler.flush().has_value()); // and forgets it
 }
 
-// The end-to-end path: a registered logger sees llama's own output, tagged as
-// llama's, and stops seeing it once the handle is gone.
+// The end-to-end path: a registered logger sees llama's own output, and stops
+// seeing it once the handle is gone.
 void test_the_bridge_routes_llama_output_and_restores_the_hook_on_release() {
     ggml_log_callback previous_callback = nullptr;
     void* previous_user_data = nullptr;
@@ -116,7 +126,7 @@ void test_the_bridge_routes_llama_output_and_restores_the_hook_on_release() {
 
     CollectingSink sink;
     {
-        auto bridge = Chorus::LlamaLogBridge::acquire(sink.logger("chorus"));
+        auto bridge = Chorus::LlamaLogBridge::acquire(sink.logger());
 
         ggml_log_callback installed = nullptr;
         void* installed_user_data = nullptr;
@@ -127,9 +137,6 @@ void test_the_bridge_routes_llama_output_and_restores_the_hook_on_release() {
 
         ASSERT_EQ(sink.size(), size_t{1});
         ASSERT_EQ(sink.records()[0].message, "vendor said something");
-        // Signed with the vendor's name, not the logger's: that is what lets a
-        // host mute vendor chatter and keep Chorus's own diagnostics.
-        ASSERT_EQ(sink.records()[0].source, Chorus::LlamaLogBridge::vendor_source);
     }
 
     ggml_log_callback restored = nullptr;
@@ -144,8 +151,8 @@ void test_the_bridge_routes_llama_output_and_restores_the_hook_on_release() {
 void test_two_registrations_both_receive_vendor_output() {
     CollectingSink first;
     CollectingSink second;
-    auto bridge_a = Chorus::LlamaLogBridge::acquire(first.logger("a"));
-    auto bridge_b = Chorus::LlamaLogBridge::acquire(second.logger("b"));
+    auto bridge_a = Chorus::LlamaLogBridge::acquire(first.logger());
+    auto bridge_b = Chorus::LlamaLogBridge::acquire(second.logger());
 
     ggml_log_callback installed = nullptr;
     void* user_data = nullptr;
@@ -169,6 +176,7 @@ int run_llama_log_bridge_tests() {
     run_test(
         "Llama log single terminated fragment becomes one record", test_a_single_terminated_fragment_becomes_one_record
     );
+    run_test("Llama log callback splits physical lines", test_one_callback_with_two_lines_becomes_two_records);
     run_test("Llama log CONT fragments join into one record", test_cont_fragments_join_into_one_record);
     run_test(
         "Llama log new opener closes a stale line and keeps its level",

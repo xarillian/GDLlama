@@ -170,9 +170,9 @@ typedef struct chorus_log_field {
  *
  * `message` is stable text with no interpolated values: two occurrences of the
  * same failure produce the same message and differ only in their fields, which
- * is what lets a host group, filter, and count them. `source` names the
- * producer ("llama", "echo", "runtime"). request_id is -1 and session NULL
- * when the record concerns no particular work. */
+ * is what lets a host group, filter, and count them. request_id is -1 and
+ * session NULL when the record concerns no particular work. produced_at is a
+ * Unix timestamp in seconds, taken where the record was produced. */
 typedef struct chorus_log_record {
     chorus_log_level level;
     const char* message;
@@ -180,7 +180,7 @@ typedef struct chorus_log_record {
     size_t field_count;
     chorus_request_id request_id;
     const char* session;
-    const char* source;
+    double produced_at;
 } chorus_log_record;
 
 /* ========================================================================
@@ -322,9 +322,9 @@ CHORUS_API const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count
  * NULL (*out_count = 0 when idle). Call it beside chorus_poll.
  *
  * Logs ride their own buffer, so ordering between this stream and chorus_poll's
- * is explicitly not guaranteed; within this one it is FIFO. A full buffer drops
- * its oldest records and reports the count as a record of its own, so a host is
- * never silently misinformed about what it is seeing. */
+ * is explicitly not guaranteed. A full buffer drops its oldest records. The
+ * next drain prefixes the surviving FIFO records with one loss report; that
+ * prefix is batch metadata and does not participate in record ordering. */
 CHORUS_API const chorus_log_record* chorus_poll_logs(chorus_runtime* rt, size_t* out_count);
 
 /* ========================================================================

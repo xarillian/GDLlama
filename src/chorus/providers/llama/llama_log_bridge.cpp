@@ -2,9 +2,9 @@
 
 #include "llama.h"
 
-#include <iostream>
 #include <map>
 #include <mutex>
+#include <string_view>
 #include <utility>
 
 namespace Chorus {
@@ -63,12 +63,12 @@ void deliver(ggml_log_level level, const char* text, void* /*user_data*/) {
         // are registered, so the fan-out below suppresses the per-logger echo
         // and it is written once here. Echoed only when some registration would
         // have kept it, which is what a lone logger would have done.
-        if (record.level == LogLevel::Error || record.level == LogLevel::Fatal) {
+        if (record.level >= LogLevel::Error) {
             bool kept_by_anyone = false;
             for (const auto& entry : reg.loggers)
                 kept_by_anyone = kept_by_anyone || entry.second.enabled(record.level);
             if (kept_by_anyone)
-                std::cerr << format_log_record(record) << '\n';
+                write_log_record_to_stderr(record);
         }
         // Multiplexed on purpose: llama's hook carries no per-engine context,
         // so with two live engines the choice is a duplicated line or a
@@ -108,10 +108,28 @@ std::vector<LogRecord> LlamaLogAssembler::feed(int ggml_level, const char* text)
         return {}; // a continuation of nothing
     }
 
-    _pending += text;
-    if (!_pending.empty() && _pending.back() == '\n') {
+    const LogLevel fragment_level = _pending_level;
+    const std::string_view fragment(text);
+    size_t start = 0;
+    while (true) {
+        const size_t newline = fragment.find('\n', start);
+        if (newline == std::string_view::npos)
+            break;
+        if (!_has_pending) {
+            _pending_level = fragment_level;
+            _has_pending = true;
+        }
+        _pending.append(fragment.substr(start, newline - start));
         if (auto record = flush())
             completed.push_back(std::move(*record));
+        start = newline + 1;
+    }
+    if (start < fragment.size()) {
+        if (!_has_pending) {
+            _pending_level = fragment_level;
+            _has_pending = true;
+        }
+        _pending.append(fragment.substr(start));
     }
     return completed;
 }
@@ -143,7 +161,7 @@ LlamaLogBridge::LlamaLogBridge(Registration, Logger logger) {
     Registry& reg = registry();
     std::lock_guard<std::mutex> lock(reg.mutex);
     _id = reg.next_id++;
-    reg.loggers.emplace(_id, logger.with_source(vendor_source));
+    reg.loggers.emplace(_id, std::move(logger));
     if (!reg.installed) {
         llama_log_get(&reg.previous_callback, &reg.previous_user_data);
         llama_log_set(deliver, nullptr);

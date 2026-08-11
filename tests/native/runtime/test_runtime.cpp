@@ -5,6 +5,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -523,7 +524,6 @@ void test_records_from_a_provider_thread_drain_on_the_host_thread() {
     ASSERT_EQ(records.size(), size_t{1});
     ASSERT_EQ(records[0].message, "From worker");
     ASSERT_TRUE(records[0].level == Chorus::LogLevel::Info);
-    ASSERT_EQ(records[0].source, "mock"); // the provider's own name, stamped by the runtime
 
     // Drained means drained: a second poll sees nothing.
     ASSERT_EQ(runtime.poll_logs().size(), size_t{0});
@@ -558,6 +558,49 @@ void test_records_enqueued_before_shutdown_drain_afterward() {
     auto records = runtime.poll_logs();
     ASSERT_EQ(records.size(), size_t{1});
     ASSERT_EQ(records[0].message, "From worker");
+}
+
+// Unloading is itself a producer, and it runs after the last poll any host can
+// make, so those records would otherwise be enqueued onto a channel about to be
+// destroyed. Warn is the level with nowhere else to go: Error and Fatal already
+// took the synchronous path when they were built.
+void test_records_produced_during_destruction_still_reach_stderr() {
+    std::stringstream captured;
+    std::streambuf* previous = std::cerr.rdbuf(captured.rdbuf());
+    {
+        Chorus::ChorusConfig config = make_config();
+        config.log_level = Chorus::LogLevel::Debug;
+
+        Chorus::ChorusRuntime runtime;
+        auto engine = std::make_unique<SyncMockEngine>();
+        engine->log_on_shutdown = true;
+        runtime.load_engine(std::move(engine), config);
+        ASSERT_EQ(runtime.poll_logs().size(), size_t{0}); // nothing outstanding going in
+    }
+    std::cerr.rdbuf(previous);
+
+    ASSERT_TRUE(captured.str().find("Shutting down with work outstanding") != std::string::npos);
+    ASSERT_TRUE(captured.str().find("Releasing weights") == std::string::npos); // Info is not worth shouting
+}
+
+// A host that polls its way to the end owes the terminal nothing, so an ordinary
+// shutdown stays silent rather than duplicating what the host already presented.
+void test_an_ordinary_shutdown_writes_nothing_to_stderr() {
+    std::stringstream captured;
+    std::streambuf* previous = std::cerr.rdbuf(captured.rdbuf());
+    {
+        Chorus::ChorusConfig config = make_config();
+        config.log_level = Chorus::LogLevel::Debug;
+
+        Chorus::ChorusRuntime runtime;
+        auto engine = std::make_unique<SyncMockEngine>();
+        engine->log_on_initialize_from_worker = true;
+        runtime.load_engine(std::move(engine), config);
+        runtime.poll_logs();
+    }
+    std::cerr.rdbuf(previous);
+
+    ASSERT_EQ(captured.str(), std::string());
 }
 
 void test_destruction_with_active_requests_is_clean() {
@@ -721,6 +764,10 @@ int run_runtime_tests() {
         "Runtime_records_enqueued_before_shutdown_drain_afterward",
         test_records_enqueued_before_shutdown_drain_afterward
     );
+    run_test(
+        "Runtime_records_from_destruction_reach_stderr", test_records_produced_during_destruction_still_reach_stderr
+    );
+    run_test("Runtime_ordinary_shutdown_writes_nothing_to_stderr", test_an_ordinary_shutdown_writes_nothing_to_stderr);
     run_test(
         "Runtime_exactly_one_terminal_per_accepted_request", test_runtime_exactly_one_terminal_per_accepted_request
     );

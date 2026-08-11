@@ -122,7 +122,7 @@ void test_echo_ignores_content_controls_with_one_warning() {
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
     CollectingSink sink;
-    ASSERT_TRUE(!engine.initialize(config, sink.logger("echo")).has_value());
+    ASSERT_TRUE(!engine.initialize(config, sink.logger()).has_value());
     const std::string ignored_warning = "Ignoring content controls; echoed output makes no content claims";
 
     Chorus::ChorusRequest req;

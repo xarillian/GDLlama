@@ -171,8 +171,9 @@
 			<param index="2" name="fields" type="Dictionary" />
 			<param index="3" name="request_id" type="int" />
 			<param index="4" name="session" type="String" />
+			<param index="5" name="produced_at" type="float" />
 			<description>
-				Emitted for each diagnostic drained on this node's thread, after it has been routed to the console. [param level] is a [enum LogLevelCode]. [param message] is stable text with no values interpolated into it, so two occurrences of one failure carry the same message and differ only in [param fields]; that is what lets a project group, filter, and count them. [param request_id] is [code]-1[/code] and [param session] empty when the record concerns no particular request.
+				Emitted for each diagnostic drained on this node's thread, after it has been routed to the console. [param level] is a [enum LogLevelCode]. [param message] is stable text with no values interpolated into it, so two occurrences of one failure carry the same message and differ only in [param fields]; that is what lets a project group, filter, and count them. [param request_id] is [code]-1[/code] and [param session] empty when the record concerns no particular request. [param produced_at] is a Unix timestamp in seconds, suitable for [method @GDScript.Time.get_datetime_string_from_unix_time]; records are stamped where they are produced, on whatever thread produced them, so it is older than the frame that delivers it.
 				Connect this to build your own presentation (an in-game console, a QA overlay, a file writer) without patching the addon. Which records arrive at all is decided by [member log_level] and the [code]chorus/logging/min_level[/code] project setting.
 			</description>
 		</signal>

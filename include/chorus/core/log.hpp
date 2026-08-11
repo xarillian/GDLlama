@@ -2,6 +2,7 @@
 
 #include "chorus/core/identity.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -15,37 +16,26 @@
 
 namespace Chorus {
 
-/*
- * How severe one diagnostic is, ascending.
- *
- * Doubles as a verbosity: a `Logger` reports at or above the level it holds.
- * `LogLevel::Off` is a threshold only and never appears on a record.
- */
 enum class LogLevel { Debug, Info, Warn, Error, Fatal, Off };
 
-/// Static name for a level, e.g. "WARNING" for `LogLevel::Warn`. Never null.
 const char* log_level_name(LogLevel level);
 
 /// The threshold a host reports at unless it names another.
+// @todo what the hell does this docstring mean? literally nothing
 inline constexpr LogLevel log_level_default = LogLevel::Warn;
 
-/// What a field on a `LogRecord` may hold.
 using LogValue = std::variant<int64_t, double, bool, std::string>;
 using LogField = std::pair<std::string, LogValue>;
 
 struct LogRecord {
     LogLevel level = LogLevel::Info;
-
     std::string message;
+    std::chrono::system_clock::time_point timestamp;
+
     std::vector<LogField> fields;
 
-    // Set when the record concerns one request.
-    // Unset when it concerns the engine as a whole.
     std::optional<RequestId> request_id;
     std::optional<SessionId> session_id;
-
-    // Who produced it: e.g.: "llama", "echo", "runtime"
-    std::string source;
 };
 
 /// Receives a record on the thread that produced it; must be thread-safe.
@@ -62,6 +52,9 @@ enum class StderrEcho { Severe, Suppress };
 /// One record as a line, e.g. "[Chorus] ERROR: Decode failed (code=-1, sequence=3)".
 std::string format_log_record(const LogRecord& record);
 
+/// Writes one formatted record to stderr as a synchronized, flushed line.
+void write_log_record_to_stderr(const LogRecord& record);
+
 /*
  * Reports that something happened.
  *
@@ -74,7 +67,7 @@ std::string format_log_record(const LogRecord& record);
 class Logger {
   public:
     Logger() = default;
-    Logger(LogSink sink, LogLevel minimum, std::string source);
+    Logger(LogSink sink, LogLevel minimum);
 
     /*
      * Whether a record at `level` would reach the sink.
@@ -99,14 +92,9 @@ class Logger {
     /// Returns a copy that stamps `id` and `session` on every record it produces.
     Logger for_request(RequestId id, std::optional<SessionId> session = std::nullopt) const;
 
-    /// Returns a copy that stamps `source` on every record it produces, as when
-    /// relaying a vendor library's output.
-    Logger with_source(std::string source) const;
-
   private:
     LogSink _sink;
     LogLevel _minimum = LogLevel::Off;
-    std::string _source;
     std::optional<RequestId> _request_id;
     std::optional<SessionId> _session_id;
 };
@@ -114,25 +102,25 @@ class Logger {
 /*
  * The bounded buffer between producer threads and the host thread.
  *
- * Internally synchronized. A producer never blocks on a host: at capacity the
- * channel drops its oldest record and counts the loss, and that count surfaces
- * as its own record on the next `LogChannel::drain`.
+ * Internally synchronized. A producer never waits for capacity: a full channel
+ * drops its oldest record and counts the loss, and that count surfaces as batch
+ * metadata on the next `LogChannel::drain`.
  */
 class LogChannel {
   public:
     /// `capacity` counts records, and is raised to one if given as zero.
     explicit LogChannel(size_t capacity = 1024);
 
-    /// Buffers one record, dropping the oldest at capacity. Never blocks.
+    /// Buffers one record, dropping the oldest when the channel is full.
     void push(LogRecord record);
 
     /*
      * Takes everything buffered and leaves the channel empty.
      *
      * Returns:
-     *  - `std::vector<Chorus::LogRecord>`: the buffered records in production
-     *    order, led by one drop report when records were lost since the last
-     *    drain.
+     *  - `std::vector<Chorus::LogRecord>`: an optional loss-report prefix,
+     *    followed by the surviving records in production order. The prefix is
+     *    batch metadata; its position does not participate in record ordering.
      */
     std::vector<LogRecord> drain();
 
@@ -147,6 +135,7 @@ class LogChannel {
     std::deque<LogRecord> _records;
     size_t _capacity;
     uint64_t _dropped = 0;
+    std::chrono::system_clock::time_point _first_drop; // read only while _dropped is non-zero
 };
 
 } // namespace Chorus

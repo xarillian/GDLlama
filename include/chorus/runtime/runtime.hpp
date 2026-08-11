@@ -158,7 +158,8 @@ class ChorusRuntime {
     // Drains buffered log records. Host-thread-only, like poll(); call it
     // beside poll(). Logs ride their own channel because log and token volumes
     // differ by orders of magnitude, so ordering between this stream and
-    // poll()'s is explicitly not guaranteed. Within this stream it is FIFO.
+    // poll()'s is explicitly not guaranteed. After a loss, the next batch
+    // begins with one loss report as metadata; surviving records remain FIFO.
     std::vector<LogRecord> poll_logs();
 
     // Stops and destroys the engine. Every live request receives exactly one

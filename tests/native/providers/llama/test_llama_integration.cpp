@@ -1,7 +1,6 @@
 #include "chorus/core/common.hpp"
 #include "chorus/engine_factory.hpp"
 #include "chorus/providers/llama/llama_engine.hpp"
-#include "chorus/providers/llama/llama_log_bridge.hpp"
 #include "chorus/runtime/runtime.hpp"
 #include "process_test.hpp"
 #include "test_utils.hpp"
@@ -30,22 +29,19 @@ static Chorus::ChorusConfig make_gguf_config(const std::string& path) {
     return config;
 }
 
-// llama's own output, as it reaches a host: one record per line, joined back
-// into text for the substring oracles below. The engine owns llama's hook now,
-// so this reads the same stream a real host reads, not a private tap.
-class VendorLogCapture {
+// Everything the engine logs, vendor output included: one record per line,
+// joined back into text for the substring oracles below. The engine owns
+// llama's hook, so this reads the stream a real host reads, not a private tap.
+class EngineLogCapture {
   public:
     Chorus::Logger logger() {
         return Chorus::Logger(
             [this](Chorus::LogRecord record) {
-                if (record.source != Chorus::LlamaLogBridge::vendor_source)
-                    return;
                 std::lock_guard<std::mutex> lock(_mutex);
                 _text += record.message;
                 _text += '\n';
             },
-            Chorus::LogLevel::Debug,
-            "llama"
+            Chorus::LogLevel::Debug
         );
     }
 
@@ -118,7 +114,7 @@ void test_model_loading() {
 void test_llama_cpu_placement_avoids_vulkan_compute_buffer() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
-    VendorLogCapture log_capture;
+    EngineLogCapture log_capture;
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
@@ -623,8 +619,7 @@ void test_llama_cancellation_committed_during_decode_failure_wins_once() {
             if (record.message == "Decode failed")
                 engine.cancel_request(321);
         },
-        Chorus::LogLevel::Debug,
-        "llama"
+        Chorus::LogLevel::Debug
     );
     ASSERT_TRUE(!engine.initialize(config, racing_logger).has_value());
 

@@ -21,8 +21,8 @@ class CollectingSink {
     }
 
     // A logger writing here, hearing everything unless told otherwise.
-    Chorus::Logger logger(std::string source = "test", Chorus::LogLevel minimum = Chorus::LogLevel::Debug) {
-        return Chorus::Logger(sink(), minimum, std::move(source));
+    Chorus::Logger logger(Chorus::LogLevel minimum = Chorus::LogLevel::Debug) {
+        return Chorus::Logger(sink(), minimum);
     }
 
     std::vector<Chorus::LogRecord> records() const {

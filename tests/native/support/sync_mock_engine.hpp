@@ -32,6 +32,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     bool emit_cancelled_on_cancel = false;                   // emit one Cancelled terminal for a matching held request
     bool emit_error_during_shutdown = false;                 // emit Error for held requests inside shutdown()
     bool log_on_initialize_from_worker = false;              // log from a thread the host does not own
+    bool log_on_shutdown = false;                            // report during teardown, past any host's last poll
     bool supports_render = false;                            // render_chat_prompt returns text + word-count tokens
     std::optional<uint32_t> mock_per_request_context;        // reported via loaded_model_info()
     // When non-empty, submit_request emits exactly these channel-tagged tokens
@@ -201,6 +202,10 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         shutdown_calls++;
         if (shutdown_count_sink)
             (*shutdown_count_sink)++;
+        if (log_on_shutdown) {
+            _log.warn("Shutting down with work outstanding");
+            _log.info("Releasing weights");
+        }
         if (emit_error_during_shutdown) {
             for (auto& req : _held)
                 if (req.on_event)

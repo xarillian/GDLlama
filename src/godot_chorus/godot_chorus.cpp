@@ -1,5 +1,6 @@
 #include "godot_chorus/godot_chorus.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <variant>
@@ -134,6 +135,11 @@ int GodotChorus::to_godot(Chorus::ChorusError e) {
 void GodotChorus::_notification(int p_what) {
     if (p_what == NOTIFICATION_READY) {
         set_process(true);
+    } else if (p_what == NOTIFICATION_EXIT_TREE) {
+        // _process stops with the tree, so without this the last frame's
+        // diagnostics are still buffered when the node is freed. The node is
+        // fully alive here, which is what makes emitting the signal safe.
+        drain_logs();
     }
 }
 
@@ -219,13 +225,19 @@ void GodotChorus::drain_logs() {
                 fields[key] = to_godot_string(std::get<std::string>(field.second));
         }
 
+        // Unix seconds, which is what Time.get_datetime_string_from_unix_time
+        // and friends take. A record is stamped where it is produced, so this
+        // is older than the frame that delivers it.
+        const double produced_at = std::chrono::duration<double>(record.timestamp.time_since_epoch()).count();
+
         emit_signal(
             "log_message",
             to_godot(record.level),
             to_godot_string(record.message),
             fields,
             record.request_id.value_or(-1),
-            record.session_id ? to_godot_string(*record.session_id) : String()
+            record.session_id ? to_godot_string(*record.session_id) : String(),
+            produced_at
         );
     }
 }
@@ -694,7 +706,8 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::STRING, "message"),
         PropertyInfo(Variant::DICTIONARY, "fields"),
         PropertyInfo(Variant::INT, "request_id"),
-        PropertyInfo(Variant::STRING, "session")
+        PropertyInfo(Variant::STRING, "session"),
+        PropertyInfo(Variant::FLOAT, "produced_at")
     ));
 
     // --- ErrorCode enum ---

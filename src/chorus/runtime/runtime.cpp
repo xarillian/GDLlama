@@ -7,6 +7,16 @@ namespace Chorus {
 ChorusRuntime::~ChorusRuntime() {
     // Pending events die with us; nobody can poll a destroyed runtime.
     unload_engine();
+
+    // Unloading is itself a producer, and it runs after the last drain a host
+    // can perform, so what it reports would otherwise be written to a channel
+    // nothing will ever read again. Only Warn is rescued here: Error and Fatal
+    // already reached stderr as they were built, and the levels below are the
+    // ones a shutdown has no reason to shout about.
+    for (const auto& record : _log_channel->drain()) {
+        if (record.level >= LogLevel::Warn && record.level < LogLevel::Error)
+            write_log_record_to_stderr(record);
+    }
 }
 
 std::optional<ChorusError>
@@ -20,7 +30,7 @@ ChorusRuntime::load_engine(std::unique_ptr<InferenceEngine> engine, const Chorus
         cancel_live_requests();
     }
 
-    Logger logger(LogChannel::sink_for(_log_channel), config.log_level, engine->capabilities().provider_id);
+    Logger logger(LogChannel::sink_for(_log_channel), config.log_level);
     auto err = engine->initialize(config, std::move(logger));
     if (err.has_value())
         return err; // engine destroyed on scope exit; runtime stays unloaded
