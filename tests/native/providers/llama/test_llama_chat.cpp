@@ -187,7 +187,7 @@ void test_parse_stream_keeps_streaming_after_content_starts() {
 }
 
 void test_deepseek_thinking_off_still_separates_reasoning() {
-    std::ifstream file("external/llama.cpp/models/templates/deepseek-ai-DeepSeek-R1-Distill-Llama-8B.jinja");
+    std::ifstream file("third-party/llama.cpp/models/templates/deepseek-ai-DeepSeek-R1-Distill-Llama-8B.jinja");
     ASSERT_TRUE(file.good());
     const std::string source{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
     auto templates = common_chat_templates_init(nullptr, source);

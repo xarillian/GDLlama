@@ -27,7 +27,7 @@ jobs:
 
     - name: Update llama.cpp to latest
       run: |
-        cd external/llama.cpp
+        cd third-party/llama.cpp
         git fetch
         git reset --hard origin/master
 

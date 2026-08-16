@@ -7,16 +7,16 @@ CompileFlags:
     - -Isrc
 
     # godot-cpp
-    - -Iexternal/godot-cpp/include
-    - -Iexternal/godot-cpp/gen/include
+    - -Ithird-party/godot-cpp/include
+    - -Ithird-party/godot-cpp/gen/include
 
     # llama.cpp
-    - -Iexternal/llama.cpp/include
-    - -Iexternal/llama.cpp/common
-    - -Iexternal/llama.cpp/src
-    - -Iexternal/llama.cpp/ggml/include
-    - -Iexternal/llama.cpp/ggml/src
-    - -Iexternal/llama.cpp/vendor
+    - -Ithird-party/llama.cpp/include
+    - -Ithird-party/llama.cpp/common
+    - -Ithird-party/llama.cpp/src
+    - -Ithird-party/llama.cpp/ggml/include
+    - -Ithird-party/llama.cpp/ggml/src
+    - -Ithird-party/llama.cpp/vendor
 
     # Required by godot-cpp headers
     - -DGDEXTENSION

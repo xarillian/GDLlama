@@ -7,7 +7,7 @@ from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, Glob, 
 def discover_llama_revision():
     try:
         return subprocess.check_output(
-            ["git", "-C", "external/llama.cpp", "rev-parse", "HEAD"],
+            ["git", "-C", "third-party/llama.cpp", "rev-parse", "HEAD"],
             stderr=subprocess.DEVNULL,
             text=True,
         ).strip()
@@ -15,7 +15,7 @@ def discover_llama_revision():
         return "unknown"
 
 def build_llama_with_cmake(target, source, env):
-    source_dir = os.path.abspath("external/llama.cpp")
+    source_dir = os.path.abspath("third-party/llama.cpp")
     build_dir = os.path.abspath(env["llama_build_dir"])
 
     cmake_config = [
@@ -91,7 +91,7 @@ def build_llama_with_cmake(target, source, env):
 # ----------------------------------------------------------------------
 use_vulkan = ARGUMENTS.pop("use_vulkan", "no") == "yes"
 use_metal = ARGUMENTS.pop("use_metal", "no") == "yes"
-env = SConscript("external/godot-cpp/SConstruct")
+env = SConscript("third-party/godot-cpp/SConstruct")
 
 llama_variant_parts = []
 if use_vulkan:
@@ -103,7 +103,7 @@ llama_platform = str(env["platform"])
 llama_arch = str(env.get("arch", "unknown") or "unknown")
 llama_build_identity = f"{llama_platform}-{llama_arch}"
 llama_build_dir = os.path.join(
-    "external", "llama.cpp", "build", "chorus", llama_build_identity, llama_variant
+    "third-party", "llama.cpp", "build", "chorus", llama_build_identity, llama_variant
 )
 print(f">>> [SCons] llama.cpp variant: {os.path.abspath(llama_build_dir)}")
 
@@ -185,12 +185,12 @@ env.Append(CPPPATH=["include", "src"])
 # inner-layer target that builds with no llama.cpp artifacts present -- is
 # heavier and lands with #11, where a second heavyweight provider pays for it.
 llama_cpppath = [
-    "external/llama.cpp/include",
-    "external/llama.cpp/common",
-    "external/llama.cpp/src",
-    "external/llama.cpp/ggml/include",
-    "external/llama.cpp/ggml/src",
-    "external/llama.cpp/vendor",  # nlohmann/json, vendored inside llama.cpp
+    "third-party/llama.cpp/include",
+    "third-party/llama.cpp/common",
+    "third-party/llama.cpp/src",
+    "third-party/llama.cpp/ggml/include",
+    "third-party/llama.cpp/ggml/src",
+    "third-party/llama.cpp/vendor",  # nlohmann/json, vendored inside llama.cpp
 ]
 
 def with_llama_includes(base_env):
