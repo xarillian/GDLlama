@@ -122,10 +122,8 @@
 		<member name="model_path" type="String" setter="set_model_path" getter="get_model_path" default="&quot;&quot;">
 		</member>
 		<member name="override_log_level" type="bool" setter="set_override_log_level" getter="get_override_log_level" default="false">
-			When [code]false[/code] the [code]chorus/logging/min_level[/code] project setting decides how much this node hears. Turn it on to let [member log_level] override the project for this node alone.
 		</member>
 		<member name="log_level" type="int" setter="set_log_level" getter="get_log_level" default="2">
-			The least severe [enum LogLevelCode] worth reporting; anything below it is never built. [constant LOG_OFF] silences the node entirely. Only consulted when [member override_log_level] is on. The level travels with the engine's configuration, so a change takes effect at the next [method load_model].
 		</member>
 	</members>
 	<signals>
@@ -133,7 +131,6 @@
 			<param index="0" name="error_code" type="int" />
 			<param index="1" name="message" type="String" />
 			<description>
-				Emitted when the engine fails on its own rather than being unloaded, after which [method is_loaded] is false and requests are rejected until the model is loaded again. Requests the engine had already taken may still emit their own terminal signal afterwards, so keep handling those as usual.
 			</description>
 		</signal>
 		<signal name="generation_complete">
@@ -165,7 +162,7 @@
 			<description>
 			</description>
 		</signal>
-		<signal name="log_message">
+		<signal name="log_record">
 			<param index="0" name="level" type="int" />
 			<param index="1" name="message" type="String" />
 			<param index="2" name="fields" type="Dictionary" />
@@ -173,8 +170,6 @@
 			<param index="4" name="session" type="String" />
 			<param index="5" name="produced_at" type="float" />
 			<description>
-				Emitted for each diagnostic drained on this node's thread, after it has been routed to the console. [param level] is a [enum LogLevelCode]. [param message] is stable text with no values interpolated into it, so two occurrences of one failure carry the same message and differ only in [param fields]; that is what lets a project group, filter, and count them. [param request_id] is [code]-1[/code] and [param session] empty when the record concerns no particular request. [param produced_at] is a Unix timestamp in seconds, suitable for [method @GDScript.Time.get_datetime_string_from_unix_time]; records are stamped where they are produced, on whatever thread produced them, so it is older than the frame that delivers it.
-				Connect this to build your own presentation (an in-game console, a QA overlay, a file writer) without patching the addon. Which records arrive at all is decided by [member log_level] and the [code]chorus/logging/min_level[/code] project setting.
 			</description>
 		</signal>
 		<signal name="token_generated">
@@ -235,7 +230,6 @@
 		<constant name="LOG_FATAL" value="4" enum="LogLevelCode">
 		</constant>
 		<constant name="LOG_OFF" value="5" enum="LogLevelCode">
-			A threshold only: as [member log_level] it silences the node, and no [signal log_message] ever carries it.
 		</constant>
 	</constants>
 </class>

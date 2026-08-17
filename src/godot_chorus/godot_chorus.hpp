@@ -64,7 +64,7 @@ class GodotChorus : public godot::Node {
         TURN_ERRORED,
     };
 
-    // Mirrors Chorus::LogLevel: the severity a log_message signal carries, and
+    // Mirrors Chorus::LogLevel: the severity a log_record signal carries, and
     // the verbosity a node asks for. LOG_OFF is a threshold only; no record
     // arrives carrying it.
     enum LogLevelCode {
@@ -214,9 +214,8 @@ class GodotChorus : public godot::Node {
     // renders, so the node never has to decide where an ambient value applies.
     void push_host_defaults();
 
-    // Drains the runtime's log channel and presents it: console routing that
-    // respects what each Godot channel means, plus the log_message signal for
-    // projects that want their own presentation.
+    // Drains the runtime's log channel onto the host thread. Every record emits
+    // `log_record` for the project to present or store as it chooses.
     void drain_logs();
     // The node's override when it is on, else the project setting.
     Chorus::LogLevel effective_log_level() const;

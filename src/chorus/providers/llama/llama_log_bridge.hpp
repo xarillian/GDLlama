@@ -60,9 +60,7 @@ class LlamaLogAssembler {
  * llama's hook carries no per-engine context, so with two live engines both
  * hosts see both engines' vendor output. Multiplexing to every registered
  * logger is the deliberate choice: a duplicated line is diagnosable and a
- * missing one is not. The synchronous stderr echo for severe records is the
- * exception: the fan-out suppresses it and the bridge writes one line per
- * record itself, so it never multiplies with the number of registrations.
+ * missing one is not.
  */
 class LlamaLogBridge {
     // Public only so make_shared can reach the constructor; a caller cannot

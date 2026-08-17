@@ -5,7 +5,6 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -17,8 +16,6 @@
 namespace Chorus {
 
 enum class LogLevel { Debug, Info, Warn, Error, Fatal, Off };
-
-const char* log_level_name(LogLevel level);
 
 inline constexpr LogLevel log_level_default = LogLevel::Warn;
 
@@ -36,39 +33,20 @@ struct LogRecord {
     std::optional<SessionId> session_id;
 };
 
-/// Receives a record on the thread that produced it; must be thread-safe.
-using LogSink = std::function<void(LogRecord)>;
-
-/*
- * Whether one call takes the synchronous stderr path alongside the sink.
- *
- * `StderrEcho::Suppress` is for a caller that writes the line itself, such as
- * one fanning a record out to several `Logger`s that stderr is owed once.
- */
-enum class StderrEcho { Severe, Suppress };
-
-/// One record as a line, e.g. "[Chorus] ERROR: Decode failed (code=-1, sequence=3)".
-std::string format_log_record(const LogRecord& record);
-
-/// Writes one formatted record to stderr as a synchronized, flushed line.
-void write_log_record_to_stderr(const LogRecord& record);
+class LogChannel;
 
 /*
  * Reports that something happened.
  *
- * Each call at or above the threshold becomes a `LogRecord` and goes to a
- * `LogSink`. Copy a `Logger` freely and hold it across threads.
- *
- * `LogLevel::Error` and `LogLevel::Fatal` also reach stderr as they are built,
- * so a crash leaves evidence.
+ * Each call at or above the threshold becomes a `LogRecord` in the shared `LogChannel`.
  */
 class Logger {
   public:
     Logger() = default;
-    Logger(LogSink sink, LogLevel minimum);
+    Logger(std::shared_ptr<LogChannel> records, LogLevel minimum);
 
     /*
-     * Whether a record at `level` would reach the sink.
+     * Whether a record at `level` would reach the channel.
      *
      * `Logger::log` already tests this before it touches its arguments, so
      * guard a call with it only when building the fields is itself expensive.
@@ -76,9 +54,7 @@ class Logger {
     bool enabled(LogLevel level) const;
 
     /// The general form behind the level-named helpers.
-    void log(
-        LogLevel level, std::string message, std::vector<LogField> fields = {}, StderrEcho echo = StderrEcho::Severe
-    ) const;
+    void log(LogLevel level, std::string message, std::vector<LogField> fields = {}) const;
 
     /// `Logger::log` at one fixed level.
     void debug(std::string message, std::vector<LogField> fields = {}) const;
@@ -91,7 +67,7 @@ class Logger {
     Logger for_request(RequestId id, std::optional<SessionId> session = std::nullopt) const;
 
   private:
-    LogSink _sink;
+    std::shared_ptr<LogChannel> _records;
     LogLevel _minimum = LogLevel::Off;
     std::optional<RequestId> _request_id;
     std::optional<SessionId> _session_id;
@@ -121,12 +97,6 @@ class LogChannel {
      *    batch metadata; its position does not participate in record ordering.
      */
     std::vector<LogRecord> drain();
-
-    /*
-     * Returns:
-     *  - `Chorus::LogSink`
-     */
-    static LogSink sink_for(std::shared_ptr<LogChannel> channel);
 
   private:
     mutable std::mutex _mutex;

@@ -1,6 +1,6 @@
 #include "chorus/core/common.hpp"
 #include "chorus/providers/echo/echo_engine.hpp"
-#include "collecting_sink.hpp"
+#include "collecting_log.hpp"
 #include "engine_contract_suite.hpp"
 #include "test_utils.hpp"
 
@@ -121,8 +121,8 @@ void test_echo_capabilities_deterministic_across_init() {
 void test_echo_ignores_content_controls_with_one_warning() {
     Chorus::EchoEngine engine;
     Chorus::ChorusConfig config;
-    CollectingSink sink;
-    ASSERT_TRUE(!engine.initialize(config, sink.logger()).has_value());
+    CollectingLog logs;
+    ASSERT_TRUE(!engine.initialize(config, logs.logger()).has_value());
     const std::string ignored_warning = "Ignoring content controls; echoed output makes no content claims";
 
     Chorus::ChorusRequest req;
@@ -135,11 +135,11 @@ void test_echo_ignores_content_controls_with_one_warning() {
 
     // Second sighting stays quiet: one warning per engine lifetime.
     ASSERT_TRUE(!engine.validate_request(req).has_value());
-    ASSERT_EQ(sink.count(ignored_warning), size_t{1});
+    ASSERT_EQ(logs.count(ignored_warning), size_t{1});
 
     // The discarded controls ride a field, not the sentence: a host can list
     // them without parsing the message back apart.
-    const auto records = sink.records();
+    const auto records = logs.records();
     const auto* controls = find_log_field(records.front(), "controls");
     ASSERT_TRUE(controls != nullptr);
     ASSERT_TRUE(std::get<std::string>(*controls).find("temperature") != std::string::npos);

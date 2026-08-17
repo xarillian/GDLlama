@@ -1,5 +1,5 @@
 #include "chorus/providers/llama/llama_log_bridge.hpp"
-#include "collecting_sink.hpp"
+#include "collecting_log.hpp"
 #include "test_utils.hpp"
 
 #include "llama.h"
@@ -124,9 +124,9 @@ void test_the_bridge_routes_llama_output_and_restores_the_hook_on_release() {
     void* previous_user_data = nullptr;
     llama_log_get(&previous_callback, &previous_user_data);
 
-    CollectingSink sink;
+    CollectingLog logs;
     {
-        auto bridge = Chorus::LlamaLogBridge::acquire(sink.logger());
+        auto bridge = Chorus::LlamaLogBridge::acquire(logs.logger());
 
         ggml_log_callback installed = nullptr;
         void* installed_user_data = nullptr;
@@ -135,8 +135,8 @@ void test_the_bridge_routes_llama_output_and_restores_the_hook_on_release() {
 
         installed(GGML_LOG_LEVEL_WARN, "vendor said something\n", installed_user_data);
 
-        ASSERT_EQ(sink.size(), size_t{1});
-        ASSERT_EQ(sink.records()[0].message, "vendor said something");
+        ASSERT_EQ(logs.size(), size_t{1});
+        ASSERT_EQ(logs.records()[0].message, "vendor said something");
     }
 
     ggml_log_callback restored = nullptr;
@@ -149,8 +149,8 @@ void test_the_bridge_routes_llama_output_and_restores_the_hook_on_release() {
 // Two live engines are two registrations and one hook. Attribution is not
 // available from llama, so both hear everything, on purpose.
 void test_two_registrations_both_receive_vendor_output() {
-    CollectingSink first;
-    CollectingSink second;
+    CollectingLog first;
+    CollectingLog second;
     auto bridge_a = Chorus::LlamaLogBridge::acquire(first.logger());
     auto bridge_b = Chorus::LlamaLogBridge::acquire(second.logger());
 

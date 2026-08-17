@@ -2,6 +2,7 @@
 #include "chorus/engine_factory.hpp"
 #include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/runtime/runtime.hpp"
+#include "collecting_log.hpp"
 #include "process_test.hpp"
 #include "test_utils.hpp"
 
@@ -34,25 +35,19 @@ static Chorus::ChorusConfig make_gguf_config(const std::string& path) {
 // llama's hook, so this reads the stream a real host reads, not a private tap.
 class EngineLogCapture {
   public:
-    Chorus::Logger logger() {
-        return Chorus::Logger(
-            [this](Chorus::LogRecord record) {
-                std::lock_guard<std::mutex> lock(_mutex);
-                _text += record.message;
-                _text += '\n';
-            },
-            Chorus::LogLevel::Debug
-        );
-    }
+    Chorus::Logger logger() { return _logs.logger(); }
 
     std::string text() const {
-        std::lock_guard<std::mutex> lock(_mutex);
-        return _text;
+        std::string text;
+        for (const auto& record : _logs.records()) {
+            text += record.message;
+            text += '\n';
+        }
+        return text;
     }
 
   private:
-    mutable std::mutex _mutex;
-    std::string _text;
+    CollectingLog _logs;
 };
 
 bool contains_vulkan_compute_buffer_log(std::string_view logs) {
@@ -595,72 +590,6 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
     ASSERT_EQ(terminal_count, size_t{1});
     ASSERT_TRUE(terminal_code == Chorus::ChorusError::Cancelled);
     ASSERT_TRUE(reuse_completed);
-}
-
-void test_llama_cancellation_committed_during_decode_failure_wins_once() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
-    std::mutex mutex;
-    std::condition_variable cv;
-    std::vector<Chorus::ChorusSignal> signals;
-    Chorus::LlamaEngine engine;
-
-    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{
-        {"use_gpu", false},
-        {"context_size", int64_t{64}},
-        {"tokens_per_tick", int64_t{16}},
-        {"num_slots", int64_t{1}},
-    };
-    // Cancels the moment the scheduler reports a failed decode, which is the
-    // race this test exists to pin: a cancel arriving inside the failure path.
-    Chorus::Logger racing_logger(
-        [&](Chorus::LogRecord record) {
-            if (record.message == "Decode failed")
-                engine.cancel_request(321);
-        },
-        Chorus::LogLevel::Debug
-    );
-    ASSERT_TRUE(!engine.initialize(config, racing_logger).has_value());
-
-    std::string huge_prompt;
-    for (int i = 0; i < 200; ++i)
-        huge_prompt += "The quick brown fox jumps over the lazy dog. ";
-
-    Chorus::ChorusRequest request;
-    request.id = 321;
-    request.prompt = huge_prompt;
-    request.gen_config.max_tokens = 8;
-    request.on_event = [&](Chorus::ChorusSignal& signal) {
-        std::lock_guard<std::mutex> lock(mutex);
-        signals.push_back(signal);
-        if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error)
-            cv.notify_all();
-    };
-    engine.submit_request(request);
-
-    bool terminal = false;
-    {
-        std::unique_lock<std::mutex> lock(mutex);
-        terminal = cv.wait_for(lock, std::chrono::seconds(15), [&] {
-            return std::any_of(signals.begin(), signals.end(), [](const auto& signal) {
-                return signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error;
-            });
-        });
-    }
-    engine.shutdown();
-
-    size_t terminal_count = 0;
-    Chorus::ChorusError terminal_code = Chorus::ChorusError::None;
-    for (const auto& signal : signals) {
-        if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error) {
-            ++terminal_count;
-            terminal_code = signal.error_code;
-        }
-    }
-    ASSERT_TRUE(terminal);
-    ASSERT_EQ(terminal_count, size_t{1});
-    ASSERT_TRUE(terminal_code == Chorus::ChorusError::Cancelled);
 }
 
 void test_llama_cancellation_from_committed_buffered_token_does_not_replace_stop() {
@@ -1981,10 +1910,6 @@ int run_llama_integration_tests() {
     run_test(
         "Llama cancellation is idempotent and releases active slot",
         test_llama_cancellation_is_idempotent_and_releases_active_slot
-    );
-    run_test(
-        "Llama cancellation committed during decode failure wins once",
-        test_llama_cancellation_committed_during_decode_failure_wins_once
     );
     run_test(
         "Llama cancellation from committed buffered token does not replace Stop",

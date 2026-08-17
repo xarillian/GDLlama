@@ -234,9 +234,9 @@ class ChorusRuntime {
 
     std::unique_ptr<InferenceEngine> _engine;
 
-    // Outlives every engine, and the sinks handed out over it hold it alive on
-    // their own: a provider thread that somehow survives its engine still has
-    // somewhere to write instead of a dangling reference.
+    // Outlives every engine, and each Logger holds it alive on its own: a
+    // provider thread that somehow survives its engine still has somewhere to
+    // write instead of a dangling reference.
     std::shared_ptr<LogChannel> _log_channel = std::make_shared<LogChannel>();
 
     // Host-thread-only. Set once poll() has told the host that the current

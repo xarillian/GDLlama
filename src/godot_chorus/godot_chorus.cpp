@@ -207,25 +207,6 @@ Chorus::LogLevel GodotChorus::effective_log_level() const {
 
 void GodotChorus::drain_logs() {
     for (const auto& record : _runtime.poll_logs()) {
-        const String line = to_godot_string(Chorus::format_log_record(record));
-        switch (record.level) {
-        case Chorus::LogLevel::Debug:
-        case Chorus::LogLevel::Info:
-            UtilityFunctions::print(line);
-            break;
-        case Chorus::LogLevel::Warn:
-            UtilityFunctions::push_warning(line);
-            break;
-        case Chorus::LogLevel::Error:
-        case Chorus::LogLevel::Fatal:
-            // push_error drives the debugger's error panel and trips
-            // break-on-error, so it is reserved for what a developer must act on.
-            UtilityFunctions::push_error(line);
-            break;
-        case Chorus::LogLevel::Off:
-            break; // a threshold; no record carries it
-        }
-
         Dictionary fields;
         for (const auto& field : record.fields) {
             const String key = to_godot_string(field.first);
@@ -245,7 +226,7 @@ void GodotChorus::drain_logs() {
         const double produced_at = std::chrono::duration<double>(record.timestamp.time_since_epoch()).count();
 
         emit_signal(
-            "log_message",
+            "log_record",
             to_godot(record.level),
             to_godot_string(record.message),
             fields,
@@ -694,7 +675,7 @@ void GodotChorus::_bind_methods() {
     // typed fields, so a project can group and filter instead of parsing
     // sentences. request_id is -1 and session "" when the record names no work.
     ADD_SIGNAL(MethodInfo(
-        "log_message",
+        "log_record",
         PropertyInfo(Variant::INT, "level"),
         PropertyInfo(Variant::STRING, "message"),
         PropertyInfo(Variant::DICTIONARY, "fields"),

@@ -1,5 +1,7 @@
 extends Node
 
+const LoggingTests := preload("res://tests_gdscript/test_logging.gd")
+
 @export var filter := ""
 
 
@@ -22,6 +24,8 @@ func _ready() -> void:
 	await TestSessionBusy.run_tests(self)
 	print("TEST: Basic Properties")
 	await TestProperties.run_tests(self)
+	print("TEST: Structured Logging")
+	await LoggingTests.run_tests(self)
 	print("TEST: Basic Signalling")
 	await TestLlamaSignals.run_tests(self)
 

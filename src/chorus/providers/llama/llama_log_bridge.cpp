@@ -59,22 +59,11 @@ void deliver(ggml_log_level level, const char* text, void* /*user_data*/) {
     Registry& reg = registry();
     std::lock_guard<std::mutex> lock(reg.mutex);
     for (const auto& record : reg.assembler.feed(static_cast<int>(level), text)) {
-        // A severe vendor record is owed one stderr line however many engines
-        // are registered, so the fan-out below suppresses the per-logger echo
-        // and it is written once here. Echoed only when some registration would
-        // have kept it, which is what a lone logger would have done.
-        if (record.level >= LogLevel::Error) {
-            bool kept_by_anyone = false;
-            for (const auto& entry : reg.loggers)
-                kept_by_anyone = kept_by_anyone || entry.second.enabled(record.level);
-            if (kept_by_anyone)
-                write_log_record_to_stderr(record);
-        }
         // Multiplexed on purpose: llama's hook carries no per-engine context,
         // so with two live engines the choice is a duplicated line or a
         // missing one.
         for (const auto& entry : reg.loggers)
-            entry.second.log(record.level, record.message, record.fields, StderrEcho::Suppress);
+            entry.second.log(record.level, record.message, record.fields);
     }
 }
 
@@ -142,7 +131,7 @@ std::optional<LogRecord> LlamaLogAssembler::flush() {
     _pending.clear();
     _has_pending = false;
 
-    // llama formats its own '\n'; sinks add their own line breaks.
+    // The newline frames llama's fragments; it is not part of the message.
     trim_trailing_newlines(message);
     if (message.empty())
         return std::nullopt;
