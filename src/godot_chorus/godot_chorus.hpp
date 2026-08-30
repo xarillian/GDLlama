@@ -212,7 +212,7 @@ class GodotChorus : public godot::Node {
     // Hands this node's ambient settings to the runtime, which resolves them
     // against each request. Called from every entry point that submits or
     // renders, so the node never has to decide where an ambient value applies.
-    void push_host_defaults();
+    bool push_host_defaults();
 
     // Drains the runtime's log channel onto the host thread. Every record emits
     // `log_record` for the project to present or store as it chooses.

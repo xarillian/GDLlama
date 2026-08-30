@@ -232,6 +232,23 @@ void test_oversized_single_turn_hard_fails_without_mutation() {
     ASSERT_TRUE(runtime.export_conversation_history("npc_1").empty()); // no trace
 }
 
+void test_zero_token_chat_reserves_no_response_space() {
+    Chorus::ChorusRuntime runtime;
+    auto owned = std::make_unique<SyncMockEngine>();
+    auto* engine = owned.get();
+    owned->supports_render = true;
+    owned->mock_per_request_context = 2;
+    ASSERT_TRUE(!runtime.load_engine(std::move(owned), make_config()).has_value());
+
+    auto request = chat_turn("hello", "npc_1");
+    request.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(0);
+    const auto submitted = runtime.submit(request);
+
+    ASSERT_TRUE(submitted.ok());
+    ASSERT_TRUE(engine->last_config.max_tokens.has_value());
+    ASSERT_EQ(*engine->last_config.max_tokens, 0);
+}
+
 void test_fitting_skipped_when_engine_cannot_render() {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
@@ -649,6 +666,7 @@ int run_chat_history_tests() {
     );
     run_test("ChatHistory_truncation_drops_oldest", test_truncation_drops_oldest_and_emits_event);
     run_test("ChatHistory_oversized_single_turn_hard_fails", test_oversized_single_turn_hard_fails_without_mutation);
+    run_test("ChatHistory_zero_token_chat_reserves_no_response_space", test_zero_token_chat_reserves_no_response_space);
     run_test("ChatHistory_fitting_skipped_without_render", test_fitting_skipped_when_engine_cannot_render);
     run_test("ChatHistory_render_prompt_passthrough", test_render_prompt_passthrough_and_injections);
     run_test("ChatHistory_injections_reach_engine_not_history", test_injected_messages_reach_engine_but_not_history);

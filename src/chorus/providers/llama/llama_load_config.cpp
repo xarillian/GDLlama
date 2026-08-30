@@ -145,20 +145,30 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
                 return *rejection;
             const auto* as_int = std::get_if<int64_t>(&option);
             const auto* as_bool = std::get_if<bool>(&option);
-            if (key == "context_size" && as_int)
+            if (key == "context_size" && as_int) {
+                if (*as_int <= 0 || static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
+                    return unsupported("Llama load option 'context_size' must be a positive uint32.");
                 out.context_size = static_cast<uint32_t>(*as_int);
-            else if (key == "thread_count" && as_int)
+            } else if (key == "thread_count" && as_int) {
+                if (*as_int <= 0 || *as_int > std::numeric_limits<int32_t>::max())
+                    return unsupported("Llama load option 'thread_count' must be a positive int32.");
                 out.thread_count = static_cast<int32_t>(*as_int);
-            else if (key == "use_gpu" && as_bool)
+            } else if (key == "use_gpu" && as_bool)
                 out.use_gpu = *as_bool;
             else if (key == "gpu_layers" && as_int) {
+                if (*as_int < -1 || *as_int > std::numeric_limits<int32_t>::max())
+                    return unsupported("Llama load option 'gpu_layers' must fit an int32 and be -1 or greater.");
                 out.gpu_layers = static_cast<int32_t>(*as_int);
                 out.gpu_layers_explicit = true;
-            } else if (key == "num_slots" && as_int)
+            } else if (key == "num_slots" && as_int) {
+                if (*as_int <= 0 || static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
+                    return unsupported("Llama load option 'num_slots' must be a positive uint32.");
                 out.num_slots = static_cast<uint32_t>(*as_int);
-            else if (key == "tokens_per_tick" && as_int)
+            } else if (key == "tokens_per_tick" && as_int) {
+                if (*as_int <= 0 || *as_int > std::numeric_limits<int32_t>::max())
+                    return unsupported("Llama load option 'tokens_per_tick' must be a positive int32.");
                 out.tokens_per_tick = static_cast<int32_t>(*as_int);
-            else if (key == "n_batch" && as_int) {
+            } else if (key == "n_batch" && as_int) {
                 if (*as_int <= 0)
                     return unsupported("Llama load option 'n_batch' must be greater than zero.");
                 if (*as_int > std::numeric_limits<int32_t>::max())
@@ -178,9 +188,6 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
                 out.main_gpu = static_cast<int32_t>(*as_int);
                 out.main_gpu_explicit = true;
             } else {
-                // The schema check settled name and type, so reaching here
-                // means a descriptor was declared without a parse arm. Never
-                // silently discard a control the schema advertises.
                 return unsupported("Llama load option '" + key + "' is declared but not applied; this is a bug.");
             }
         }

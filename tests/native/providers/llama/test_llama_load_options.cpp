@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -79,6 +80,40 @@ void test_llama_rejects_options_outside_the_declaration() {
     ASSERT_TRUE(std::get<Chorus::RequestRejection>(mistyped).error == Chorus::ChorusError::UnsupportedOption);
 }
 
+void test_llama_rejects_nonpositive_runtime_dimensions() {
+    for (const auto& [key, value] : std::vector<std::pair<std::string, int64_t>>{
+             {"context_size", 0},
+             {"thread_count", 0},
+             {"gpu_layers", -2},
+             {"num_slots", 0},
+             {"tokens_per_tick", 0},
+         }) {
+        const auto parsed = parse({{key, value}});
+        const auto* rejection = std::get_if<Chorus::RequestRejection>(&parsed);
+        ASSERT_TRUE(rejection != nullptr);
+        ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
+        ASSERT_TRUE(rejection->message.find(key) != std::string::npos);
+    }
+}
+
+void test_llama_rejects_runtime_dimensions_that_do_not_fit() {
+    const int64_t above_int32 = int64_t{std::numeric_limits<int32_t>::max()} + 1;
+    const int64_t above_uint32 = int64_t{std::numeric_limits<uint32_t>::max()} + 1;
+    for (const auto& [key, value] : std::vector<std::pair<std::string, int64_t>>{
+             {"context_size", above_uint32},
+             {"thread_count", above_int32},
+             {"gpu_layers", above_int32},
+             {"num_slots", above_uint32},
+             {"tokens_per_tick", above_int32},
+         }) {
+        const auto parsed = parse({{key, value}});
+        const auto* rejection = std::get_if<Chorus::RequestRejection>(&parsed);
+        ASSERT_TRUE(rejection != nullptr);
+        ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
+        ASSERT_TRUE(rejection->message.find(key) != std::string::npos);
+    }
+}
+
 // The declaration is advice to hosts, not enforcement: a host that ignores it
 // and sends an option whose prerequisite is off still gets an honest rejection.
 void test_llama_options_with_unmet_prerequisite_still_reject_when_sent() {
@@ -110,6 +145,10 @@ int run_llama_load_option_tests() {
     );
     run_test("Llama descriptor bounds are accepted", test_llama_descriptor_bounds_are_accepted);
     run_test("Llama rejects options outside the declaration", test_llama_rejects_options_outside_the_declaration);
+    run_test("Llama rejects nonpositive runtime dimensions", test_llama_rejects_nonpositive_runtime_dimensions);
+    run_test(
+        "Llama rejects runtime dimensions that do not fit", test_llama_rejects_runtime_dimensions_that_do_not_fit
+    );
     run_test(
         "Llama options with unmet prerequisite still reject when sent",
         test_llama_options_with_unmet_prerequisite_still_reject_when_sent

@@ -40,5 +40,16 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(session_by_request_id.get(second_id, "") == expected_session_2, "expected the second request's signal to report session" + expected_session_2)
 	)
 
+	await TestReport.run("invalid provider options in generation defaults reject submission", func():
+		var defaults := ChorusGenerationDefaults.new()
+		defaults.provider_options = {"llama": {"repeat_penalty": Vector2.ONE}}
+		chorus.generation_defaults = defaults
+
+		var request_id := chorus.generate({"prompt": "must not run"})
+		TestReport.check(request_id == -1, "expected invalid generation defaults to reject the request")
+
+		chorus.generation_defaults = null
+	)
+
 	chorus.stop_all()
 	chorus.queue_free()

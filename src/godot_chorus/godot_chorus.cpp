@@ -4,6 +4,7 @@
 #include <cmath>
 #include <memory>
 #include <variant>
+#include <utility>
 
 #include "chorus/engine_factory.hpp"
 #include "godot_chorus/generation_request_normalizer.hpp"
@@ -317,7 +318,8 @@ bool GodotChorus::is_loaded() const {
 }
 
 int64_t GodotChorus::generate(const Dictionary& request) {
-    push_host_defaults();
+    if (!push_host_defaults())
+        return -1;
 
     auto normalized = godot_chorus::normalize_generation_request(request);
     if (std::holds_alternative<String>(normalized)) {
@@ -330,7 +332,8 @@ int64_t GodotChorus::generate(const Dictionary& request) {
 }
 
 int64_t GodotChorus::regenerate(const String& session, const Dictionary& overrides) {
-    push_host_defaults();
+    if (!push_host_defaults())
+        return -1;
 
     auto normalized = godot_chorus::normalize_generation_overrides(overrides);
     if (std::holds_alternative<String>(normalized)) {
@@ -459,7 +462,8 @@ String GodotChorus::render_chat_prompt(const String& session, const String& temp
         return String();
     }
 
-    push_host_defaults();
+    if (!push_host_defaults())
+        return String();
     auto rendered = _runtime.render_prompt(
         std::string(session.utf8().get_data()),
         std::string(template_override.utf8().get_data()),
@@ -604,13 +608,21 @@ int64_t GodotChorus::get_log_level() const {
     return _log_level;
 }
 
-void GodotChorus::push_host_defaults() {
+bool GodotChorus::push_host_defaults() {
     // Rebuilt per call rather than pushed from the setters: the assigned
     // ChorusGenerationDefaults is a Resource a script may edit in place, and
     // the node gets no notification when it does.
+    auto patch = effective_generation_defaults()->to_patch();
+    if (!patch) {
+        UtilityFunctions::push_error(
+            "[Chorus] generation_defaults provider_options contains an unsupported value."
+        );
+        return false;
+    }
     _runtime.set_host_defaults(
-        {effective_generation_defaults()->to_patch(), std::string(_chat_template.utf8().get_data())}
+        {std::move(*patch), std::string(_chat_template.utf8().get_data())}
     );
+    return true;
 }
 
 // ===========================================================================

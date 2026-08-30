@@ -1,7 +1,8 @@
 #include "godot_chorus/chorus_generation_defaults.hpp"
 
+#include <utility>
+
 #include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/variant/utility_functions.hpp>
 
 #include "godot_chorus/option_conversion.hpp"
 
@@ -240,17 +241,13 @@ Dictionary ChorusGenerationDefaults::get_provider_options() const {
 // Conversion
 // ===========================================================================
 
-Chorus::GenerationConfigPatch ChorusGenerationDefaults::to_patch() const {
+std::optional<Chorus::GenerationConfigPatch> ChorusGenerationDefaults::to_patch() const {
     Chorus::GenerationConfigPatch patch = _patch;
     if (!_provider_options.is_empty()) {
         auto converted = godot_chorus::variant_to_option_value(_provider_options);
-        if (converted && std::holds_alternative<Chorus::ProviderOptionMap>(*converted)) {
-            patch.provider_options = std::get<Chorus::ProviderOptionMap>(*converted);
-        } else {
-            UtilityFunctions::push_error(
-                "[Chorus] generation_defaults provider_options contains unsupported values; ignoring."
-            );
-        }
+        if (!converted || !std::holds_alternative<Chorus::ProviderOptionMap>(*converted))
+            return std::nullopt;
+        patch.provider_options = std::get<Chorus::ProviderOptionMap>(std::move(*converted));
     }
     return patch;
 }

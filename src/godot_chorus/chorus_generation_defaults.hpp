@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <godot_cpp/classes/resource.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -87,7 +88,8 @@ class ChorusGenerationDefaults : public godot::Resource {
     // Converts the current Inspector state into the host-neutral overlay
     // patch. Disabled overrides map to Inherit, enabled ones to Set (an
     // enabled, empty stop array is therefore an explicit empty replacement).
-    Chorus::GenerationConfigPatch to_patch() const;
+    // Returns no patch when provider_options contains an unsupported value.
+    std::optional<Chorus::GenerationConfigPatch> to_patch() const;
 
   private:
     Chorus::GenerationConfigPatch _patch;

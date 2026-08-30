@@ -93,7 +93,7 @@ ChorusRuntime::fit_turn_messages(const ResolvedRequest& resolved, std::vector<Ch
 
     const auto& max_tokens = resolved.config.max_tokens;
     const int32_t reservation =
-        (max_tokens.has_value() && *max_tokens > 0) ? *max_tokens : kFallbackResponseReservation;
+        (max_tokens.has_value() && *max_tokens >= 0) ? *max_tokens : kFallbackResponseReservation;
     // Clamp before the signed subtraction; a window over INT32_MAX would wrap
     // the budget negative and reject every turn.
     const int32_t context = (int32_t)std::min<uint32_t>(*info->per_request_context, (uint32_t)INT32_MAX);

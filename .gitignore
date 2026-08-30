@@ -1,7 +1,11 @@
 # Local workflow and tooling
 /.cache/
 /.vscode/
-/AGENTS.md
+/.agents/
+/.codex/
+/.omp/
+/.docs/
+/_project/
 /CLAUDE.md
 /compile_commands.json
 /TODO.md
