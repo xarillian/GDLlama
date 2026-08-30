@@ -493,7 +493,7 @@ String GodotChorus::get_model_path() const {
 
 const Chorus::EngineCapabilities& GodotChorus::provider_capabilities() const {
     if (_cached_capabilities_provider != _provider) {
-        _cached_capabilities = Chorus::describe_provider(to_chorus_provider(_provider));
+        _cached_capabilities = Chorus::describe_provider_capabilities(to_chorus_provider(_provider));
         _cached_capabilities_provider = _provider;
     }
     return _cached_capabilities;
