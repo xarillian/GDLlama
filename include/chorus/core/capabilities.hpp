@@ -17,8 +17,6 @@ enum class SchedulingAuthority {
 };
 
 /*
- * One option in a provider's declared option schema.
- *
  * Hosts build their configuration UI from these descriptors instead of hardcoding the options
  * per provider. The descriptor is a single source of truth for an option's name, default, and
  * editor hints.
@@ -39,7 +37,6 @@ struct ProviderOptionDescriptor {
      *
      * The named option must be declared bool. This option applies only while that bool
      * resolves true, whether from a configured value or from the named option's own default.
-     * Empty in the common case: an option with no prerequisite is always live.
      *
      * For example, llama's `gpu_layers` names `use_gpu`, so a CPU-only load drops the layer
      * count rather than sending a number the provider would reject.
@@ -80,8 +77,6 @@ struct EngineCapabilities {
 };
 
 /*
- * Looks up one option in a provider's option schema.
- *
  * The pointer borrows the schema's storage and stays valid
  * until the schema is modified or destroyed; callers must not free it.
  *
@@ -93,15 +88,11 @@ const ProviderOptionDescriptor*
 find_option_descriptor(const ProviderOptionDescriptors& declared_options, const std::string& key);
 
 /*
- * Answers whether the option named as a prerequisite is switched on.
- *
- * An option that names no prerequisite is always live, so this is true for most of a schema.
- * Otherwise the named option must resolve to boolean true, from a configured value if the
- * host set one and from its own declared default if not. A prerequisite the provider never
- * declared, or one declared as some type other than bool, can never be satisfied, and the
- * option naming it stays off.
- *
- * Callers who need to know if an option is enabled should use this function.
+ * An option that names no prerequisite is always live, so this returns true for most of a
+ * schema. Otherwise the named option must resolve to boolean true, from a configured value
+ * if the host set one and from its own declared default if not. A prerequisite the provider
+ * never declared, or one declared as some type other than bool, can never be satisfied, and
+ * the option naming it stays off.
  */
 bool is_prerequisite_option_enabled(
     const ProviderOptionDescriptors& declared_options,
