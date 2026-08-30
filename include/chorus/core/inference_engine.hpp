@@ -8,60 +8,60 @@
 namespace Chorus {
 
 /*
- * The provider port, the only way anything above reaches a provider.
+ * The service contract implemented by every inference provider.
  *
- * Every inference provider implements this interface. An engine may run
- * threads of its own, so every callback it is handed must be thread-safe. Its
- * own methods run the other way around, confined to the thread that calls them
- * and never reached from an engine worker.
+ * Callers invoke engine methods from their confined thread. An engine may
+ * invoke request callbacks from any of its worker threads, so every callback
+ * must be thread-safe. Engine workers never invoke these methods.
  */
 class InferenceEngine {
   public:
     virtual ~InferenceEngine() = default;
 
     /*
-     * Brings the engine up under `chorus_config`.
+     * Initializes the engine from `chorus_config`.
      *
-     * Initializing an engine that is already running does nothing and
-     * succeeds. One that started and later died frees what it still holds
-     * before retrying, so two models are never resident at once.
+     * Calling this on an initialized engine succeeds without changing it. An
+     * engine that failed after initialization releases its existing resources
+     * before acquiring replacements, so two models are never resident at once.
      *
-     * Errors are returned instead of signalled.
+     * Initialization failures are returned instead of signalled.
      *
      * Returns:
-     *  - `std::nullopt`: the engine came up.
-     *  - `ChorusError`: what stopped it.
+     *  - `std::nullopt`: initialization succeeded.
+     *  - `ChorusError`: initialization failed.
      *
      * Errors:
      *  - `ChorusError::UnsupportedModelFormat`: the provider cannot read the artifact.
-     *  - `ChorusError::ModelLoad`: the weights will not load.
-     *  - `ChorusError::ContextInit`: the inference context will not build.
+     *  - `ChorusError::ModelLoad`: the weights failed to load.
+     *  - `ChorusError::ContextInit`: the inference context failed to initialize.
      *  - `ChorusError::UnsupportedOption`: a load option the provider does not declare.
-     *  - `ChorusError::Unknown`: the provider failed with nothing better to say.
+     *  - `ChorusError::Unknown`: the provider could not classify the failure.
      */
     virtual std::optional<ChorusError> initialize(const Chorus::ChorusConfig& chorus_config, Logger logger) = 0;
 
-    /// Whether the engine can take work now.
-    /// An engine that came up and later failed answers false, the same as one that never initialized.
+    /// Whether the engine is ready to accept work.
+    /// An engine that fails after initialization returns false, as does an
+    /// engine that has never been initialized.
     virtual bool is_initialized() const = 0;
 
-    /// What this engine can do. Pre-init an envelope, post-init the effective narrowing.
+    /// Returns the capability envelope before initialization and the effective capabilities afterward.
     virtual EngineCapabilities capabilities() const = 0;
 
-    /// Facts about the model in memory, or nothing until an initialize succeeds.
+    /// Returns facts about the model in memory, or `std::nullopt` when none is loaded.
     virtual std::optional<LoadedModelInfo> loaded_model_info() const = 0;
 
     /*
      * Renders `messages` into the prompt this provider would feed the model.
      *
-     * Capability flag: `EngineCapabilities::prompt_rendering`. An absent render
-     * is an honest "I do not do that", never a failure, and carries no error.
+     * Capability flag: `EngineCapabilities::prompt_rendering`. An absent value
+     * means the provider does not render locally or the engine is not ready; it
+     * is not itself a failure.
      *
      * Returns:
-     *  - `RenderedPrompt`: the templated text and its token count, which the
-     *    runtime's fitting loop budgets against.
-     *  - `std::nullopt`: the provider renders remotely or not at all, or the
-     *    engine is not ready to answer.
+     *  - `RenderedPrompt`: the templated text and token count used by the
+     *    runtime's fitting loop.
+     *  - `std::nullopt`: no local render is available.
      */
     virtual std::optional<RenderedPrompt> render_chat_prompt(
         const std::vector<ChatMessage>& messages, const std::string& template_override, bool enable_thinking
@@ -75,11 +75,11 @@ class InferenceEngine {
     /*
      * Answers whether this engine would accept `request`, without starting it.
      *
-     * This is where a provider is honest up front: an option it does not
-     * understand, a modality it cannot read, a constraint format it cannot
-     * compile. Passing is not a promise the work will succeed, only that
-     * nothing about the request was refusable before doing it. Errors are
-     * carried in the returned rejection, never signalled.
+     * A provider rejects anything it cannot support before work begins, such
+     * as an unknown option, an unsupported modality, or an unusable constraint
+     * format. Passing means only that nothing in the request required a
+     * preflight rejection. The returned rejection carries the error; nothing
+     * is signalled.
      *
      * Returns:
      *  - `std::nullopt`: the request is acceptable.
@@ -93,27 +93,28 @@ class InferenceEngine {
     virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
 
     /*
-     * Starts work on a `ChorusRequest` and returns before it finishes.
+     * Starts work on `chorus_request`.
      *
-     * Only one terminal signal, `ChorusSignal::Stop` or
-     * `ChorusSignal::Error`, reaches `ChorusRequest::on_event`. A terminal may
-     * arrive from an engine thread or inline from this call, before submit
-     * returns. The work outlives the call, so errors are
-     * signalled on `ChorusRequest::on_event` and not returned.
+     * Exactly one terminal signal, `ChorusSignal::Stop` or
+     * `ChorusSignal::Error`, reaches `ChorusRequest::on_event`. It may arrive
+     * inline before this method returns or later from an engine thread. The
+     * request may outlive this call, so failures are signalled on
+     * `ChorusRequest::on_event` and not returned.
      *
      * Errors:
-     *  - `ChorusError::EngineNotReady`: the engine is in no state to serve.
+     *  - `ChorusError::EngineNotReady`: the engine is not ready to serve work.
      *  - `ChorusError::Decode`: the model failed a decode step mid-generation.
      *  - `ChorusError::Tokenize`: the prompt or a stop marker failed to tokenize.
      */
     virtual void submit_request(const Chorus::ChorusRequest& chorus_request) = 0;
 
     /*
-     * Asks the engine to end request with `id` early; best-effort, returns at once.
+     * Requests cancellation of the request with `id` and returns immediately.
      *
-     * The request ends with a terminal signal. Signals in flight may
-     * arrive after this returns. Repeated cancels of one `id` are fine.
-     * Errors are signalled by `ChorusRequest::on_event` and are not returned.
+     * Cancellation is best-effort. Signals already in flight may arrive after
+     * this method returns, and repeated cancellation requests for one `id` are
+     * safe. The request still terminates exactly once. Cancellation is
+     * signalled on `ChorusRequest::on_event` and not returned.
      *
      * Errors:
      *  - `ChorusError::Cancelled`: the cancel reached the request before it finished.
@@ -121,14 +122,14 @@ class InferenceEngine {
     virtual void cancel_request(RequestId id) = 0;
 
     /*
-     * Tears the engine down.
+     * Stops all work and tears the engine down.
      *
-     * Work the engine holds, queued or running, ends before this returns, one
-     * terminal each. Once this returns the engine invokes no
-     * `ChorusRequest::on_event` it was handed, and no such invocation is in
-     * progress, which lets the caller destroy whatever those callbacks write
-     * into. Shutting down an idle or already shut-down engine changes nothing.
-     * Errors are signalled on `ChorusRequest::on_event` and are not returned.
+     * Every queued or running request terminates exactly once before this
+     * method returns. Afterward, no invocation of a previously supplied
+     * `ChorusRequest::on_event` is running or can begin, so callers may safely
+     * destroy callback state. Calling this on an idle or stopped engine changes
+     * nothing. Cancellation is signalled on `ChorusRequest::on_event` and not
+     * returned.
      *
      * Errors:
      *  - `ChorusError::Cancelled`: the engine still held the request, queued or

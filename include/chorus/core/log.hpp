@@ -36,9 +36,10 @@ struct LogRecord {
 class LogChannel;
 
 /*
- * Reports that something happened.
+ * Produces structured records for a shared `LogChannel`.
  *
- * Each call at or above the threshold becomes a `LogRecord` in the shared `LogChannel`.
+ * Each call at or above the configured threshold becomes one `LogRecord`.
+ * A default-constructed `Logger` is disabled.
  */
 class Logger {
   public:
@@ -53,10 +54,8 @@ class Logger {
      */
     bool enabled(LogLevel level) const;
 
-    /// The general form behind the level-named helpers.
     void log(LogLevel level, std::string message, std::vector<LogField> fields = {}) const;
 
-    /// `Logger::log` at one fixed level.
     void debug(std::string message, std::vector<LogField> fields = {}) const;
     void info(std::string message, std::vector<LogField> fields = {}) const;
     void warn(std::string message, std::vector<LogField> fields = {}) const;
@@ -85,7 +84,6 @@ class LogChannel {
     /// `capacity` counts records, and is raised to one if given as zero.
     explicit LogChannel(size_t capacity = 1024);
 
-    /// Buffers one record, dropping the oldest when the channel is full.
     void push(LogRecord record);
 
     /*
