@@ -44,13 +44,15 @@ void test_reasoning_model_splits_channels() {
     request.gen_config.max_tokens = 512; // room for the think block
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
-        if (sig.type == Chorus::EventType::Token) {
-            (sig.channel == Chorus::TokenChannel::Reasoning ? reasoning : content) += sig.text;
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
+            (std::get<Chorus::ChorusSignal::Token>(sig.event).channel == Chorus::TokenChannel::Reasoning
+                 ? reasoning
+                 : content) += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
         }
-        if (sig.type == Chorus::EventType::Stop) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event)) {
             stopped = true;
             done = true;
-        } else if (sig.type == Chorus::EventType::Error) {
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
             done = true;
         }
     };
@@ -84,12 +86,14 @@ void test_thinking_disabled_yields_no_reasoning() {
     request.gen_config.max_tokens = 64;
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
-        if (sig.type == Chorus::EventType::Token)
-            (sig.channel == Chorus::TokenChannel::Reasoning ? reasoning : content) += sig.text;
-        if (sig.type == Chorus::EventType::Stop) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
+            (std::get<Chorus::ChorusSignal::Token>(sig.event).channel == Chorus::TokenChannel::Reasoning
+                 ? reasoning
+                 : content) += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
+        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event)) {
             stopped = true;
             done = true;
-        } else if (sig.type == Chorus::EventType::Error) {
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
             done = true;
         }
     };

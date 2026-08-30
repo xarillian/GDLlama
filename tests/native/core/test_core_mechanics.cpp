@@ -39,9 +39,9 @@ void test_request_submission() {
     req.prompt = "Hello World";
 
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (sig.type == Chorus::EventType::Token) {
-            content += sig.text;
-        } else if (sig.type == Chorus::EventType::Stop) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
+            content += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event)) {
             completed = true;
         }
     };
@@ -69,9 +69,9 @@ void test_submit_to_uninitialized_engine_signals_EngineNotReady_error_code() {
     req.id = 1;
     req.prompt = "Hello";
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (sig.is_error()) {
-            received_code = sig.error_code;
-            received_text = sig.text;
+        if (std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+            received_code = std::get<Chorus::ChorusSignal::Error>(sig.event).code;
+            received_text = std::get<Chorus::ChorusSignal::Error>(sig.event).message;
         }
     };
 
@@ -79,28 +79,6 @@ void test_submit_to_uninitialized_engine_signals_EngineNotReady_error_code() {
 
     ASSERT_TRUE(received_code == Chorus::ChorusError::EngineNotReady);
     ASSERT_TRUE(!received_text.empty());
-}
-
-void test_new_ChorusSignal_has_error_code_None_by_default() {
-    Chorus::ChorusSignal sig;
-    sig.request_id = 1;
-    sig.type = Chorus::EventType::Token;
-    sig.text = "hello";
-
-    ASSERT_TRUE(sig.error_code == Chorus::ChorusError::None);
-    ASSERT_TRUE(!sig.is_error());
-}
-
-void test_ChorusSignal_preserves_error_code_and_request_id_after_assignment() {
-    Chorus::ChorusSignal sig;
-    sig.request_id = 42;
-    sig.type = Chorus::EventType::Error;
-    sig.error_code = Chorus::ChorusError::Decode;
-    sig.text = "decode failed";
-
-    ASSERT_TRUE(sig.is_error());
-    ASSERT_TRUE(sig.error_code == Chorus::ChorusError::Decode);
-    ASSERT_EQ(sig.request_id, 42);
 }
 
 void test_submit_in_fail_mode_propagates_chosen_error_code_to_caller() {
@@ -115,8 +93,8 @@ void test_submit_in_fail_mode_propagates_chosen_error_code_to_caller() {
     req.id = 7;
     req.prompt = "Hello";
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (sig.is_error())
-            received = sig.error_code;
+        if (std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
+            received = std::get<Chorus::ChorusSignal::Error>(sig.event).code;
     };
 
     engine.submit_request(req);
@@ -137,8 +115,8 @@ void test_submit_in_fail_mode_propagates_Tokenize_error_code() {
     req.id = 9;
     req.prompt = "Hello";
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (sig.is_error()) {
-            received = sig.error_code;
+        if (std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+            received = std::get<Chorus::ChorusSignal::Error>(sig.event).code;
             got_error_event = true;
         }
     };
@@ -184,11 +162,6 @@ int run_core_mechanics_tests() {
     run_test(
         "Submit_to_uninitialized_engine_signals_EngineNotReady_error_code",
         test_submit_to_uninitialized_engine_signals_EngineNotReady_error_code
-    );
-    run_test("New_ChorusSignal_has_error_code_None_by_default", test_new_ChorusSignal_has_error_code_None_by_default);
-    run_test(
-        "ChorusSignal_preserves_error_code_and_request_id_after_assignment",
-        test_ChorusSignal_preserves_error_code_and_request_id_after_assignment
     );
     run_test(
         "Submit_in_fail_mode_propagates_chosen_error_code_to_caller",

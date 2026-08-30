@@ -64,11 +64,10 @@ void LlamaEngine::submit_request(const ChorusRequest& chorus_request) {
         _log.for_request(chorus_request.id, chorus_request.session_id).error("Request submitted to a stopped engine");
 
         if (chorus_request.on_event) {
-            ChorusSignal error_sig;
-            error_sig.request_id = chorus_request.id;
-            error_sig.type = EventType::Error;
-            error_sig.error_code = ChorusError::EngineNotReady;
-            error_sig.text = "Engine not initialized";
+            ChorusSignal error_sig{
+                chorus_request.id,
+                ChorusSignal::Error{ChorusError::EngineNotReady, "Engine not initialized"},
+            };
             chorus_request.on_event(error_sig);
         }
     }

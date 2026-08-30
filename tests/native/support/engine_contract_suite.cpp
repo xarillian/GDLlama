@@ -14,7 +14,6 @@ namespace {
 
 using Chorus::ChorusRequest;
 using Chorus::ChorusSignal;
-using Chorus::EventType;
 using Chorus::RequestId;
 
 // Generous enough for a cold model on CPU; every wait is predicate-driven, so
@@ -22,7 +21,8 @@ using Chorus::RequestId;
 constexpr auto PATIENCE = std::chrono::seconds(20);
 
 bool is_terminal(const ChorusSignal& signal) {
-    return signal.type == EventType::Stop || signal.type == EventType::Error;
+    return std::holds_alternative<ChorusSignal::Stop>(signal.event) ||
+           std::holds_alternative<ChorusSignal::Error>(signal.event);
 }
 
 /*
@@ -154,8 +154,10 @@ void case_submit_before_initialize_is_refused(const EngineUnderTest& subject) {
     ASSERT_EQ(log.terminals_for(1), size_t{1});
     const auto terminal = log.terminal_for(1);
     ASSERT_TRUE(terminal.has_value());
-    ASSERT_TRUE(terminal->type == EventType::Error);
-    ASSERT_TRUE(terminal->error_code == Chorus::ChorusError::EngineNotReady);
+    const auto* error = std::get_if<ChorusSignal::Error>(&terminal->event);
+    ASSERT_TRUE(error != nullptr);
+    if (error)
+        ASSERT_TRUE(error->code == Chorus::ChorusError::EngineNotReady);
 }
 
 void case_submit_after_shutdown_is_refused(const EngineUnderTest& subject) {
@@ -172,7 +174,10 @@ void case_submit_after_shutdown_is_refused(const EngineUnderTest& subject) {
     ASSERT_EQ(log.terminals_for(2), size_t{1});
     const auto terminal = log.terminal_for(2);
     ASSERT_TRUE(terminal.has_value());
-    ASSERT_TRUE(terminal->error_code == Chorus::ChorusError::EngineNotReady);
+    const auto* error = std::get_if<ChorusSignal::Error>(&terminal->event);
+    ASSERT_TRUE(error != nullptr);
+    if (error)
+        ASSERT_TRUE(error->code == Chorus::ChorusError::EngineNotReady);
 }
 
 /// A request that runs to completion ends on exactly one Stop.
@@ -194,7 +199,7 @@ void case_completed_request_reaches_one_terminal(const EngineUnderTest& subject)
     ASSERT_EQ(log.terminals_for(3), size_t{1});
     const auto terminal = log.terminal_for(3);
     ASSERT_TRUE(terminal.has_value());
-    ASSERT_TRUE(terminal->type == EventType::Stop);
+    ASSERT_TRUE(std::holds_alternative<ChorusSignal::Stop>(terminal->event));
 }
 
 /*
@@ -220,7 +225,7 @@ void case_cancel_is_idempotent_and_terminal_once(const EngineUnderTest& subject)
     ChorusRequest request = long_request(subject, 4);
     request.on_event = [&log, &gate](ChorusSignal& signal) {
         log.record(signal);
-        if (signal.type == EventType::Token)
+        if (std::holds_alternative<ChorusSignal::Token>(signal.event))
             gate.block_here();
     };
     engine->submit_request(request);
@@ -245,7 +250,10 @@ void case_cancel_is_idempotent_and_terminal_once(const EngineUnderTest& subject)
     ASSERT_EQ(log.terminals_for(4), size_t{1});
     const auto terminal = log.terminal_for(4);
     ASSERT_TRUE(terminal.has_value());
-    ASSERT_TRUE(terminal->error_code == Chorus::ChorusError::Cancelled);
+    const auto* error = std::get_if<ChorusSignal::Error>(&terminal->event);
+    ASSERT_TRUE(error != nullptr);
+    if (error)
+        ASSERT_TRUE(error->code == Chorus::ChorusError::Cancelled);
     ASSERT_EQ(log.terminals_for(9999), size_t{0}); // the stranger got nothing
 }
 
@@ -269,7 +277,7 @@ void case_shutdown_terminates_in_flight_work_and_fences_callbacks(const EngineUn
         if (stop_returned.load())
             ++signals_after_stop;
         log.record(signal);
-        if (signal.type == EventType::Token)
+        if (std::holds_alternative<ChorusSignal::Token>(signal.event))
             gate.block_here();
     };
 
@@ -309,7 +317,10 @@ void case_shutdown_terminates_in_flight_work_and_fences_callbacks(const EngineUn
     // The parked request could not have finished on its own.
     const auto terminal = log.terminal_for(5);
     ASSERT_TRUE(terminal.has_value());
-    ASSERT_TRUE(terminal->error_code == Chorus::ChorusError::Cancelled);
+    const auto* error = std::get_if<ChorusSignal::Error>(&terminal->event);
+    ASSERT_TRUE(error != nullptr);
+    if (error)
+        ASSERT_TRUE(error->code == Chorus::ChorusError::Cancelled);
 }
 
 /// Stopping an idle engine, or a stopped one, is safe and silent.

@@ -20,11 +20,6 @@ void test_chorus_request_carries_messages_and_template() {
     ASSERT_EQ((int)request.messages.size(), 1);
 }
 
-void test_token_signal_defaults_to_content_channel() {
-    Chorus::ChorusSignal sig;
-    ASSERT_TRUE(sig.channel == Chorus::TokenChannel::Content);
-}
-
 void test_thinking_patch_set_and_clear() {
     Chorus::GenerationConfig base;
     Chorus::GenerationConfigPatch patch;
@@ -59,7 +54,6 @@ int run_chat_type_tests() {
     std::cout << "\n--- Chat Type Tests ---" << std::endl;
     run_test("ChatTypes_message_is_plain_data", test_chat_message_is_plain_data);
     run_test("ChatTypes_request_carries_messages_and_template", test_chorus_request_carries_messages_and_template);
-    run_test("ChatTypes_token_signal_defaults_content", test_token_signal_defaults_to_content_channel);
     run_test("ChatTypes_thinking_patch_set_and_clear", test_thinking_patch_set_and_clear);
     run_test("ChatTypes_render_chat_prompt_defaults_to_nullopt", test_render_chat_prompt_defaults_to_nullopt);
     run_test(

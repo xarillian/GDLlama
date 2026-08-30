@@ -264,8 +264,8 @@ void test_transient_decode_failure_recovers() {
     big.prompt = huge_prompt;
     big.gen_config.max_tokens = 8;
     big.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (sig.type == Chorus::EventType::Error) {
-            big_code = sig.error_code;
+        if (std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+            big_code = std::get<Chorus::ChorusSignal::Error>(sig.event).code;
             big_errored = true;
         }
     };
@@ -285,9 +285,9 @@ void test_transient_decode_failure_recovers() {
     small.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
     small.gen_config.max_tokens = 4;
     small.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (sig.type == Chorus::EventType::Token)
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
             small_tokens++;
-        else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
+        else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
             small_done = true;
     };
     engine.submit_request(small);
@@ -323,7 +323,7 @@ void test_higher_priority_request_served_first() {
 
     auto make_handler = [&](int64_t id) {
         return [&, id](const Chorus::ChorusSignal& sig) {
-            if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error) {
+            if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
                 std::lock_guard<std::mutex> lock(order_mutex);
                 completion_order.push_back(id);
             }
@@ -394,9 +394,9 @@ void test_slot_reusable_after_request_completes() {
         req.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
         req.gen_config.max_tokens = 6;
         req.on_event = [&](const Chorus::ChorusSignal& sig) {
-            if (sig.type == Chorus::EventType::Token)
+            if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
                 tokens++;
-            else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
+            else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
                 done = true;
         };
 
@@ -453,7 +453,7 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
         req.prompt = long_prompt;
         req.gen_config.max_tokens = 4;
         req.on_event = [&](const Chorus::ChorusSignal& sig) {
-            if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
+            if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
                 terminal_signals++;
         };
         engine.submit_request(req);
@@ -474,9 +474,9 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
     small.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
     small.gen_config.max_tokens = 4;
     small.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (sig.type == Chorus::EventType::Token)
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
             small_tokens++;
-        else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
+        else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
             small_done = true;
     };
     engine.submit_request(small);

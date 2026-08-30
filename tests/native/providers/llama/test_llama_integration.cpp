@@ -127,11 +127,11 @@ void test_llama_cpu_placement_avoids_vulkan_compute_buffer() {
     request.gen_config.max_tokens = 1;
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
-        if (signal.type == Chorus::EventType::Token) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             ++token_count;
-        } else if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error) {
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
             ++terminal_count;
-            errored = signal.type == Chorus::EventType::Error;
+            errored = std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event);
             cv.notify_one();
         }
     };
@@ -181,13 +181,13 @@ void test_simple_generation() {
     chorus_request.gen_config.temperature = 0.7f;
 
     chorus_request.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (sig.type == Chorus::EventType::Token) {
-            std::cout << sig.text << std::flush; // Print tokens as they arrive!
-            full_response += sig.text;
-        } else if (sig.type == Chorus::EventType::Stop) {
+        if (const auto* token = std::get_if<Chorus::ChorusSignal::Token>(&sig.event)) {
+            std::cout << token->text << std::flush; // Print tokens as they arrive!
+            full_response += token->text;
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event)) {
             done = true;
-        } else if (sig.type == Chorus::EventType::Error) {
-            std::cerr << "\n[ERROR] " << sig.text << "\n";
+        } else if (const auto* error = std::get_if<Chorus::ChorusSignal::Error>(&sig.event)) {
+            std::cerr << "\n[ERROR] " << error->message << "\n";
             done = true;
         }
     };
@@ -239,11 +239,11 @@ void test_llama_batch_controls_create_context_and_generate_four_tokens() {
     request.gen_config.max_tokens = 4;
     request.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
-        if (signal.type == Chorus::EventType::Token)
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event))
             token_chunks++;
-        else if (signal.type == Chorus::EventType::Stop)
+        else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
             done = true;
-        else if (signal.type == Chorus::EventType::Error) {
+        else if (std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
             errored = true;
             done = true;
         }
@@ -285,9 +285,9 @@ void test_effective_batch_capacity_contains_oversized_prompt_failure() {
         request.prompt += "hello ";
     request.gen_config.max_tokens = 1;
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
-        if (signal.type == Chorus::EventType::Stop)
+        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
             done = true;
-        else if (signal.type == Chorus::EventType::Error) {
+        else if (std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
             errored = true;
             done = true;
         }
@@ -329,10 +329,10 @@ void test_concurrent_requests_complete_with_multiple_slots() {
         request.prompt = "<start_of_turn>user\nHello!<end_of_turn>\n<start_of_turn>model\n";
         request.gen_config.max_tokens = 10;
         request.on_event = [&, slot_index](const Chorus::ChorusSignal& sig) {
-            if (sig.type == Chorus::EventType::Token) {
+            if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
                 std::lock_guard<std::mutex> lock(responses_mutex);
-                responses[slot_index] += sig.text;
-            } else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error) {
+                responses[slot_index] += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
+            } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
                 completed_count++;
             }
         };
@@ -382,9 +382,9 @@ void test_max_tokens_counts_generated_not_prompt_tokens() {
     req.prompt = long_prompt;
     req.gen_config.max_tokens = 8;
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (sig.type == Chorus::EventType::Token)
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
             token_count++;
-        else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
+        else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
             done = true;
     };
 
@@ -426,9 +426,9 @@ void test_engine_reinitializes_and_generates_after_shutdown() {
     req.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
     req.gen_config.max_tokens = 5;
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (sig.type == Chorus::EventType::Token)
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
             tokens++;
-        else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error)
+        else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
             done = true;
     };
     engine.submit_request(req);
@@ -491,10 +491,10 @@ void test_llama_cancellation_removes_queued_request_before_active_request_finish
     active.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
     active.on_event = [state](Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
-        if (signal.type == Chorus::EventType::Token) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             state->active_started = true;
             state->cv.notify_all();
-        } else if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error) {
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
             state->active_terminal = true;
             state->cv.notify_all();
         }
@@ -518,7 +518,7 @@ void test_llama_cancellation_removes_queued_request_before_active_request_finish
     queued.on_event = [state](Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->queued_signals.push_back(signal);
-        if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
             state->active_terminal_when_queued_cancelled = state->active_terminal;
             state->cv.notify_all();
         }
@@ -530,16 +530,16 @@ void test_llama_cancellation_removes_queued_request_before_active_request_finish
     {
         std::unique_lock<std::mutex> lock(state->mutex);
         queued_terminal = state->cv.wait_for(lock, std::chrono::seconds(5), [&] {
-            return !state->queued_signals.empty() && (state->queued_signals.back().type == Chorus::EventType::Stop ||
-                                                      state->queued_signals.back().type == Chorus::EventType::Error);
+            return !state->queued_signals.empty() && (std::holds_alternative<Chorus::ChorusSignal::Stop>(state->queued_signals.back().event) ||
+                                                      std::holds_alternative<Chorus::ChorusSignal::Error>(state->queued_signals.back().event));
         });
     }
     engine.shutdown();
 
     ASSERT_TRUE(queued_terminal);
     ASSERT_EQ(state->queued_signals.size(), size_t{1});
-    ASSERT_TRUE(state->queued_signals[0].type == Chorus::EventType::Error);
-    ASSERT_TRUE(state->queued_signals[0].error_code == Chorus::ChorusError::Cancelled);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(state->queued_signals[0].event));
+    ASSERT_TRUE(std::get<Chorus::ChorusSignal::Error>(state->queued_signals[0].event).code == Chorus::ChorusError::Cancelled);
     ASSERT_EQ(state->queued_signals[0].request_id, queued.id);
     ASSERT_TRUE(!state->active_terminal_when_queued_cancelled);
 }
@@ -566,7 +566,7 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
     active.on_event = [&](Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
         active_signals.push_back(signal);
-        if (signal.type == Chorus::EventType::Token)
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event))
             active_started = true;
         cv.notify_all();
     };
@@ -592,7 +592,7 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
         std::unique_lock<std::mutex> lock(mutex);
         active_terminal = cv.wait_for(lock, std::chrono::seconds(5), [&] {
             return std::count_if(active_signals.begin(), active_signals.end(), [](const auto& signal) {
-                       return signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error;
+                       return std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event);
                    }) == 1;
         });
     }
@@ -606,10 +606,10 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
     reuse.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
     reuse.gen_config.max_tokens = 2;
     reuse.on_event = [&](Chorus::ChorusSignal& signal) {
-        if (signal.type != Chorus::EventType::Stop && signal.type != Chorus::EventType::Error)
+        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) && !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
             return;
         std::lock_guard<std::mutex> lock(mutex);
-        reuse_stopped = signal.type == Chorus::EventType::Stop;
+        reuse_stopped = std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event);
         cv.notify_all();
     };
     engine.submit_request(reuse);
@@ -624,9 +624,9 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
     size_t terminal_count = 0;
     Chorus::ChorusError terminal_code = Chorus::ChorusError::None;
     for (const auto& signal : active_signals) {
-        if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
             ++terminal_count;
-            terminal_code = signal.error_code;
+            terminal_code = std::get<Chorus::ChorusSignal::Error>(signal.event).code;
         }
     }
     ASSERT_TRUE(active_terminal);
@@ -662,12 +662,12 @@ void test_llama_cancellation_from_committed_buffered_token_does_not_replace_stop
         request.on_event = [&, result, id, cancel_from_token](Chorus::ChorusSignal& signal) {
             {
                 std::lock_guard<std::mutex> lock(result->mutex);
-                if (signal.type == Chorus::EventType::Token)
-                    result->text += signal.text;
-                else if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error)
+                if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event))
+                    result->text += std::get<Chorus::ChorusSignal::Token>(signal.event).text;
+                else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
                     result->terminals.push_back(signal);
             }
-            if (signal.type == Chorus::EventType::Token && cancel_from_token)
+            if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event) && cancel_from_token)
                 engine.cancel_request(id);
             result->cv.notify_all();
         };
@@ -698,7 +698,7 @@ void test_llama_cancellation_from_committed_buffered_token_does_not_replace_stop
 
     ASSERT_TRUE(reentrant_terminal);
     ASSERT_EQ(reentrant->terminals.size(), size_t{1});
-    ASSERT_TRUE(reentrant->terminals[0].type == Chorus::EventType::Stop);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(reentrant->terminals[0].event));
 }
 
 void test_llama_shutdown_waits_for_active_cancellation_callback_and_drains_queue() {
@@ -723,16 +723,16 @@ void test_llama_shutdown_waits_for_active_cancellation_callback_and_drains_queue
 
     auto callback = [state](Chorus::ChorusSignal& signal) {
         std::unique_lock<std::mutex> lock(state->mutex);
-        if (signal.type == Chorus::EventType::Token) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             state->active_started = true;
             state->cv.notify_all();
             return;
         }
-        if (signal.type != Chorus::EventType::Stop && signal.type != Chorus::EventType::Error)
+        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) && !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
             return;
         state->terminals.push_back(signal);
-        if (signal.request_id == 331 && signal.type == Chorus::EventType::Error &&
-            signal.error_code == Chorus::ChorusError::Cancelled && !state->cancellation_entered) {
+        if (signal.request_id == 331 && std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event) &&
+            std::get<Chorus::ChorusSignal::Error>(signal.event).code == Chorus::ChorusError::Cancelled && !state->cancellation_entered) {
             state->cancellation_entered = true;
             state->cv.notify_all();
             state->cv.wait(lock, [&] { return state->release_cancellation; });
@@ -814,8 +814,8 @@ void test_llama_shutdown_waits_for_active_cancellation_callback_and_drains_queue
     size_t active_cancelled = 0;
     size_t queued_cancelled = 0;
     for (const auto& signal : state->terminals) {
-        ASSERT_TRUE(signal.type == Chorus::EventType::Error);
-        ASSERT_TRUE(signal.error_code == Chorus::ChorusError::Cancelled);
+        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event));
+        ASSERT_TRUE(std::get<Chorus::ChorusSignal::Error>(signal.event).code == Chorus::ChorusError::Cancelled);
         active_cancelled += signal.request_id == active.id;
         queued_cancelled += signal.request_id == queued.id;
     }
@@ -902,14 +902,14 @@ run_constraint_request(Chorus::LlamaEngine& engine, int64_t request_id, Chorus::
     request.gen_config.constraint = std::move(constraint);
     request.on_event = [state](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
-        if (signal.type == Chorus::EventType::Token) {
-            state->result.response += signal.text;
-        } else if (signal.type == Chorus::EventType::Stop) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
+            state->result.response += std::get<Chorus::ChorusSignal::Token>(signal.event).text;
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event)) {
             state->result.completed = true;
             state->cv.notify_one();
-        } else if (signal.type == Chorus::EventType::Error) {
-            state->result.error = signal.error_code;
-            state->result.terminal_error = signal.text;
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
+            state->result.error = std::get<Chorus::ChorusSignal::Error>(signal.event).code;
+            state->result.terminal_error = std::get<Chorus::ChorusSignal::Error>(signal.event).message;
             state->cv.notify_one();
         }
     };
@@ -1037,9 +1037,9 @@ void test_llama_conformance_seed_and_temperature() {
         req.gen_config.max_tokens = 24;
         req.on_event = [&](const Chorus::ChorusSignal& sig) {
             std::lock_guard<std::mutex> lock(sig_mutex);
-            if (sig.type == Chorus::EventType::Token) {
-                text += sig.text;
-            } else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error) {
+            if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
+                text += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
+            } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
                 done = true;
                 cv.notify_one();
             }
@@ -1083,9 +1083,9 @@ void test_llama_conformance_max_tokens_bounds_output() {
     req.gen_config.max_tokens = 8;
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(sig_mutex);
-        if (sig.type == Chorus::EventType::Token) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
             token_count++;
-        } else if (sig.type == Chorus::EventType::Stop || sig.type == Chorus::EventType::Error) {
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
             done = true;
             cv.notify_one();
         }
@@ -1113,8 +1113,8 @@ void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
 
     std::mutex mutex;
     std::condition_variable cv;
-    std::vector<Chorus::EventType> zero_events;
-    std::vector<Chorus::EventType> reuse_events;
+    std::vector<Chorus::ChorusSignal::Event> zero_events;
+    std::vector<Chorus::ChorusSignal::Event> reuse_events;
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -1124,7 +1124,7 @@ void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
     zero.gen_config.max_tokens = 0;
     zero.on_event = [&](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
-        zero_events.push_back(signal.type);
+        zero_events.push_back(signal.event);
         cv.notify_one();
     };
     engine.submit_request(zero);
@@ -1133,7 +1133,7 @@ void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
         std::unique_lock<std::mutex> lock(mutex);
         ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return !zero_events.empty(); }));
         ASSERT_EQ(zero_events.size(), size_t{1});
-        ASSERT_TRUE(zero_events[0] == Chorus::EventType::Stop);
+        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(zero_events[0]));
     }
 
     Chorus::ChorusRequest reuse;
@@ -1142,8 +1142,8 @@ void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
     reuse.gen_config.max_tokens = 2;
     reuse.on_event = [&](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
-        reuse_events.push_back(signal.type);
-        if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error)
+        reuse_events.push_back(signal.event);
+        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
             cv.notify_one();
     };
     engine.submit_request(reuse);
@@ -1152,12 +1152,13 @@ void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
         std::unique_lock<std::mutex> lock(mutex);
         ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(15), [&] {
             return !reuse_events.empty() &&
-                   (reuse_events.back() == Chorus::EventType::Stop || reuse_events.back() == Chorus::EventType::Error);
+                   (std::holds_alternative<Chorus::ChorusSignal::Stop>(reuse_events.back()) ||
+                    std::holds_alternative<Chorus::ChorusSignal::Error>(reuse_events.back()));
         }));
-        ASSERT_TRUE(reuse_events.back() == Chorus::EventType::Stop);
-        ASSERT_TRUE(
-            std::find(reuse_events.begin(), reuse_events.end(), Chorus::EventType::Token) != reuse_events.end()
-        );
+        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(reuse_events.back()));
+        ASSERT_TRUE(std::any_of(reuse_events.begin(), reuse_events.end(), [](const auto& event) {
+            return std::holds_alternative<Chorus::ChorusSignal::Token>(event);
+        }));
     }
     engine.shutdown();
 }
@@ -1195,11 +1196,11 @@ void test_llama_stop_marker_never_emits_and_slot_reuses() {
         request.gen_config.stop = stops;
         request.on_event = [result, mutex, cv](const Chorus::ChorusSignal& signal) {
             std::lock_guard<std::mutex> lock(*mutex);
-            if (signal.type == Chorus::EventType::Token)
-                result->chunks.push_back(signal.text);
-            else if (signal.type == Chorus::EventType::Stop)
+            if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event))
+                result->chunks.push_back(std::get<Chorus::ChorusSignal::Token>(signal.event).text);
+            else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
                 result->stopped = true;
-            else if (signal.type == Chorus::EventType::Error)
+            else if (std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
                 result->errored = true;
             if (result->stopped || result->errored)
                 cv->notify_one();
@@ -1283,9 +1284,10 @@ int run_reentry_child(ReentryTrigger trigger) {
     else
         request.gen_config.max_tokens = -2;
     request.on_event = [state, trigger](const Chorus::ChorusSignal& signal) {
-        const Chorus::EventType expected =
-            trigger == ReentryTrigger::ZeroBudget ? Chorus::EventType::Stop : Chorus::EventType::Error;
-        if (signal.type != expected)
+        const bool expected = trigger == ReentryTrigger::ZeroBudget
+                                  ? std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event)
+                                  : std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event);
+        if (!expected)
             return;
         {
             std::lock_guard<std::mutex> lock(state->mutex);
@@ -1297,9 +1299,9 @@ int run_reentry_child(ReentryTrigger trigger) {
         followup.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
         followup.gen_config.max_tokens = 2;
         followup.on_event = [state](const Chorus::ChorusSignal& next_signal) {
-            if (next_signal.type == Chorus::EventType::Stop || next_signal.type == Chorus::EventType::Error) {
+            if (std::holds_alternative<Chorus::ChorusSignal::Stop>(next_signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(next_signal.event)) {
                 std::lock_guard<std::mutex> lock(state->mutex);
-                state->followup_stopped = next_signal.type == Chorus::EventType::Stop;
+                state->followup_stopped = std::holds_alternative<Chorus::ChorusSignal::Stop>(next_signal.event);
                 state->cv.notify_one();
             }
         };
@@ -1362,7 +1364,7 @@ void test_llama_stop_completion_releases_callback_resources() {
     request.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
     request.gen_config.max_tokens = 1;
     request.on_event = [owned, state](const Chorus::ChorusSignal& signal) {
-        if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error)
+        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
             state->terminal = true;
     };
     engine.submit_request(request);
@@ -1387,7 +1389,7 @@ void test_llama_stop_zero_completes_while_slot_is_occupied() {
         std::condition_variable cv;
         bool busy_started = false;
         bool busy_terminal = false;
-        std::vector<Chorus::EventType> zero_events;
+        std::vector<Chorus::ChorusSignal::Event> zero_events;
         bool busy_terminal_at_zero = false;
     };
     auto state = std::make_shared<State>();
@@ -1404,10 +1406,10 @@ void test_llama_stop_zero_completes_while_slot_is_occupied() {
     busy.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
     busy.on_event = [state](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
-        if (signal.type == Chorus::EventType::Token) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             state->busy_started = true;
             state->cv.notify_one();
-        } else if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error)
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
             state->busy_terminal = true;
     };
     engine.submit_request(busy);
@@ -1422,7 +1424,7 @@ void test_llama_stop_zero_completes_while_slot_is_occupied() {
     zero.gen_config.max_tokens = 0;
     zero.on_event = [state](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
-        state->zero_events.push_back(signal.type);
+        state->zero_events.push_back(signal.event);
         state->busy_terminal_at_zero = state->busy_terminal;
         state->cv.notify_one();
     };
@@ -1431,7 +1433,7 @@ void test_llama_stop_zero_completes_while_slot_is_occupied() {
     std::unique_lock<std::mutex> lock(state->mutex);
     ASSERT_TRUE(state->cv.wait_for(lock, std::chrono::seconds(1), [&] { return !state->zero_events.empty(); }));
     ASSERT_EQ(state->zero_events.size(), size_t{1});
-    ASSERT_TRUE(state->zero_events[0] == Chorus::EventType::Stop);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state->zero_events[0]));
     ASSERT_TRUE(!state->busy_terminal_at_zero);
     lock.unlock();
     engine.shutdown();
@@ -1465,11 +1467,11 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
             bool do_cancel = false;
             {
                 std::lock_guard<std::mutex> lock(sweep->mutex);
-                if (signal.type == Chorus::EventType::Token) {
-                    sweep->text[id] += signal.text;
+                if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
+                    sweep->text[id] += std::get<Chorus::ChorusSignal::Token>(signal.event).text;
                     if (++sweep->tokens[id] == 1 && cancel_on_first_token)
                         do_cancel = true;
-                } else if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error) {
+                } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
                     sweep->terminals[id].push_back(signal);
                 }
             }
@@ -1568,19 +1570,19 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
 
     // Exactly one terminal per accepted request, of the expected kind.
     ASSERT_EQ(sweep->terminals[401].size(), size_t{1});
-    ASSERT_TRUE(sweep->terminals[401][0].type == Chorus::EventType::Stop);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(sweep->terminals[401][0].event));
     ASSERT_EQ(sweep->terminals[402].size(), size_t{1});
-    ASSERT_TRUE(sweep->terminals[402][0].type == Chorus::EventType::Stop);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(sweep->terminals[402][0].event));
     ASSERT_EQ(sweep->terminals[403].size(), size_t{1});
-    ASSERT_TRUE(sweep->terminals[403][0].type == Chorus::EventType::Stop);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(sweep->terminals[403][0].event));
     ASSERT_EQ(sweep->terminals[404].size(), size_t{1});
-    ASSERT_TRUE(sweep->terminals[404][0].type == Chorus::EventType::Stop);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(sweep->terminals[404][0].event));
     ASSERT_EQ(sweep->terminals[405].size(), size_t{1});
-    ASSERT_TRUE(sweep->terminals[405][0].type == Chorus::EventType::Error);
-    ASSERT_TRUE(sweep->terminals[405][0].error_code == Chorus::ChorusError::Cancelled);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(sweep->terminals[405][0].event));
+    ASSERT_TRUE(std::get<Chorus::ChorusSignal::Error>(sweep->terminals[405][0].event).code == Chorus::ChorusError::Cancelled);
     ASSERT_EQ(sweep->terminals[406].size(), size_t{1});
-    ASSERT_TRUE(sweep->terminals[406][0].type == Chorus::EventType::Error);
-    ASSERT_TRUE(sweep->terminals[406][0].error_code == Chorus::ChorusError::InvalidRequest);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(sweep->terminals[406][0].event));
+    ASSERT_TRUE(std::get<Chorus::ChorusSignal::Error>(sweep->terminals[406][0].event).code == Chorus::ChorusError::InvalidRequest);
 }
 
 // Terminal invariant: a runtime decode failure ends the request once with an Error.
@@ -1610,7 +1612,7 @@ void test_llama_terminal_invariant_decode_failure_ends_once() {
     request.prompt = huge_prompt;
     request.gen_config.max_tokens = 8;
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
-        if (signal.type != Chorus::EventType::Stop && signal.type != Chorus::EventType::Error)
+        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) && !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
             return;
         std::lock_guard<std::mutex> lock(mutex);
         terminals.push_back(signal);
@@ -1627,8 +1629,8 @@ void test_llama_terminal_invariant_decode_failure_ends_once() {
 
     ASSERT_TRUE(terminal);
     ASSERT_EQ(terminals.size(), size_t{1});
-    ASSERT_TRUE(terminals[0].type == Chorus::EventType::Error);
-    ASSERT_TRUE(terminals[0].error_code == Chorus::ChorusError::Decode);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(terminals[0].event));
+    ASSERT_TRUE(std::get<Chorus::ChorusSignal::Error>(terminals[0].event).code == Chorus::ChorusError::Decode);
 }
 
 // Terminal invariant: stopping the engine mid-flight drains the active request with
@@ -1653,10 +1655,10 @@ void test_llama_terminal_invariant_engine_shutdown_ends_once() {
     request.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
-        if (signal.type == Chorus::EventType::Token) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             started = true;
             cv.notify_all();
-        } else if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error) {
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
             terminals.push_back(signal);
             cv.notify_all();
         }
@@ -1676,8 +1678,8 @@ void test_llama_terminal_invariant_engine_shutdown_ends_once() {
     engine.shutdown(); // tears down mid-flight; must synthesize exactly one terminal
 
     ASSERT_EQ(terminals.size(), size_t{1});
-    ASSERT_TRUE(terminals[0].type == Chorus::EventType::Error);
-    ASSERT_TRUE(terminals[0].error_code == Chorus::ChorusError::Cancelled);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(terminals[0].event));
+    ASSERT_TRUE(std::get<Chorus::ChorusSignal::Error>(terminals[0].event).code == Chorus::ChorusError::Cancelled);
     ASSERT_EQ(terminals[0].request_id, request.id);
 }
 
@@ -1710,10 +1712,10 @@ void test_llama_two_slot_one_cancels_one_completes() {
     cancel_req.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
     cancel_req.on_event = [state](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
-        if (signal.type == Chorus::EventType::Token) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             state->cancel_started = true;
             state->cv.notify_all();
-        } else if (signal.type == Chorus::EventType::Stop || signal.type == Chorus::EventType::Error) {
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
             state->cancel_terminals.push_back(signal);
             state->cv.notify_all();
         }
@@ -1724,7 +1726,7 @@ void test_llama_two_slot_one_cancels_one_completes() {
     complete_req.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
     complete_req.gen_config.max_tokens = 8;
     complete_req.on_event = [state](const Chorus::ChorusSignal& signal) {
-        if (signal.type != Chorus::EventType::Stop && signal.type != Chorus::EventType::Error)
+        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) && !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
             return;
         std::lock_guard<std::mutex> lock(state->mutex);
         state->complete_terminals.push_back(signal);
@@ -1757,10 +1759,10 @@ void test_llama_two_slot_one_cancels_one_completes() {
 
     ASSERT_TRUE(both);
     ASSERT_EQ(state->cancel_terminals.size(), size_t{1});
-    ASSERT_TRUE(state->cancel_terminals[0].type == Chorus::EventType::Error);
-    ASSERT_TRUE(state->cancel_terminals[0].error_code == Chorus::ChorusError::Cancelled);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(state->cancel_terminals[0].event));
+    ASSERT_TRUE(std::get<Chorus::ChorusSignal::Error>(state->cancel_terminals[0].event).code == Chorus::ChorusError::Cancelled);
     ASSERT_EQ(state->complete_terminals.size(), size_t{1});
-    ASSERT_TRUE(state->complete_terminals[0].type == Chorus::EventType::Stop);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state->complete_terminals[0].event));
 }
 
 // Chat support using the real model.
@@ -1833,12 +1835,12 @@ void test_chat_messages_render_and_generate() {
     request.gen_config.max_tokens = 16;
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
-        if (sig.type == Chorus::EventType::Token)
-            text += sig.text;
-        if (sig.type == Chorus::EventType::Stop) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
+            text += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
+        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event)) {
             stopped = true;
             done = true;
-        } else if (sig.type == Chorus::EventType::Error) {
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
             done = true;
         }
     };

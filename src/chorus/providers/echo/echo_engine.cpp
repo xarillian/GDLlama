@@ -39,11 +39,10 @@ void EchoEngine::submit_request(const ChorusRequest& chorus_request) {
         _log.for_request(chorus_request.id, chorus_request.session_id).error("Request submitted to a stopped engine");
 
         if (chorus_request.on_event) {
-            ChorusSignal error_sig;
-            error_sig.request_id = chorus_request.id;
-            error_sig.type = EventType::Error;
-            error_sig.error_code = ChorusError::EngineNotReady;
-            error_sig.text = "Engine not initialized";
+            ChorusSignal error_sig{
+                chorus_request.id,
+                ChorusSignal::Error{ChorusError::EngineNotReady, "Engine not initialized"},
+            };
             chorus_request.on_event(error_sig);
         }
         return;
@@ -73,11 +72,10 @@ void EchoEngine::cancel_request(RequestId id) {
     }
 
     if (queued && queued->on_event) {
-        ChorusSignal signal;
-        signal.request_id = queued->id;
-        signal.type = EventType::Error;
-        signal.error_code = ChorusError::Cancelled;
-        signal.text = "Request cancelled.";
+        ChorusSignal signal{
+            queued->id,
+            ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled."},
+        };
         try {
             queued->on_event(signal);
         } catch (...) {
@@ -126,11 +124,10 @@ void EchoEngine::shutdown() {
     for (auto& request : queued) {
         if (!request.on_event)
             continue;
-        ChorusSignal signal;
-        signal.request_id = request.id;
-        signal.type = EventType::Error;
-        signal.error_code = ChorusError::Cancelled;
-        signal.text = "Request cancelled: engine stopped.";
+        ChorusSignal signal{
+            request.id,
+            ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled: engine stopped."},
+        };
         request.on_event(signal);
     }
 }
@@ -266,10 +263,10 @@ void EchoEngine::worker_loop() {
                     ++end;
             }
 
-            ChorusSignal token_sig;
-            token_sig.request_id = req.id;
-            token_sig.type = EventType::Token;
-            token_sig.text = text.substr(start, end - start);
+            ChorusSignal token_sig{
+                req.id,
+                ChorusSignal::Token{TokenChannel::Content, text.substr(start, end - start)},
+            };
             req.on_event(token_sig);
 
             start = end;
@@ -283,15 +280,10 @@ void EchoEngine::worker_loop() {
             _active.reset();
         }
 
-        ChorusSignal terminal;
-        terminal.request_id = req.id;
-        if (cancelled) {
-            terminal.type = EventType::Error;
-            terminal.error_code = ChorusError::Cancelled;
-            terminal.text = "Request cancelled.";
-        } else {
-            terminal.type = EventType::Stop;
-        }
+        ChorusSignal terminal =
+            cancelled
+                ? ChorusSignal{req.id, ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled."}}
+                : ChorusSignal{req.id, ChorusSignal::Stop{}};
         req.on_event(terminal);
     }
 }

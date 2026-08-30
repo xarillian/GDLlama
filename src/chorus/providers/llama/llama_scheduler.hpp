@@ -54,22 +54,20 @@ class LlamaScheduler {
     bool init_context(const Chorus::LlamaLoadConfig& config);
     void init_slots(int count);
 
-    struct TerminalEvent {
+    struct PendingSignal {
+        PendingSignal(Chorus::ChorusRequest request, Chorus::ChorusSignal::Event event)
+            : request(std::move(request)), event(std::move(event)) {}
+
         Chorus::ChorusRequest request;
-        Chorus::EventType type = Chorus::EventType::Error;
-        Chorus::ChorusError error = Chorus::ChorusError::None;
-        std::string text;
-        Chorus::TokenChannel channel = Chorus::TokenChannel::Content; // meaningful on Token events
+        Chorus::ChorusSignal::Event event;
     };
 
-    std::optional<TerminalEvent> take_cancellation_terminal_locked(const Chorus::ChorusRequest& request);
+    std::optional<PendingSignal> take_cancellation_terminal_locked(const Chorus::ChorusRequest& request);
     void ingest_new_requests();
     bool process_control_requests();
-    void emit_terminal(TerminalEvent terminal);
-    void emit_terminals(std::vector<TerminalEvent> terminals);
-    TerminalEvent release_with_terminal(
-        Slot& slot, Chorus::EventType type, Chorus::ChorusError error = Chorus::ChorusError::None, std::string text = {}
-    );
+    void emit_signal(PendingSignal pending);
+    void emit_signals(std::vector<PendingSignal> pending);
+    PendingSignal release_with_event(Slot& slot, Chorus::ChorusSignal::Event event);
     bool prepare_next_batch(int32_t tokens_per_tick);
     int run_inference();
     void fail_busy_slots(Chorus::ChorusError code);

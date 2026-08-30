@@ -199,21 +199,22 @@ std::vector<RuntimeEvent> ChorusRuntime::poll() {
 
         LiveRequest& live = request->second;
 
-        switch (sig.type) {
-        case EventType::Token:
-            if (sig.channel == TokenChannel::Reasoning) {
-                live.accumulated_reasoning += sig.text;
+        if (const auto* token = std::get_if<ChorusSignal::Token>(&sig.event)) {
+            if (token->channel == TokenChannel::Reasoning) {
+                live.accumulated_reasoning += token->text;
                 if (live.streaming)
                     events.push_back(
-                        {id, live.session_id, RuntimeEvent::Kind::ReasoningToken, sig.text, ChorusError::None}
+                        {id, live.session_id, RuntimeEvent::Kind::ReasoningToken, token->text, ChorusError::None}
                     );
             } else {
-                live.accumulated_text += sig.text;
+                live.accumulated_text += token->text;
                 if (live.streaming)
-                    events.push_back({id, live.session_id, RuntimeEvent::Kind::Token, sig.text, ChorusError::None});
+                    events.push_back({id, live.session_id, RuntimeEvent::Kind::Token, token->text, ChorusError::None});
             }
-            break;
-        case EventType::Stop: {
+            continue;
+        }
+
+        if (std::holds_alternative<ChorusSignal::Stop>(sig.event)) {
             // finish_turn first, while live is untouched; the moves below gut it.
             finish_turn(live, TurnOutcome::Completed, live.accumulated_text);
             RuntimeEvent event{
@@ -222,18 +223,17 @@ std::vector<RuntimeEvent> ChorusRuntime::poll() {
             event.reasoning = std::move(live.accumulated_reasoning);
             events.push_back(std::move(event));
             retire_request(id);
-            break;
+            continue;
         }
-        case EventType::Error:
+
+        if (const auto* error = std::get_if<ChorusSignal::Error>(&sig.event)) {
             finish_turn(
-                live, sig.error_code == ChorusError::Cancelled ? TurnOutcome::Cancelled : TurnOutcome::Errored, ""
+                live, error->code == ChorusError::Cancelled ? TurnOutcome::Cancelled : TurnOutcome::Errored, ""
             );
-            events.push_back({id, live.session_id, RuntimeEvent::Kind::Error, sig.text, sig.error_code});
+            events.push_back({id, live.session_id, RuntimeEvent::Kind::Error, error->message, error->code});
             retire_request(id);
-            break;
-        default:
-            break; // EventType::Embedding et al.: no consumer yet
         }
+        // `ChorusSignal::Embedding` has no runtime consumer yet.
     }
 
     // Last, so the terminals of the requests that died with the engine lead the
@@ -278,12 +278,10 @@ void ChorusRuntime::cancel_live_requests() {
     // mutex keeps this correct even if a future caller reorders.
     std::lock_guard<std::mutex> lock(_pending_mutex);
     for (const auto& request : _live_requests) {
-        ChorusSignal sig;
-        sig.request_id = request.first;
-        sig.type = EventType::Error;
-        sig.error_code = ChorusError::Cancelled;
-        sig.text = "Request cancelled: engine stopped.";
-        _pending_signals.push_back(sig);
+        _pending_signals.emplace_back(
+            request.first,
+            ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled: engine stopped."}
+        );
     }
 }
 

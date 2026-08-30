@@ -123,7 +123,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
             return;
 
         if (fail_submit_with != Chorus::ChorusError::None) {
-            send(req.on_event, req.id, Chorus::EventType::Error, "mock failure", fail_submit_with);
+            send(req.on_event, req.id, Chorus::ChorusSignal::Error{fail_submit_with, "mock failure"});
             return;
         }
         if (hold_requests) {
@@ -132,22 +132,20 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         }
 
         if (!scripted_channel_tokens.empty()) {
-            for (const auto& [channel, text] : scripted_channel_tokens) {
-                Chorus::ChorusSignal sig;
-                sig.request_id = req.id;
-                sig.type = Chorus::EventType::Token;
-                sig.channel = channel;
-                sig.text = text;
-                req.on_event(sig);
-            }
+            for (const auto& [channel, text] : scripted_channel_tokens)
+                send(req.on_event, req.id, Chorus::ChorusSignal::Token{channel, text});
             if (emit_stop)
-                send(req.on_event, req.id, Chorus::EventType::Stop, "");
+                send(req.on_event, req.id, Chorus::ChorusSignal::Stop{});
             return;
         }
 
         if (!tokens.empty()) {
-            for (const auto& t : tokens)
-                send(req.on_event, req.id, Chorus::EventType::Token, t);
+            for (const auto& text : tokens)
+                send(
+                    req.on_event,
+                    req.id,
+                    Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, text}
+                );
         } else if (!req.messages.empty()) {
             // Deterministic assistant reply for chat-shaped tests: the last
             // user message's content, echoed as a single Token. Opt in by
@@ -159,28 +157,38 @@ class SyncMockEngine : public Chorus::InferenceEngine {
                     break;
                 }
             }
-            send(req.on_event, req.id, Chorus::EventType::Token, reply);
+            send(
+                req.on_event,
+                req.id,
+                Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, std::move(reply)}
+            );
         }
         if (rogue_extra_id >= 0)
-            send(req.on_event, rogue_extra_id, Chorus::EventType::Token, "rogue");
+            send(
+                req.on_event,
+                rogue_extra_id,
+                Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, "rogue"}
+            );
         if (emit_embedding_event)
-            send(req.on_event, req.id, Chorus::EventType::Embedding, "");
+            send(req.on_event, req.id, Chorus::ChorusSignal::Embedding{});
         if (emit_error_instead_of_stop) {
             send(
                 req.on_event,
                 req.id,
-                Chorus::EventType::Error,
-                "failed after partial output",
-                Chorus::ChorusError::Decode
+                Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "failed after partial output"}
             );
             return;
         }
         if (emit_stop)
-            send(req.on_event, req.id, Chorus::EventType::Stop, "");
+            send(req.on_event, req.id, Chorus::ChorusSignal::Stop{});
         if (emit_duplicate_stop)
-            send(req.on_event, req.id, Chorus::EventType::Stop, "");
+            send(req.on_event, req.id, Chorus::ChorusSignal::Stop{});
         if (emit_token_after_stop)
-            send(req.on_event, req.id, Chorus::EventType::Token, "late");
+            send(
+                req.on_event,
+                req.id,
+                Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, "late"}
+            );
     }
 
     void cancel_request(Chorus::RequestId id) override {
@@ -193,7 +201,9 @@ class SyncMockEngine : public Chorus::InferenceEngine {
             return;
         if (held->on_event)
             send(
-                held->on_event, held->id, Chorus::EventType::Error, "Request cancelled.", Chorus::ChorusError::Cancelled
+                held->on_event,
+                held->id,
+                Chorus::ChorusSignal::Error{Chorus::ChorusError::Cancelled, "Request cancelled."}
             );
         _held.erase(held);
     }
@@ -212,9 +222,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
                     send(
                         req.on_event,
                         req.id,
-                        Chorus::EventType::Error,
-                        "stopped mid-flight",
-                        Chorus::ChorusError::Decode
+                        Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "stopped mid-flight"}
                     );
         }
         _held.clear();
@@ -235,9 +243,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
                 send(
                     req.on_event,
                     req.id,
-                    Chorus::EventType::Error,
-                    "Inference decode failed.",
-                    Chorus::ChorusError::Decode
+                    Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "Inference decode failed."}
                 );
         _held.clear();
         _initialized = false;
@@ -245,18 +251,12 @@ class SyncMockEngine : public Chorus::InferenceEngine {
 
   private:
     static void send(
-        const std::function<void(Chorus::ChorusSignal&)>& cb,
-        int64_t id,
-        Chorus::EventType type,
-        const std::string& text,
-        Chorus::ChorusError err = Chorus::ChorusError::None
+        const std::function<void(Chorus::ChorusSignal&)>& callback,
+        Chorus::RequestId id,
+        Chorus::ChorusSignal::Event event
     ) {
-        Chorus::ChorusSignal sig;
-        sig.request_id = id;
-        sig.type = type;
-        sig.error_code = err;
-        sig.text = text;
-        cb(sig);
+        Chorus::ChorusSignal signal{id, std::move(event)};
+        callback(signal);
     }
 
     bool _initialized = false;

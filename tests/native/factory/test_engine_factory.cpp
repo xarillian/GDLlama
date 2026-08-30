@@ -35,7 +35,7 @@ void test_factory_echo_engine_round_trips_through_interface() {
     while (timeout_ms > 0) {
         {
             std::lock_guard<std::mutex> lock(sig_mutex);
-            if (!sigs.empty() && sigs.back().type == Chorus::EventType::Stop)
+            if (!sigs.empty() && std::holds_alternative<Chorus::ChorusSignal::Stop>(sigs.back().event))
                 break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -44,11 +44,11 @@ void test_factory_echo_engine_round_trips_through_interface() {
 
     std::lock_guard<std::mutex> lock(sig_mutex);
     ASSERT_EQ(sigs.size(), 3); // "seam " + "proof" + Stop
-    std::string reassembled = sigs[0].text + sigs[1].text;
-    ASSERT_TRUE(sigs[0].type == Chorus::EventType::Token);
-    ASSERT_TRUE(sigs[1].type == Chorus::EventType::Token);
+    std::string reassembled = std::get<Chorus::ChorusSignal::Token>(sigs[0].event).text + std::get<Chorus::ChorusSignal::Token>(sigs[1].event).text;
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Token>(sigs[0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Token>(sigs[1].event));
     ASSERT_TRUE(reassembled == "seam proof");
-    ASSERT_TRUE(sigs[2].type == Chorus::EventType::Stop);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(sigs[2].event));
 
     engine->shutdown();
 }

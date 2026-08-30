@@ -95,10 +95,10 @@ class InferenceEngine {
     /*
      * Starts work on a `ChorusRequest` and returns before it finishes.
      *
-     * Only one terminal signal, `EventType::Stop` or `EventType::Error`,
-     * reaches the `ChorusRequest::on_event`. Signals arrive from an engine thread
-     * or inline from this call, so a caller must be ready to see the terminal
-     * before submit returns. The work outlives the call, so errors are
+     * Only one terminal signal, `ChorusSignal::Stop` or
+     * `ChorusSignal::Error`, reaches `ChorusRequest::on_event`. A terminal may
+     * arrive from an engine thread or inline from this call, before submit
+     * returns. The work outlives the call, so errors are
      * signalled on `ChorusRequest::on_event` and not returned.
      *
      * Errors:
