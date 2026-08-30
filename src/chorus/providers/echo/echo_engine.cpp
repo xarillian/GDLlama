@@ -167,7 +167,7 @@ std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest
             ChorusError::UnsupportedOption, "EchoEngine has no provider options; remove the 'echo' entry."
         };
 
-    // Content controls (sampling, stop, constraint, thinking, templates,
+    // Content controls (sampling, stop, constraint, showing thinking, templates,
     // foreign provider namespaces) are inert here: echoed output makes no
     // content claims, so any value is vacuously honored. Accept them so real
     // request pipelines run unmodified against the test double, and warn once
@@ -190,8 +190,8 @@ std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest
         ignored.push_back("stop");
     if (c.constraint)
         ignored.push_back("constraint");
-    if (c.thinking.has_value())
-        ignored.push_back("thinking");
+    if (c.show_thinking.has_value())
+        ignored.push_back("show_thinking");
     if (!request.chat_template.empty())
         ignored.push_back("chat_template");
     if (!request.gen_config.provider_options.empty())

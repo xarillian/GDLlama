@@ -44,7 +44,7 @@ struct GenerationRequest {
 
 // A host's ambient settings: the layer every request overlays.
 //
-// Chat-only controls here (thinking, chat_template) apply to sessioned
+// Chat-only controls here (show_thinking, chat_template) apply to sessioned
 // requests and are dropped from stateless ones. That asymmetry is the point:
 // an ambient default must not turn a raw-prompt call into a rejection, while
 // the same control set deliberately on a request still earns one. Resolving it
@@ -143,7 +143,7 @@ class ChorusRuntime {
     // The exact fitted prompt generation would consume for this session right
     // now, without generating. Pass the same overrides you generate with; the
     // host defaults apply underneath either way, and the resolved max_tokens
-    // and thinking drive the fitting reservation.
+    // and show_thinking drive the fitting reservation.
     // nullopt: unknown session, no engine, or no provider rendering.
     std::optional<std::string> render_prompt(
         const SessionId& session,

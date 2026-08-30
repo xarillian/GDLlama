@@ -20,18 +20,18 @@ void test_chorus_request_carries_messages_and_template() {
     ASSERT_EQ((int)request.messages.size(), 1);
 }
 
-void test_thinking_patch_set_and_clear() {
+void test_show_thinking_patch_set_and_clear() {
     Chorus::GenerationConfig base;
     Chorus::GenerationConfigPatch patch;
-    patch.thinking = Chorus::ConfigPatch<bool>::set(false);
+    patch.show_thinking = Chorus::ConfigPatch<bool>::set(false);
     auto with = Chorus::apply_generation_patch(base, patch);
-    ASSERT_TRUE(with.thinking.has_value());
-    ASSERT_TRUE(*with.thinking == false);
+    ASSERT_TRUE(with.show_thinking.has_value());
+    ASSERT_TRUE(*with.show_thinking == false);
 
     Chorus::GenerationConfigPatch clear_patch;
-    clear_patch.thinking = Chorus::ConfigPatch<bool>::clear();
+    clear_patch.show_thinking = Chorus::ConfigPatch<bool>::clear();
     auto cleared = Chorus::apply_generation_patch(with, clear_patch);
-    ASSERT_TRUE(!cleared.thinking.has_value());
+    ASSERT_TRUE(!cleared.show_thinking.has_value());
 }
 
 void test_render_chat_prompt_defaults_to_nullopt() {
@@ -54,7 +54,7 @@ int run_chat_type_tests() {
     std::cout << "\n--- Chat Type Tests ---" << std::endl;
     run_test("ChatTypes_message_is_plain_data", test_chat_message_is_plain_data);
     run_test("ChatTypes_request_carries_messages_and_template", test_chorus_request_carries_messages_and_template);
-    run_test("ChatTypes_thinking_patch_set_and_clear", test_thinking_patch_set_and_clear);
+    run_test("ChatTypes_show_thinking_patch_set_and_clear", test_show_thinking_patch_set_and_clear);
     run_test("ChatTypes_render_chat_prompt_defaults_to_nullopt", test_render_chat_prompt_defaults_to_nullopt);
     run_test(
         "ChatTypes_mock_render_counts_one_plus_words_per_message", test_mock_render_counts_one_plus_words_per_message

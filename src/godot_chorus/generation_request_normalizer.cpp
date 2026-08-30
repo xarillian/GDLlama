@@ -287,21 +287,21 @@ apply_repeat_penalty_convenience(Chorus::GenerationConfigPatch& patch, const Dic
 }
 
 // ===========================================================================
-// thinking: reasoning-model toggle. Absent inherits, null clears an inherited
-// value back to the template/provider default, a bool sets it.
+// show_thinking: reasoning-model toggle. Absent inherits, null clears an
+// inherited value back to the template/provider default, a bool sets it.
 // ===========================================================================
 
-std::optional<String> apply_thinking_overlay(const Dictionary& request, Chorus::GenerationConfigPatch& patch) {
-    if (!request.has("thinking"))
+std::optional<String> apply_show_thinking_overlay(const Dictionary& request, Chorus::GenerationConfigPatch& patch) {
+    if (!request.has("show_thinking"))
         return std::nullopt;
-    const Variant value = request["thinking"];
+    const Variant value = request["show_thinking"];
     if (value.get_type() == Variant::NIL) {
-        patch.thinking = Chorus::ConfigPatch<bool>::clear();
+        patch.show_thinking = Chorus::ConfigPatch<bool>::clear();
         return std::nullopt;
     }
     if (value.get_type() != Variant::BOOL)
-        return String("[Chorus] generate(): 'thinking' must be a bool or null.");
-    patch.thinking = Chorus::ConfigPatch<bool>::set((bool)value);
+        return String("[Chorus] generate(): 'show_thinking' must be a bool or null.");
+    patch.show_thinking = Chorus::ConfigPatch<bool>::set((bool)value);
     return std::nullopt;
 }
 
@@ -379,7 +379,7 @@ std::variant<Chorus::GenerationRequest, String> normalize_generation_overrides(c
         return *error;
     if (auto error = apply_constraint_overlay(request, patch))
         return *error;
-    if (auto error = apply_thinking_overlay(request, patch))
+    if (auto error = apply_show_thinking_overlay(request, patch))
         return *error;
 
     if (request.has("provider_options")) {

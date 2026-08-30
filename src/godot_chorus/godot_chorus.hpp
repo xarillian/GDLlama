@@ -124,7 +124,7 @@ class GodotChorus : public godot::Node {
     //                          convenience spellings grammar: String (GBNF text) / json_schema:
     //                          String (schema text) / json: String (same as json_schema); at most
     //                          one spelling may be present; null clears an inherited constraint.
-    //   thinking: bool       (reasoning-model toggle; null clears an inherited value back to the
+    //   show_thinking: bool  (reasoning-model toggle; null clears an inherited value back to the
     //                          template/provider default)
     // Chat keys (meaningful on sessioned requests):
     //   inject: Array        (of {role: String, content: String, depth?: int} Dictionaries;
@@ -169,9 +169,9 @@ class GodotChorus : public godot::Node {
     // The exact fitted prompt generation would consume for this session right
     // now ("" when unavailable: unknown session, no engine, or no provider
     // rendering). Uses this node's effective generation defaults for the
-    // fitting reservation and thinking flag, so inspection matches a
+    // fitting reservation and show_thinking flag, so inspection matches a
     // default-configured turn; a generate() call overriding max_tokens or
-    // thinking per-request can still fit differently.
+    // show_thinking per-request can still fit differently.
     godot::String render_chat_prompt(
         const godot::String& session,
         const godot::String& template_override = godot::String(),

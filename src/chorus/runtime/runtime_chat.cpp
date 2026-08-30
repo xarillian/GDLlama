@@ -85,7 +85,7 @@ TurnOutcome ChorusRuntime::last_turn_outcome(const SessionId& session) const {
 std::variant<ChorusRuntime::FittedTurn, SubmitResult>
 ChorusRuntime::fit_turn_messages(const ResolvedRequest& resolved, std::vector<ChatMessage> prospective) const {
     const GenerationRequest& request = resolved.request;
-    const bool thinking = resolved.config.thinking.value_or(true);
+    const bool show_thinking = resolved.config.show_thinking.value_or(true);
 
     auto info = _engine->loaded_model_info();
     if (!info || !info->per_request_context) // no budget known: fitting doesn't apply
@@ -114,7 +114,7 @@ ChorusRuntime::fit_turn_messages(const ResolvedRequest& resolved, std::vector<Ch
     // skipped fit can never pair stale text with a different message list.
     std::optional<std::string> last_render;
     RenderProbe probe = [&](const std::vector<ChatMessage>& candidate) -> std::optional<int32_t> {
-        auto rendered = _engine->render_chat_prompt(candidate, resolved.chat_template, thinking);
+        auto rendered = _engine->render_chat_prompt(candidate, resolved.chat_template, show_thinking);
         if (!rendered) {
             last_render.reset();
             return std::nullopt;
@@ -147,7 +147,7 @@ std::optional<std::string> ChorusRuntime::render_prompt(
     // The SAME fitting and the SAME layering a real turn would apply, so
     // inspection == consumption: the caller passes the overrides it generates
     // with, host defaults resolve underneath exactly as they would on submit,
-    // and the resolved max_tokens and thinking drive the reservation.
+    // and the resolved max_tokens and show_thinking drive the reservation.
     GenerationRequest probe_request;
     probe_request.session_id = session; // a render is a chat turn: ambient chat controls apply
     probe_request.chat_template = template_override;
@@ -162,7 +162,7 @@ std::optional<std::string> ChorusRuntime::render_prompt(
     if (turn.rendered_text) // fitting already rendered the winning candidate
         return std::move(turn.rendered_text);
     auto rendered =
-        _engine->render_chat_prompt(turn.messages, resolved.chat_template, resolved.config.thinking.value_or(true));
+        _engine->render_chat_prompt(turn.messages, resolved.chat_template, resolved.config.show_thinking.value_or(true));
     return rendered ? std::optional<std::string>(std::move(rendered->text)) : std::nullopt;
 }
 

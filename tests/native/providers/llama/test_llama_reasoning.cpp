@@ -70,7 +70,7 @@ void test_reasoning_model_splits_channels() {
     ASSERT_TRUE(content.find("</think>") == std::string::npos);
 }
 
-void test_thinking_disabled_yields_no_reasoning() {
+void test_show_thinking_disabled_yields_no_reasoning() {
     SKIP_IF_MODEL_TESTS_DISABLED();
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(make_reasoning_config(), {}).has_value());
@@ -82,7 +82,7 @@ void test_thinking_disabled_yields_no_reasoning() {
     Chorus::ChorusRequest request;
     request.id = 1002;
     request.messages = {{"user", "Say hello."}};
-    request.gen_config.thinking = false;
+    request.gen_config.show_thinking = false;
     request.gen_config.max_tokens = 64;
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -114,6 +114,6 @@ void test_thinking_disabled_yields_no_reasoning() {
 int run_llama_reasoning_tests() {
     std::cout << "\n--- Llama Reasoning (Qwen3, model-gated) Tests ---" << std::endl;
     run_test("LlamaReasoning_channels_split", test_reasoning_model_splits_channels);
-    run_test("LlamaReasoning_thinking_off_no_reasoning", test_thinking_disabled_yields_no_reasoning);
+    run_test("LlamaReasoning_show_thinking_off_no_reasoning", test_show_thinking_disabled_yields_no_reasoning);
     return g_tests_failed > 0 ? 1 : 0;
 }

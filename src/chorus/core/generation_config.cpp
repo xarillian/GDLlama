@@ -61,9 +61,9 @@ GenerationConfig apply_generation_patch(const GenerationConfig& base, const Gene
     GenerationConfig merged = base;
     // Both structs are destructured in full so this function refuses to
     // compile when a generation option is added without its apply line.
-    auto& [max_tokens, temperature, top_k, top_p, seed, frequency_penalty, presence_penalty, stop, constraint, thinking, provider_options] =
+    auto& [max_tokens, temperature, top_k, top_p, seed, frequency_penalty, presence_penalty, stop, constraint, show_thinking, provider_options] =
         merged;
-    const auto& [p_max_tokens, p_temperature, p_top_k, p_top_p, p_seed, p_frequency_penalty, p_presence_penalty, p_stop, p_constraint, p_thinking, p_provider_options, p_provider_option_erasures] =
+    const auto& [p_max_tokens, p_temperature, p_top_k, p_top_p, p_seed, p_frequency_penalty, p_presence_penalty, p_stop, p_constraint, p_show_thinking, p_provider_options, p_provider_option_erasures] =
         patch;
     apply_patch(max_tokens, p_max_tokens);
     apply_patch(temperature, p_temperature);
@@ -74,7 +74,7 @@ GenerationConfig apply_generation_patch(const GenerationConfig& base, const Gene
     apply_patch(presence_penalty, p_presence_penalty);
     apply_patch(stop, p_stop);
     apply_patch(constraint, p_constraint);
-    apply_patch(thinking, p_thinking);
+    apply_patch(show_thinking, p_show_thinking);
     provider_options = merge_option_maps(base.provider_options, p_provider_options);
     for (const auto& path : p_provider_option_erasures)
         erase_option_path(provider_options, path);

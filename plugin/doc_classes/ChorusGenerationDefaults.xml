@@ -31,7 +31,7 @@
 		</member>
 		<member name="override_temperature" type="bool" setter="set_override_temperature" getter="get_override_temperature" default="false">
 		</member>
-		<member name="override_thinking" type="bool" setter="set_override_thinking" getter="get_override_thinking" default="false">
+		<member name="override_show_thinking" type="bool" setter="set_override_show_thinking" getter="get_override_show_thinking" default="false">
 		</member>
 		<member name="override_top_k" type="bool" setter="set_override_top_k" getter="get_override_top_k" default="false">
 		</member>
@@ -45,7 +45,7 @@
 		</member>
 		<member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="0.0">
 		</member>
-		<member name="thinking" type="bool" setter="set_thinking" getter="get_thinking" default="false">
+		<member name="show_thinking" type="bool" setter="set_show_thinking" getter="get_show_thinking" default="false">
 		</member>
 		<member name="top_k" type="int" setter="set_top_k" getter="get_top_k" default="0">
 		</member>

@@ -210,20 +210,20 @@ String ChorusGenerationDefaults::get_constraint_source() const {
 }
 
 // ===========================================================================
-// thinking (disabled = the template/provider default, typically on)
+// show_thinking (disabled = the template/provider default, typically on)
 // ===========================================================================
 
-void ChorusGenerationDefaults::set_override_thinking(bool enabled) {
-    _patch.thinking.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
+void ChorusGenerationDefaults::set_override_show_thinking(bool enabled) {
+    _patch.show_thinking.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
 }
-bool ChorusGenerationDefaults::get_override_thinking() const {
-    return _patch.thinking.action == Chorus::PatchAction::Set;
+bool ChorusGenerationDefaults::get_override_show_thinking() const {
+    return _patch.show_thinking.action == Chorus::PatchAction::Set;
 }
-void ChorusGenerationDefaults::set_thinking(bool value) {
-    _patch.thinking.value = value;
+void ChorusGenerationDefaults::set_show_thinking(bool value) {
+    _patch.show_thinking.value = value;
 }
-bool ChorusGenerationDefaults::get_thinking() const {
-    return _patch.thinking.value;
+bool ChorusGenerationDefaults::get_show_thinking() const {
+    return _patch.show_thinking.value;
 }
 
 // ===========================================================================
@@ -371,14 +371,18 @@ void ChorusGenerationDefaults::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "constraint_source"), "set_constraint_source", "get_constraint_source");
 
     ClassDB::bind_method(
-        D_METHOD("set_override_thinking", "enabled"), &ChorusGenerationDefaults::set_override_thinking
+        D_METHOD("set_override_show_thinking", "enabled"), &ChorusGenerationDefaults::set_override_show_thinking
     );
-    ClassDB::bind_method(D_METHOD("get_override_thinking"), &ChorusGenerationDefaults::get_override_thinking);
-    ClassDB::bind_method(D_METHOD("set_thinking", "value"), &ChorusGenerationDefaults::set_thinking);
-    ClassDB::bind_method(D_METHOD("get_thinking"), &ChorusGenerationDefaults::get_thinking);
+    ClassDB::bind_method(D_METHOD("get_override_show_thinking"), &ChorusGenerationDefaults::get_override_show_thinking);
+    ClassDB::bind_method(D_METHOD("set_show_thinking", "value"), &ChorusGenerationDefaults::set_show_thinking);
+    ClassDB::bind_method(D_METHOD("get_show_thinking"), &ChorusGenerationDefaults::get_show_thinking);
     ADD_GROUP("Thinking", "");
-    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "override_thinking"), "set_override_thinking", "get_override_thinking");
-    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "thinking"), "set_thinking", "get_thinking");
+    ADD_PROPERTY(
+        PropertyInfo(Variant::BOOL, "override_show_thinking"),
+        "set_override_show_thinking",
+        "get_override_show_thinking"
+    );
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "show_thinking"), "set_show_thinking", "get_show_thinking");
 
     ClassDB::bind_method(D_METHOD("set_provider_options", "options"), &ChorusGenerationDefaults::set_provider_options);
     ClassDB::bind_method(D_METHOD("get_provider_options"), &ChorusGenerationDefaults::get_provider_options);

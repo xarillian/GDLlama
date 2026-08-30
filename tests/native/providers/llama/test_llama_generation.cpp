@@ -217,7 +217,7 @@ void test_llama_generation_catalogs_match_resolver_vocabulary() {
         "presence_penalty",
         "constraint",
         "stop",
-        "thinking",
+        "show_thinking",
     };
     const std::vector<std::string> provider{
         "min_keep",
@@ -747,8 +747,8 @@ void test_llama_generation_conformance_matrix() {
          [](const Chorus::ResolvedLlamaGeneration& r) { ASSERT_TRUE(r.sampling.adaptive_decay == 0.95f); }}
     );
     cases.push_back(
-        {"thinking",
-         [](Chorus::GenerationConfig& c) { c.thinking = false; },
+        {"show_thinking",
+         [](Chorus::GenerationConfig& c) { c.show_thinking = false; },
          [](const Chorus::ResolvedLlamaGeneration& r) {
              // Honored at chat-render time, not in the sampler: the
              // resolver's whole contract for this option is "accepted".
@@ -803,20 +803,20 @@ void test_llama_request_rejects_chat_controls_without_messages() {
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
     ASSERT_TRUE(rejection->message.find("chat_template") != std::string::npos);
 
-    Chorus::ChorusRequest with_thinking;
-    with_thinking.prompt = "raw";
-    with_thinking.gen_config.thinking = false;
-    rejection = Chorus::validate_llama_request(with_thinking);
+    Chorus::ChorusRequest with_show_thinking;
+    with_show_thinking.prompt = "raw";
+    with_show_thinking.gen_config.show_thinking = false;
+    rejection = Chorus::validate_llama_request(with_show_thinking);
     ASSERT_TRUE(rejection.has_value());
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
-    ASSERT_TRUE(rejection->message.find("thinking") != std::string::npos);
+    ASSERT_TRUE(rejection->message.find("show_thinking") != std::string::npos);
 }
 
 void test_llama_request_accepts_chat_controls_with_messages() {
     Chorus::ChorusRequest request;
     request.messages = {{"user", "hello"}};
     request.chat_template = "{{ messages }}";
-    request.gen_config.thinking = false;
+    request.gen_config.show_thinking = false;
     ASSERT_TRUE(!Chorus::validate_llama_request(request).has_value());
 }
 

@@ -76,7 +76,7 @@ constexpr std::array<const char*, 10> kCommonOptions{
     "presence_penalty",
     "constraint",
     "stop",
-    "thinking", // honored at chat-render time, not in the sampler
+    "show_thinking", // honored at chat-render time, not in the sampler
 };
 
 constexpr std::array<OptionDescriptor, 23> kProviderOptions{{
@@ -673,10 +673,10 @@ std::optional<RequestRejection> validate_llama_request(const ChorusRequest& requ
                 "Llama chat_template requires non-empty messages; unset it for raw-prompt generation.",
             };
         }
-        if (request.gen_config.thinking.has_value()) {
+        if (request.gen_config.show_thinking.has_value()) {
             return RequestRejection{
                 ChorusError::UnsupportedOption,
-                "Llama thinking requires non-empty messages; unset it for raw-prompt generation.",
+                "Llama show_thinking requires non-empty messages; unset it for raw-prompt generation.",
             };
         }
     }

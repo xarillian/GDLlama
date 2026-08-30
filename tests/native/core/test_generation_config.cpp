@@ -6,17 +6,29 @@ void test_generation_patch_overrides_and_clears_common_fields() {
     base.max_tokens = 128;
     base.temperature = 0.8f;
     base.stop = {"<END>"};
+    base.seed = 7;
+    base.frequency_penalty = 0.1f;
+    base.presence_penalty = 0.2f;
 
     Chorus::GenerationConfigPatch patch;
     patch.max_tokens = Chorus::ConfigPatch<int32_t>::clear();
     patch.temperature = Chorus::ConfigPatch<float>::set(0.2f);
     patch.stop = Chorus::ConfigPatch<std::vector<std::string>>::set({});
+    patch.seed = Chorus::ConfigPatch<uint64_t>::set(11);
+    patch.frequency_penalty = Chorus::ConfigPatch<float>::set(0.4f);
+    patch.presence_penalty = Chorus::ConfigPatch<float>::set(-0.2f);
 
     const auto merged = Chorus::apply_generation_patch(base, patch);
     ASSERT_TRUE(!merged.max_tokens.has_value());
     ASSERT_TRUE(merged.temperature.has_value());
     ASSERT_TRUE(*merged.temperature == 0.2f);
     ASSERT_TRUE(merged.stop.empty());
+    ASSERT_TRUE(merged.seed.has_value());
+    ASSERT_EQ(*merged.seed, uint64_t{11});
+    ASSERT_TRUE(merged.frequency_penalty.has_value());
+    ASSERT_TRUE(*merged.frequency_penalty == 0.4f);
+    ASSERT_TRUE(merged.presence_penalty.has_value());
+    ASSERT_TRUE(*merged.presence_penalty == -0.2f);
 }
 
 void test_generation_patch_deep_merges_provider_namespaces() {

@@ -397,7 +397,7 @@ void test_stateless_chat_controls_rejected() {
     request.chat_template = "{{ x }}";
     ASSERT_TRUE(runtime.submit(request).error == Chorus::ChorusError::InvalidRequest);
     request.chat_template.clear();
-    request.overrides.thinking = Chorus::ConfigPatch<bool>::set(false);
+    request.overrides.show_thinking = Chorus::ConfigPatch<bool>::set(false);
     ASSERT_TRUE(runtime.submit(request).error == Chorus::ChorusError::InvalidRequest);
     ASSERT_TRUE(runtime.list_conversations().empty());
 }
@@ -455,30 +455,30 @@ void test_edit_message_preserves_the_last_turn_outcome() {
 // arriving by different routes. The runtime keeps them apart so an adapter
 // never has to, which is the whole reason GenerationRequest carries a patch.
 
-void test_host_default_thinking_is_dropped_from_a_stateless_request() {
+void test_host_default_show_thinking_is_dropped_from_a_stateless_request() {
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
 
     Chorus::HostDefaults defaults;
-    defaults.config.thinking = Chorus::ConfigPatch<bool>::set(false);
+    defaults.config.show_thinking = Chorus::ConfigPatch<bool>::set(false);
     runtime.set_host_defaults(defaults);
 
     Chorus::GenerationRequest request;
-    request.prompt = "hi"; // no session: thinking cannot apply here
+    request.prompt = "hi"; // no session: show_thinking cannot apply here
     ASSERT_TRUE(runtime.submit(request).ok());
 }
 
-void test_request_thinking_still_rejects_a_stateless_request() {
+void test_request_show_thinking_still_rejects_a_stateless_request() {
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
 
     Chorus::HostDefaults defaults;
-    defaults.config.thinking = Chorus::ConfigPatch<bool>::set(false);
+    defaults.config.show_thinking = Chorus::ConfigPatch<bool>::set(false);
     runtime.set_host_defaults(defaults);
 
     Chorus::GenerationRequest request;
     request.prompt = "hi";
-    request.overrides.thinking = Chorus::ConfigPatch<bool>::set(true); // asked for deliberately
+    request.overrides.show_thinking = Chorus::ConfigPatch<bool>::set(true); // asked for deliberately
     ASSERT_TRUE(runtime.submit(request).error == Chorus::ChorusError::InvalidRequest);
 }
 
@@ -678,11 +678,12 @@ int run_chat_history_tests() {
     run_test("ChatHistory_edit_message_guards", test_edit_message_guards);
     run_test("ChatHistory_edit_message_preserves_outcome", test_edit_message_preserves_the_last_turn_outcome);
     run_test(
-        "HostDefaults_ambient_thinking_dropped_when_stateless",
-        test_host_default_thinking_is_dropped_from_a_stateless_request
+        "HostDefaults_ambient_show_thinking_dropped_when_stateless",
+        test_host_default_show_thinking_is_dropped_from_a_stateless_request
     );
     run_test(
-        "HostDefaults_request_thinking_still_rejects_stateless", test_request_thinking_still_rejects_a_stateless_request
+        "HostDefaults_request_show_thinking_still_rejects_stateless",
+        test_request_show_thinking_still_rejects_a_stateless_request
     );
     run_test(
         "HostDefaults_ambient_template_chat_turns_only", test_host_default_chat_template_applies_to_chat_turns_only

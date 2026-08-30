@@ -800,7 +800,7 @@ void test_echo_messages_echoes_last_user_message() {
     ASSERT_EQ(text, std::string("second question"));
 }
 
-void test_echo_accepts_chat_template_and_thinking_as_inert() {
+void test_echo_accepts_chat_template_and_show_thinking_as_inert() {
     Chorus::EchoEngine engine;
     ASSERT_TRUE(!engine.initialize(Chorus::ChorusConfig{}, {}).has_value());
 
@@ -808,9 +808,9 @@ void test_echo_accepts_chat_template_and_thinking_as_inert() {
     with_template.chat_template = "{{ bogus }}";
     ASSERT_TRUE(!engine.validate_request(with_template).has_value());
 
-    Chorus::ChorusRequest with_thinking;
-    with_thinking.gen_config.thinking = true;
-    ASSERT_TRUE(!engine.validate_request(with_thinking).has_value());
+    Chorus::ChorusRequest with_show_thinking;
+    with_show_thinking.gen_config.show_thinking = true;
+    ASSERT_TRUE(!engine.validate_request(with_show_thinking).has_value());
     engine.shutdown();
 }
 
@@ -858,7 +858,7 @@ int run_echo_engine_tests() {
     run_test("Echo_conformance_matrix_covers_advertised_options", test_echo_conformance_matrix);
     run_test("Echo_terminal_invariant_one_per_request", test_echo_terminal_invariant_one_per_request);
     run_test("Echo_messages_echoes_last_user_message", test_echo_messages_echoes_last_user_message);
-    run_test("Echo_accepts_chat_template_and_thinking_as_inert", test_echo_accepts_chat_template_and_thinking_as_inert);
+    run_test("Echo_accepts_chat_template_and_show_thinking_as_inert", test_echo_accepts_chat_template_and_show_thinking_as_inert);
 
     run_engine_contract_suite(echo_under_test());
 

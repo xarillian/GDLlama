@@ -487,7 +487,7 @@ void LlamaScheduler::ingest_new_requests() {
                     _chat_templates.get(),
                     chorus_request.chat_template,
                     chorus_request.messages,
-                    chorus_request.gen_config.thinking.value_or(true)
+                    chorus_request.gen_config.show_thinking.value_or(true)
                 );
             }();
             if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered)) {

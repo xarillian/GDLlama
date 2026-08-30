@@ -274,7 +274,7 @@ CHORUS_API void chorus_request_set_frequency_penalty(chorus_request* req, float 
 CHORUS_API void chorus_request_set_presence_penalty(chorus_request* req, float penalty);
 CHORUS_API void chorus_request_add_stop(chorus_request* req, const char* sequence);
 CHORUS_API void chorus_request_set_constraint(chorus_request* req, chorus_constraint_format format, const char* source);
-CHORUS_API void chorus_request_set_thinking(chorus_request* req, bool thinking);
+CHORUS_API void chorus_request_set_show_thinking(chorus_request* req, bool show_thinking);
 
 /* Provider-specific generation options, e.g. ("llama", "repeat_penalty"). */
 CHORUS_API void
