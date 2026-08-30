@@ -32,10 +32,8 @@ enum class AssetRole {
 };
 
 /*
- * One artifact of a model.
- *
- * Models can be sets of artifacts. The provider loads them all and uses them
- * according to their role.
+ * Models may comprise multiple artifacts. The provider loads each one according
+ * to its `ModelAsset::role`.
  */
 struct ModelAsset {
     AssetRole role = AssetRole::Weights;
@@ -45,12 +43,13 @@ struct ModelAsset {
 /*
  * The model an engine boots with.
  *
- * "Initial" is a lifetime rule. An engine's base model is fixed at boot time and
- * cannot be changed without restarting the engine. Loading a different model means
- * building a different engine, which keeps two models from ever being resident at once.
+ * "Initial" is a lifetime rule. An engine's base model is fixed at boot time
+ * and cannot be changed without restarting the engine. Loading a different
+ * model means building a different engine, so two models are never resident at once.
  */
 struct InitialModelSpec {
-    std::string model_id; // Caller's own label for this model, e.g. "village-elder"
+    /// Caller-defined label for this model.
+    std::string model_id;
     ModelFormat format = ModelFormat::Auto;
     std::vector<ModelAsset> assets;
     ProviderOptionMap provider_options;
@@ -59,26 +58,27 @@ struct InitialModelSpec {
 /*
  * Information about a model loaded into memory.
  *
- * The engine fills this post-initialization, and it is held for the engine's lifetime.
- * Fields state observed facts instead of requested configuration. For example, `format` is
- * always concrete, never `ModelFormat::Auto`. Optional fields are absent when the provider
- * cannot determine them.
+ * The engine fills this after initialization and holds it for the engine's
+ * lifetime. Fields report observed facts rather than requested configuration.
+ * `LoadedModelInfo::format` is always concrete, never `ModelFormat::Auto`.
+ * Optional fields are absent when the provider cannot determine them.
  */
 struct LoadedModelInfo {
-    std::string model_id; // echoed back from InitialModelSpec; the one field here the caller chose
-    std::string family;   // architecture family, e.g. "gemma3"
+    /// Value copied from `InitialModelSpec::model_id`.
+    std::string model_id;
+    std::string family;
     ModelFormat format = ModelFormat::Auto;
-    // How the provider describes the weights it loaded, in the provider's own
-    // wording, e.g. llama's "gemma3 270M F16". Not a bare quantization tag.
+    /// Provider description of the loaded weights, not necessarily a bare quantization tag.
     std::string quantization;
 
     std::vector<Modality> input_modalities;
     std::vector<Modality> output_modalities;
 
-    std::optional<uint32_t> maximum_context;     // the context window the model was trained for
-    std::optional<uint32_t> per_request_context; // the context one request may assume
-    // weight tensors as loaded, in bytes;
-    // the engine's full memory cost adds KV cache and compute buffers
+    /// Context window the model was trained to support.
+    std::optional<uint32_t> maximum_context;
+    /// Context capacity available to one request.
+    std::optional<uint32_t> per_request_context;
+    /// Loaded weight tensors in bytes, excluding KV cache and compute buffers.
     std::optional<uint64_t> model_bytes;
 };
 
