@@ -51,5 +51,24 @@ static func run_tests(parent: Node) -> void:
 		chorus.generation_defaults = null
 	)
 
+	await TestReport.run("malformed scalar request fields reject submission", func():
+		TestReport.check(
+			chorus.generate({"prompt": 42}) == -1,
+			"expected a non-String prompt to be rejected"
+		)
+		TestReport.check(
+			chorus.generate({"prompt": "must not run", "stream": 1}) == -1,
+			"expected a non-bool stream flag to be rejected"
+		)
+		TestReport.check(
+			chorus.generate({"prompt": "must not run", "max_tokens": "4"}) == -1,
+			"expected a non-int max_tokens value to be rejected"
+		)
+		TestReport.check(
+			chorus.generate({"prompt": "must not run", "priority": 1 << 40}) == -1,
+			"expected an out-of-range priority to be rejected"
+		)
+	)
+
 	chorus.stop_all()
 	chorus.queue_free()

@@ -50,13 +50,16 @@ inline std::string token_to_piece(llama_context* ctx, llama_token token) {
     const llama_vocab* vocab = llama_model_get_vocab(model);
 
     char buf[256];
-
     int n = llama_token_to_piece(vocab, token, buf, sizeof(buf), 0, true);
+    if (n >= 0)
+        return std::string(buf, n);
 
-    if (n < 0) {
-        return ""; // Error or buffer too small
-    }
-    return std::string(buf, n);
+    std::string piece(static_cast<size_t>(-n), '\0');
+    n = llama_token_to_piece(vocab, token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
+    if (n < 0)
+        return "";
+    piece.resize(static_cast<size_t>(n));
+    return piece;
 }
 
 } // namespace LlamaUtils

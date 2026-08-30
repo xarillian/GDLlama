@@ -65,18 +65,19 @@ LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger lo
 
     init_slots(load_config.num_slots);
     _tokens_per_tick = load_config.tokens_per_tick;
-    _batch_capacity = static_cast<int32_t>(load_config.n_batch);
+    _batch_capacity = static_cast<int32_t>(llama_n_batch(context));
 
-    if (static_cast<int64_t>(load_config.num_slots) * load_config.tokens_per_tick > load_config.n_batch) {
+    if (static_cast<int64_t>(load_config.num_slots) * load_config.tokens_per_tick > _batch_capacity) {
         _log.warn(
-            "Per-tick batch demand exceeds n_batch and will be clamped to it",
+            "Per-tick batch demand exceeds the context's effective n_batch and will be clamped to it",
             {{"num_slots", (int64_t)load_config.num_slots},
              {"tokens_per_tick", (int64_t)load_config.tokens_per_tick},
-             {"n_batch", (int64_t)load_config.n_batch}}
+             {"requested_n_batch", (int64_t)load_config.n_batch},
+             {"effective_n_batch", (int64_t)_batch_capacity}}
         );
     }
 
-    batch = new llama_batch(llama_batch_init(static_cast<int32_t>(load_config.n_batch), 0, 1));
+    batch = new llama_batch(llama_batch_init(_batch_capacity, 0, 1));
 
     Chorus::LoadedModelInfo info;
     info.model_id = config.model.model_id;

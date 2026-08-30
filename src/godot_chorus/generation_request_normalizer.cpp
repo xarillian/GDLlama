@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -20,29 +22,81 @@ namespace {
 // Common scalar keys: absent inherits, null clears, a present value sets.
 // ===========================================================================
 
-template <typename T, typename Caster>
-void apply_scalar_overlay(const Dictionary& request, const char* key, Chorus::ConfigPatch<T>& field, Caster caster) {
-    if (!request.has(key))
-        return;
-    const Variant value = request[key];
-    if (value.get_type() == Variant::NIL)
-        field = Chorus::ConfigPatch<T>::clear();
-    else
-        field = Chorus::ConfigPatch<T>::set(caster(value));
+String scalar_error(const char* key, const char* requirement) {
+    return String("[Chorus] generate(): '") + key + "' " + requirement;
 }
 
-void apply_common_scalar_overlays(const Dictionary& request, Chorus::GenerationConfigPatch& patch) {
-    apply_scalar_overlay(request, "max_tokens", patch.max_tokens, [](const Variant& v) { return (int32_t)(int64_t)v; });
-    apply_scalar_overlay(request, "temperature", patch.temperature, [](const Variant& v) { return (float)v; });
-    apply_scalar_overlay(request, "top_k", patch.top_k, [](const Variant& v) { return (int32_t)(int64_t)v; });
-    apply_scalar_overlay(request, "top_p", patch.top_p, [](const Variant& v) { return (float)v; });
-    apply_scalar_overlay(request, "seed", patch.seed, [](const Variant& v) { return (uint64_t)(int64_t)v; });
-    apply_scalar_overlay(request, "frequency_penalty", patch.frequency_penalty, [](const Variant& v) {
-        return (float)v;
-    });
-    apply_scalar_overlay(request, "presence_penalty", patch.presence_penalty, [](const Variant& v) {
-        return (float)v;
-    });
+std::optional<String>
+apply_int32_overlay(const Dictionary& request, const char* key, Chorus::ConfigPatch<int32_t>& field) {
+    if (!request.has(key))
+        return std::nullopt;
+    const Variant value = request[key];
+    if (value.get_type() == Variant::NIL) {
+        field = Chorus::ConfigPatch<int32_t>::clear();
+        return std::nullopt;
+    }
+    if (value.get_type() != Variant::INT)
+        return scalar_error(key, "must be an int or null.");
+
+    const int64_t converted = value;
+    if (converted < std::numeric_limits<int32_t>::min() || converted > std::numeric_limits<int32_t>::max())
+        return scalar_error(key, "must fit a signed 32-bit integer.");
+    field = Chorus::ConfigPatch<int32_t>::set(static_cast<int32_t>(converted));
+    return std::nullopt;
+}
+
+std::optional<String>
+apply_float_overlay(const Dictionary& request, const char* key, Chorus::ConfigPatch<float>& field) {
+    if (!request.has(key))
+        return std::nullopt;
+    const Variant value = request[key];
+    if (value.get_type() == Variant::NIL) {
+        field = Chorus::ConfigPatch<float>::clear();
+        return std::nullopt;
+    }
+    if (value.get_type() != Variant::FLOAT && value.get_type() != Variant::INT)
+        return scalar_error(key, "must be a number or null.");
+
+    const double converted = value;
+    if (!std::isfinite(converted) || std::abs(converted) > std::numeric_limits<float>::max())
+        return scalar_error(key, "must be finite and fit a 32-bit float.");
+    field = Chorus::ConfigPatch<float>::set(static_cast<float>(converted));
+    return std::nullopt;
+}
+
+std::optional<String>
+apply_seed_overlay(const Dictionary& request, Chorus::ConfigPatch<uint64_t>& field) {
+    if (!request.has("seed"))
+        return std::nullopt;
+    const Variant value = request["seed"];
+    if (value.get_type() == Variant::NIL) {
+        field = Chorus::ConfigPatch<uint64_t>::clear();
+        return std::nullopt;
+    }
+    if (value.get_type() != Variant::INT)
+        return scalar_error("seed", "must be a non-negative int or null.");
+
+    const int64_t converted = value;
+    if (converted < 0)
+        return scalar_error("seed", "must be non-negative.");
+    field = Chorus::ConfigPatch<uint64_t>::set(static_cast<uint64_t>(converted));
+    return std::nullopt;
+}
+
+std::optional<String> apply_common_scalar_overlays(const Dictionary& request, Chorus::GenerationConfigPatch& patch) {
+    if (auto error = apply_int32_overlay(request, "max_tokens", patch.max_tokens))
+        return error;
+    if (auto error = apply_float_overlay(request, "temperature", patch.temperature))
+        return error;
+    if (auto error = apply_int32_overlay(request, "top_k", patch.top_k))
+        return error;
+    if (auto error = apply_float_overlay(request, "top_p", patch.top_p))
+        return error;
+    if (auto error = apply_seed_overlay(request, patch.seed))
+        return error;
+    if (auto error = apply_float_overlay(request, "frequency_penalty", patch.frequency_penalty))
+        return error;
+    return apply_float_overlay(request, "presence_penalty", patch.presence_penalty);
 }
 
 // ===========================================================================
@@ -319,7 +373,8 @@ std::variant<Chorus::GenerationRequest, String> normalize_generation_request(con
 
 std::variant<Chorus::GenerationRequest, String> normalize_generation_overrides(const Dictionary& request) {
     Chorus::GenerationConfigPatch patch;
-    apply_common_scalar_overlays(request, patch);
+    if (auto error = apply_common_scalar_overlays(request, patch))
+        return *error;
     if (auto error = apply_stop_overlay(request, patch))
         return *error;
     if (auto error = apply_constraint_overlay(request, patch))
@@ -339,12 +394,29 @@ std::variant<Chorus::GenerationRequest, String> normalize_generation_overrides(c
         return *error;
 
     Chorus::GenerationRequest gen_request;
-    if (request.has("prompt") && request["prompt"].get_type() != Variant::NIL)
+    if (request.has("prompt") && request["prompt"].get_type() != Variant::NIL) {
+        if (request["prompt"].get_type() != Variant::STRING)
+            return scalar_error("prompt", "must be a String.");
         gen_request.prompt = std::string(((String)request["prompt"]).utf8().get_data());
-    gen_request.stream = request.has("stream") ? (bool)request["stream"] : false;
-    gen_request.priority = request.has("priority") ? (int)(int64_t)request["priority"] : 0;
-    if (request.has("session"))
+    }
+    if (request.has("stream")) {
+        if (request["stream"].get_type() != Variant::BOOL)
+            return scalar_error("stream", "must be a bool.");
+        gen_request.stream = request["stream"];
+    }
+    if (request.has("priority")) {
+        if (request["priority"].get_type() != Variant::INT)
+            return scalar_error("priority", "must be an int.");
+        const int64_t priority = request["priority"];
+        if (priority < std::numeric_limits<int>::min() || priority > std::numeric_limits<int>::max())
+            return scalar_error("priority", "must fit a signed 32-bit integer.");
+        gen_request.priority = static_cast<int>(priority);
+    }
+    if (request.has("session")) {
+        if (request["session"].get_type() != Variant::STRING)
+            return scalar_error("session", "must be a String.");
         gen_request.session_id = std::string(((String)request["session"]).utf8().get_data());
+    }
     if (auto error = apply_inject_overlay(request, gen_request))
         return *error;
     if (auto error = apply_chat_template_overlay(request, gen_request))

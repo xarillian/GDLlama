@@ -108,7 +108,10 @@ class GodotChorus : public godot::Node {
     // internal default carrying max_tokens = 128), which itself layers onto the engine's
     // defaults. Absent = inherit the layer below; an explicit null clears an inherited value;
     // a present non-null value replaces it:
-    //   max_tokens, temperature, top_k, top_p, seed, frequency_penalty, presence_penalty
+    //   max_tokens: int
+    //   temperature, top_p, frequency_penalty, presence_penalty: float
+    //   top_k: int
+    //   seed: non-negative int
     //   stop: Array[String]  (null clears to the provider default; [] explicitly disables any
     //                          inherited stop sequences; a non-empty array replaces them)
     //   provider_options: Dictionary

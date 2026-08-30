@@ -262,6 +262,49 @@ void test_llama_batch_controls_create_context_and_generate_four_tokens() {
     engine.shutdown();
 }
 
+void test_effective_batch_capacity_contains_oversized_prompt_failure() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
+        {"use_gpu", false},
+        {"context_size", int64_t{128}},
+        {"n_batch", int64_t{512}},
+        {"n_ubatch", int64_t{128}},
+        {"tokens_per_tick", int64_t{512}},
+    };
+
+    std::atomic<bool> done{false};
+    std::atomic<bool> errored{false};
+    Chorus::LlamaEngine engine;
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+
+    Chorus::ChorusRequest request;
+    request.id = 512;
+    for (int i = 0; i < 600; ++i)
+        request.prompt += "hello ";
+    request.gen_config.max_tokens = 1;
+    request.on_event = [&](const Chorus::ChorusSignal& signal) {
+        if (signal.type == Chorus::EventType::Stop)
+            done = true;
+        else if (signal.type == Chorus::EventType::Error) {
+            errored = true;
+            done = true;
+        }
+    };
+    engine.submit_request(request);
+
+    int timeout_ms = 15000;
+    while (!done && timeout_ms > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        timeout_ms -= 50;
+    }
+
+    ASSERT_TRUE(done);
+    ASSERT_TRUE(errored);
+    engine.shutdown();
+}
+
 void test_concurrent_requests_complete_with_multiple_slots() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
@@ -1894,6 +1937,10 @@ int run_llama_integration_tests() {
     run_test(
         "Llama batch controls create context and generate four tokens",
         test_llama_batch_controls_create_context_and_generate_four_tokens
+    );
+    run_test(
+        "Llama effective batch capacity contains oversized prompt failure",
+        test_effective_batch_capacity_contains_oversized_prompt_failure
     );
     run_test(
         "Llama_ConcurrentRequestsCompleteWithMultipleSlots", test_concurrent_requests_complete_with_multiple_slots
