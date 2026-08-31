@@ -11,51 +11,48 @@
 
 #include "chorus/core/provider_option_value.hpp"
 
-// Private helpers shared by the Godot adapter's translation units, converting
-// between Variant and the host-neutral Chorus types in both directions.
+// Conversions used at the boundary between Godot and host-neutral Chorus types.
 namespace godot_chorus {
 
 /*
- * Builds a godot::String from UTF-8 text.
+ * Converts UTF-8 text to a `godot::String`.
  *
- * Every string crossing this boundary (model output, prompts, stop markers,
- * grammar source, paths, session ids) is UTF-8, and godot-cpp's
- * `String(const char*)` constructor reads Latin-1, so it garbles anything
- * multi-byte. Use this for every std::string the adapter hands to Godot; the
- * `String::utf8()` accessor is its inverse.
+ * Godot's `godot::String(const char*)` constructor reads Latin-1, so it
+ * corrupts multibyte text. Every `std::string` the adapter hands to Godot
+ * must pass through this function; `godot::String::utf8()` is its inverse.
  */
 inline godot::String to_godot_string(const std::string& text) {
     return godot::String::utf8(text.c_str(), static_cast<int64_t>(text.size()));
 }
 
 /*
- * Recursively converts a Variant (bool/int/float/String/Array/Dictionary) into
- * the host-neutral Chorus::ProviderOptionValue.
+ * Converts a `godot::Variant` tree to `Chorus::ProviderOptionValue`.
+ *
+ * Arrays and dictionaries are converted recursively. An unsupported value
+ * makes the entire conversion fail so callers can reject it explicitly.
  *
  * Returns:
  *  - `std::optional<Chorus::ProviderOptionValue>`: the converted value.
- *  - `std::nullopt`: the Variant holds an unsupported type, so callers can
- *    reject rather than silently drop it.
+ *  - `std::nullopt`: the tree contains an unsupported `godot::Variant` type.
  */
-
-inline std::optional<Chorus::ProviderOptionValue> variant_to_option_value(const godot::Variant& v) {
+inline std::optional<Chorus::ProviderOptionValue> variant_to_option_value(const godot::Variant& value) {
     using godot::Array;
     using godot::Dictionary;
     using godot::String;
     using godot::Variant;
 
-    switch (v.get_type()) {
+    switch (value.get_type()) {
     case Variant::BOOL:
-        return Chorus::ProviderOptionValue{(bool)v};
+        return Chorus::ProviderOptionValue{(bool)value};
     case Variant::INT:
-        return Chorus::ProviderOptionValue{(int64_t)v};
+        return Chorus::ProviderOptionValue{(int64_t)value};
     case Variant::FLOAT:
-        return Chorus::ProviderOptionValue{(double)v};
+        return Chorus::ProviderOptionValue{(double)value};
     case Variant::STRING:
-        return Chorus::ProviderOptionValue{std::string(((String)v).utf8().get_data())};
+        return Chorus::ProviderOptionValue{std::string(((String)value).utf8().get_data())};
     case Variant::ARRAY: {
         Chorus::ProviderOptionList list;
-        Array arr = v;
+        Array arr = value;
         for (int i = 0; i < arr.size(); ++i) {
             auto item = variant_to_option_value(arr[i]);
             if (!item)
@@ -66,7 +63,7 @@ inline std::optional<Chorus::ProviderOptionValue> variant_to_option_value(const 
     }
     case Variant::DICTIONARY: {
         Chorus::ProviderOptionMap map;
-        Dictionary dict = v;
+        Dictionary dict = value;
         Array keys = dict.keys();
         for (int i = 0; i < keys.size(); ++i) {
             auto item = variant_to_option_value(dict[keys[i]]);

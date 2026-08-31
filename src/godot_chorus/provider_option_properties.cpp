@@ -10,11 +10,9 @@ using namespace godot;
 namespace godot_chorus {
 namespace {
 
-// A declared maximum is a widget bound, not the provider's limit, so every
-// numeric range renders with or_greater: the spinner suggests the useful span
-// while a script may still ask for more and earn the provider's own answer.
-// Bounds render as whole numbers; the first float option with fractional
-// bounds or step needs this to stop truncating.
+// Godot range hints guide the editor widget but do not validate provider
+// options. `or_greater` leaves the provider authoritative above the suggested
+// maximum.
 String range_hint(const Chorus::ProviderOptionDescriptor& descriptor) {
     if (!descriptor.minimum || !descriptor.maximum)
         return String();
@@ -65,9 +63,9 @@ Variant option_value_to_variant(const Chorus::ProviderOptionValue& value) {
         return Variant(*as_double);
     if (const auto* as_string = std::get_if<std::string>(&value))
         return Variant(godot_chorus::to_godot_string(*as_string));
-    // List- and map-valued options have no inspector rendering yet: they read
-    // as null here, and coerce_to_descriptor refuses every write, so the first
-    // provider to declare one fails loudly rather than quietly.
+    // Collection-valued options lack the element metadata needed for a
+    // faithful inspector representation, so they surface as
+    // `godot::Variant::NIL`.
     return Variant();
 }
 
@@ -79,8 +77,8 @@ coerce_to_descriptor(const Chorus::ProviderOptionDescriptor& descriptor, const V
             return std::nullopt;
         return Chorus::ProviderOptionValue{(bool)value};
     case Variant::INT:
-        // GDScript writes a float for any literal carrying a decimal point;
-        // through the inspector an int option always arrives as INT.
+        // GDScript uses `godot::Variant::FLOAT` for a literal with a decimal
+        // point; the inspector uses `godot::Variant::INT`.
         if (value.get_type() != Variant::INT && value.get_type() != Variant::FLOAT)
             return std::nullopt;
         return Chorus::ProviderOptionValue{(int64_t)value};

@@ -16,6 +16,14 @@
 #include "chorus/runtime/runtime.hpp"
 #include "godot_chorus/chorus_generation_defaults.hpp"
 
+/*
+ * Adapts the host-neutral Chorus runtime to a Godot node.
+ *
+ * `GodotChorus` translates Godot values into the typed runtime API, constructs
+ * the selected provider through the factory, and delivers asynchronous runtime
+ * events as signals on the Godot thread. Provider-declared capabilities drive
+ * the Inspector surface, so this adapter does not duplicate provider schemas.
+ */
 class GodotChorus : public godot::Node {
     GDCLASS(GodotChorus, godot::Node);
 
@@ -23,10 +31,9 @@ class GodotChorus : public godot::Node {
     static void _bind_methods();
     void _notification(int p_what);
 
-    // --- Provider load options, rendered from the provider's declared schema ---
-    // The selected provider owns its option names, types, defaults, and bounds;
-    // these hooks restate that declaration as inspector properties so the node
-    // never hard-codes a provider's configuration surface.
+    // The selected provider owns its option names, types, defaults, and bounds.
+    // These hooks expose that declaration as Inspector properties without
+    // hard-coding a provider's configuration surface in `GodotChorus`.
     bool _set(const godot::StringName& name, const godot::Variant& value);
     bool _get(const godot::StringName& name, godot::Variant& ret) const;
     void _get_property_list(godot::List<godot::PropertyInfo>* list) const;
@@ -51,11 +58,11 @@ class GodotChorus : public godot::Node {
     };
 
     enum ProviderChoice {
-        PROVIDER_LLAMA, // mirrors Chorus::Provider::Llama
-        PROVIDER_ECHO,  // mirrors Chorus::Provider::Echo
+        PROVIDER_LLAMA, // Mirrors `Chorus::Provider::Llama`.
+        PROVIDER_ECHO,  // Mirrors `Chorus::Provider::Echo`.
     };
 
-    // Mirrors Chorus::TurnOutcome: the terminal state of a session's most
+    // Mirrors `Chorus::TurnOutcome`, the terminal state of a session's most
     // recent chat turn.
     enum TurnOutcomeCode {
         TURN_NONE,
@@ -64,9 +71,9 @@ class GodotChorus : public godot::Node {
         TURN_ERRORED,
     };
 
-    // Mirrors Chorus::LogLevel: the severity a log_record signal carries, and
-    // the verbosity a node asks for. LOG_OFF is a threshold only; no record
-    // arrives carrying it.
+    // Mirrors `Chorus::LogLevel`, both for the severity carried by the
+    // `GodotChorus::log_record` signal and for the requested verbosity.
+    // `GodotChorus::LOG_OFF` is a threshold only and is never emitted.
     enum LogLevelCode {
         LOG_DEBUG,
         LOG_INFO,
@@ -80,98 +87,155 @@ class GodotChorus : public godot::Node {
     static int to_godot(Chorus::TurnOutcome outcome);
     static int to_godot(Chorus::LogLevel level);
 
-    // Declares chorus/logging/min_level so it appears in Project Settings, which
-    // is where a Godot developer looks for verbosity. Called once at module
-    // initialization; the editor gets Info and above, an export template Warn
-    // and above, because a player's console is not a debug channel.
+    /*
+     * Declares `chorus/logging/min_level` in Godot Project Settings.
+     *
+     * Module initialization calls this once. Editor runs default to
+     * `GodotChorus::LOG_INFO`; exported games use `Chorus::log_level_default`
+     * because a player's console is not a debug channel.
+     */
     static void register_project_settings();
 
-    // --- Core API ---
+    // Core API
 
-    // Constructs the selected provider via the factory and hands it to the
-    // runtime. Always (re)loads: a second call replaces the engine (in-flight
-    // requests get ERR_CANCELLED), and the current config fully applies.
+    /*
+     * Constructs the selected provider and loads it into the runtime.
+     *
+     * Every call replaces the current engine so the complete node
+     * configuration takes effect. Replacement terminates in-flight requests
+     * with `Chorus::ChorusError::Cancelled`.
+     */
     bool load_model();
     void stop_all();
     bool is_loaded() const;
 
-    // Request dict keys:
-    //   prompt: String       (required, must not be null)
-    //   stream: bool         (If true, token_generated fires per token. Default: false)
-    //   priority: int        (Higher = earlier in queue. Default: 0)
-    //   session: String      (stable continuity lane, e.g. "npc_42/dialogue"; one live request per
-    //                          session; empty/omitted = stateless. A same-frame resubmit after
-    //                          stop_all()/load_model() is SessionBusy until poll() drains the Cancelled
-    //                          terminal; deliberate, to preserve per-session event ordering.)
-    //
-    // Generation overlay keys layer onto generation_defaults (the assigned resource, else an
-    // internal default carrying max_tokens = 128), which itself layers onto the engine's
-    // defaults. Absent = inherit the layer below; an explicit null clears an inherited value;
-    // a present non-null value replaces it:
-    //   max_tokens: int
-    //   temperature, top_p, frequency_penalty, presence_penalty: float
-    //   top_k: int
-    //   seed: non-negative int
-    //   stop: Array[String]  (null clears to the provider default; [] explicitly disables any
-    //                          inherited stop sequences; a non-empty array replaces them)
-    //   provider_options: Dictionary
-    //                        (namespaced, e.g. {"llama": {"repeat_penalty": 1.1}}; deep-merges
-    //                          onto the inherited provider options; a null leaf erases the
-    //                          corresponding inherited key; unknown options are rejected)
-    //   repeat_penalty: float (convenience for provider_options["llama"]["repeat_penalty"]; applied
-    //                          after provider_options, so it wins if both are given; null erases it)
-    //   constraint: Dictionary {"format": "gbnf"|"json_schema", "source": String}, or one of the
-    //                          convenience spellings grammar: String (GBNF text) / json_schema:
-    //                          String (schema text) / json: String (same as json_schema); at most
-    //                          one spelling may be present; null clears an inherited constraint.
-    //   show_thinking: bool  (reasoning-model toggle; null clears an inherited value back to the
-    //                          template/provider default)
-    // Chat keys (meaningful on sessioned requests):
-    //   inject: Array        (of {role: String, content: String, depth?: int} Dictionaries;
-    //                          ephemeral messages placed into this turn's prompt only, never
-    //                          durable history; depth counts from the end, 0 = last)
-    //   chat_template: String (per-request jinja override; wins over the chat_template node
-    //                          property; null reads as absent)
-    // Returns the request ID (>= 0) on success, or -1 on failure.
+    /*
+     * Submits one stateless generation or sessioned chat turn.
+     *
+     * `request` accepts these request fields:
+     *  - `prompt`: required `godot::String`.
+     *  - `stream`: emits `GodotChorus::token_generated` for each token when true.
+     *  - `priority`: higher values enter the runtime queue first.
+     *  - `session`: stable continuity lane; empty or absent means stateless.
+     *
+     * A session permits one live request. After `GodotChorus::stop_all` or
+     * `GodotChorus::load_model`, resubmission remains busy until
+     * `GodotChorus::_process` drains the cancelled terminal event, preserving
+     * per-session event order.
+     *
+     * Generation fields overlay `GodotChorus::generation_defaults`, which
+     * overlays the engine defaults. An absent field inherits, `null` clears an
+     * inherited value, and any other value replaces it:
+     *  - `max_tokens`, `top_k`: integer values.
+     *  - `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`: floating-point values.
+     *  - `seed`: non-negative integer.
+     *  - `stop`: array of strings; an empty array disables inherited stop sequences.
+     *  - `provider_options`: recursively merged namespaces; a `null` leaf erases its key.
+     *  - `repeat_penalty`: shorthand for `provider_options["llama"]["repeat_penalty"]`.
+     *  - `constraint`: dictionary containing `format` and `source`.
+     *  - `grammar`, `json_schema`, `json`: mutually exclusive constraint shorthands.
+     *  - `show_thinking`: reasoning-model toggle.
+     *
+     * `repeat_penalty` is applied after `provider_options`, so the shorthand
+     * wins when both specify the same option. Unknown provider options and
+     * multiple constraint spellings reject the request.
+     *
+     * Sessioned requests also accept:
+     *  - `inject`: ephemeral `{role, content, depth?}` messages excluded from durable history.
+     *  - `chat_template`: per-request template overriding `GodotChorus::chat_template`.
+     *
+     * Returns:
+     *  - `int64_t`: the non-negative accepted request ID.
+     *  - `-1`: normalization or submission failed.
+     */
     int64_t generate(const godot::Dictionary& request);
 
-    // Reroll the session's last assistant line. `overrides` takes the same
-    // keys as generate() minus 'prompt' (the turn text comes from history);
-    // a 'session' key in it is ignored -- the positional argument names the
-    // lane. On completion the new reply replaces the old; on cancel/error the
-    // old reply is restored. Returns the request ID (>= 0), or -1 on failure.
+    /*
+     * Rerolls the last assistant message in a session.
+     *
+     * `overrides` accepts the generation fields from `GodotChorus::generate`
+     * except `prompt`; history supplies the turn text. The positional
+     * `session` argument selects the lane, so a dictionary `session` field is
+     * ignored. Completion replaces the old reply, while cancellation or error
+     * restores it.
+     *
+     * Returns:
+     *  - `int64_t`: the non-negative accepted request ID.
+     *  - `-1`: normalization or submission failed.
+     */
     int64_t regenerate(const godot::String& session, const godot::Dictionary& overrides);
 
-    // --- Runtime controls ---
+    // Runtime controls
 
-    // Requests stay active until _process() drains their terminal event.
+    /// Requests remain active until `GodotChorus::_process` drains their terminal event.
     bool cancel_request(int64_t request_id);
+    /// Returns true until `GodotChorus::_process` drains the terminal event.
     bool is_request_active(int64_t request_id) const;
-    // -1 if the session has no active request (including an unknown session).
+    /*
+     * Returns:
+     *  - `int64_t`: the non-negative active request ID.
+     *  - `-1`: the session is unknown or has no active request.
+     */
     int64_t active_request_for_session(const godot::String& session) const;
 
-    // --- Conversation history ---
-    // import/clear on a busy session (and reset_context with ANY busy session)
-    // fail with SessionBusy: cancel or stop_all + poll first.
+    // Conversation history
 
+    /*
+     * Replaces one session's durable history.
+     *
+     * Validation and runtime failures return false and are reported through
+     * Godot's error log.
+     *
+     * Errors:
+     *  - `Chorus::ChorusError::SessionBusy`: the session has active work.
+     */
     bool import_conversation_history(const godot::String& session, const godot::Array& history);
-    // Array of {role, content} Dictionaries; empty for an unknown session.
+    /*
+     * Returns:
+     *  - `godot::Array`: `{role, content}` dictionaries for the session.
+     *  - Empty `godot::Array`: the session is unknown.
+     */
     godot::Array export_conversation_history(const godot::String& session) const;
+    /*
+     * Clears one session's durable history.
+     *
+     * Runtime failures return false and are reported through Godot's error log.
+     *
+     * Errors:
+     *  - `Chorus::ChorusError::SessionBusy`: the session has active work.
+     */
     bool clear_conversation_history(const godot::String& session);
-    // Rewrites one message's content in place (any role). A negative index
-    // counts from the end (-1 = newest); an unknown session or out-of-range
-    // index fails, as does a busy session. Role edits and insert/delete stay
-    // on the export -> mutate -> import roundtrip.
+    /*
+     * Rewrites one message without changing its role.
+     *
+     * Negative indexes count from the end, with `-1` naming the newest
+     * message. Unknown sessions, out-of-range indexes, and busy sessions fail.
+     * Role changes and message insertion or deletion use an export, mutate,
+     * import round trip.
+     */
     bool edit_message(const godot::String& session, int64_t index, const godot::String& content);
     godot::PackedStringArray list_conversations() const;
+    /*
+     * Clears every conversation.
+     *
+     * Runtime failures return false and are reported through Godot's error log.
+     *
+     * Errors:
+     *  - `Chorus::ChorusError::SessionBusy`: at least one session has active work.
+     */
     bool reset_context();
     TurnOutcomeCode last_turn_outcome(const godot::String& session) const;
-    // The exact fitted prompt generation would consume for this session right
-    // now ("" when unavailable: unknown session, no engine, or no provider
-    // rendering). Uses this node's effective generation defaults for the
-    // fitting reservation and show_thinking flag, so inspection matches a
-    // default-configured turn; a generate() call overriding max_tokens or
-    // show_thinking per-request can still fit differently.
+    /*
+     * Renders the prompt a default-configured turn would consume now.
+     *
+     * The node's effective generation defaults determine the fitting
+     * reservation and `show_thinking` value. A later `GodotChorus::generate`
+     * call can fit differently by overriding either value.
+     *
+     * Returns:
+     *  - `godot::String`: the fitted prompt when rendering is available.
+     *  - Empty `godot::String`: rendering is unavailable.
+     */
     godot::String render_chat_prompt(
         const godot::String& session,
         const godot::String& template_override = godot::String(),
@@ -180,7 +244,7 @@ class GodotChorus : public godot::Node {
 
     void _process(double delta) override;
 
-    // --- Properties ---
+    // Properties
 
     void set_model_path(const godot::String& path);
     godot::String get_model_path() const;
@@ -188,43 +252,62 @@ class GodotChorus : public godot::Node {
     ProviderChoice get_provider() const;
     void set_generation_defaults(const godot::Ref<ChorusGenerationDefaults>& defaults);
     godot::Ref<ChorusGenerationDefaults> get_generation_defaults() const;
-    // Node-default jinja chat template for chat (sessioned) turns; "" = the
-    // model's embedded template. Stateless generate() calls ignore it. Echo
-    // accepts it as inert (content controls are vacuous on the test double).
+    /*
+     * Sets the node-level Jinja chat template for sessioned turns.
+     *
+     * An empty string selects the model's embedded template. Stateless
+     * `GodotChorus::generate` calls ignore this setting. The Echo provider
+     * accepts it as inert because content controls are vacuous on the test
+     * double.
+     */
     void set_chat_template(const godot::String& chat_template);
     godot::String get_chat_template() const;
-    // Verbosity for the engine this node loads: the least severe LogLevelCode
-    // worth reporting. The pair is the usual override idiom, with the
-    // chorus/logging/min_level project setting deciding when the override is
-    // off. Takes effect at the next load_model(), since the level travels with
-    // the engine's config.
+    /*
+     * Selects the least severe `Chorus::LogLevel` for the next engine.
+     *
+     * When the override is disabled, `chorus/logging/min_level` supplies the
+     * value. The setting takes effect on the next `GodotChorus::load_model`
+     * because it belongs to the engine configuration.
+     */
     void set_override_log_level(bool enabled);
     bool get_override_log_level() const;
     void set_log_level(int64_t level);
     int64_t get_log_level() const;
 
-    // --- Utility ---
+    // Utility
+    /*
+     * Computes cosine similarity between two Godot arrays.
+     *
+     * Inputs must have equal, non-zero lengths. A zero-magnitude vector has no
+     * usable direction and also produces zero.
+     *
+     * Returns:
+     *  - `float`: the cosine similarity for valid vectors.
+     *  - `0.0f`: the inputs are invalid or either vector has zero magnitude.
+     */
     float similarity_cos(godot::PackedFloat32Array array1, godot::PackedFloat32Array array2) const;
 
   private:
-    // The assigned resource when set, otherwise a lazily constructed internal
-    // default instance (max_tokens = 128), so the middle layer always
-    // contributes a generation default even with the property unset.
+    // Returns the assigned resource or lazily constructs an internal resource
+    // with `max_tokens` set to 128, ensuring the host layer always contributes
+    // generation defaults.
     godot::Ref<ChorusGenerationDefaults> effective_generation_defaults();
 
-    // Hands this node's ambient settings to the runtime, which resolves them
-    // against each request. Called from every entry point that submits or
-    // renders, so the node never has to decide where an ambient value applies.
+    // Sends the node's ambient settings to the runtime before every submission
+    // and render operation, leaving the runtime to decide where each value
+    // applies.
     bool push_host_defaults();
 
-    // Drains the runtime's log channel onto the host thread. Every record emits
-    // `log_record` for the project to present or store as it chooses.
+    // Drains the synchronized runtime log channel onto the Godot thread. Every
+    // record emits `GodotChorus::log_record` for the project to present or
+    // store.
     void drain_logs();
-    // The node's override when it is on, else the project setting.
+    // Returns the node override when enabled, otherwise the Project Settings
+    // threshold.
     Chorus::LogLevel effective_log_level() const;
 
-    // The selected provider's self-description, fetched from the factory and
-    // cached because the inspector asks for the property list constantly.
+    // Caches the selected provider's self-description because Godot requests
+    // the Inspector property list frequently.
     const Chorus::EngineCapabilities& provider_capabilities() const;
     const Chorus::ProviderOptionDescriptors& load_option_descriptors() const;
     const Chorus::ProviderOptionDescriptor* find_load_option(const godot::StringName& name) const;
@@ -235,25 +318,24 @@ class GodotChorus : public godot::Node {
 
     ProviderChoice _provider = PROVIDER_LLAMA;
 
-    // Only the options the user actually set; everything else resolves from
-    // the provider's declared defaults at load time. Keys belonging to a
-    // provider that is not currently selected are inert, so switching back and
-    // forth in a session keeps a configuration. A scene save does not: only
-    // the selected provider's options are listed as properties, so only they
-    // persist.
+    // Contains only values explicitly set by the user. Other values resolve
+    // from provider defaults at load time. Options for unselected providers
+    // remain inert in memory, preserving them when switching providers during
+    // a session. Only the selected provider's listed properties persist in a
+    // saved scene.
     Chorus::ProviderOptionMap _load_options;
     mutable Chorus::EngineCapabilities _cached_capabilities;
     mutable std::optional<ProviderChoice> _cached_capabilities_provider;
 
-    // Node-default jinja chat template; "" = the model's embedded template.
+    // Empty selects the model's embedded Jinja chat template.
     godot::String _chat_template;
 
     bool _override_log_level = false;
     int64_t _log_level = (int64_t)Chorus::log_level_default;
 
-    // The bound property: null when the user has not assigned a resource, so
-    // scene serialization stays clean. effective_generation_defaults() supplies
-    // the internal fallback when unset.
+    // Remains null until the user assigns a resource, keeping scene
+    // serialization clean. `GodotChorus::effective_generation_defaults`
+    // supplies the internal fallback.
     godot::Ref<ChorusGenerationDefaults> _generation_defaults;
     godot::Ref<ChorusGenerationDefaults> _fallback_generation_defaults;
 };

@@ -70,15 +70,6 @@ static int64_t report_submit_result(const char* operation, const Chorus::SubmitR
     return -1;
 }
 
-static bool
-is_prerequisite_for_any_option(const Chorus::ProviderOptionDescriptors& declared_options, const std::string& key) {
-    for (const auto& option : declared_options) {
-        if (option.prerequisite_option && *option.prerequisite_option == key)
-            return true;
-    }
-    return false;
-}
-
 int GodotChorus::to_godot(Chorus::TurnOutcome outcome) {
     switch (outcome) {
     case Chorus::TurnOutcome::None:
@@ -143,26 +134,23 @@ int GodotChorus::to_godot(Chorus::ChorusError e) {
     return ERR_UNKNOWN;
 }
 
-// ===========================================================================
 // Lifecycle
-// ===========================================================================
 
 void GodotChorus::_notification(int p_what) {
     if (p_what == NOTIFICATION_READY) {
         set_process(true);
     } else if (p_what == NOTIFICATION_EXIT_TREE) {
-        // _process stops with the tree, so without this the last frame's
-        // diagnostics are still buffered when the node is freed. The node is
-        // fully alive here, which is what makes emitting the signal safe.
+        // `GodotChorus::_process` stops with the tree, so the last frame's
+        // diagnostics would otherwise remain buffered when the node is freed.
+        // The node is fully alive here, making signal emission safe.
         drain_logs();
     }
 }
 
-// The setting name lives here rather than in the composition root so the
-// declaration and every read of it stay in one file.
+// Keeping `LOG_LEVEL_SETTING` here puts its declaration beside every read.
 static const char* LOG_LEVEL_SETTING = "chorus/logging/min_level";
 
-// The levels a host may ask for, in LogLevelCode order.
+// Godot-visible values in `GodotChorus::LogLevelCode` order.
 static const char* LOG_LEVEL_HINT = "Debug,Info,Warning,Error,Fatal,Off";
 
 void GodotChorus::register_project_settings() {
@@ -170,8 +158,8 @@ void GodotChorus::register_project_settings() {
     if (settings == nullptr)
         return;
 
-    // has_feature("editor") separates an editor or debug run from an exported
-    // game, which is the line the two defaults are drawn along.
+    // `godot::OS::has_feature("editor")` separates editor or debug runs from
+    // exported games, which is the line between the two defaults.
     const bool in_editor = OS::get_singleton() != nullptr && OS::get_singleton()->has_feature("editor");
     const int64_t default_level = in_editor ? LOG_INFO : (int64_t)Chorus::log_level_default;
 
@@ -221,9 +209,9 @@ void GodotChorus::drain_logs() {
                 fields[key] = to_godot_string(std::get<std::string>(field.second));
         }
 
-        // Unix seconds, which is what Time.get_datetime_string_from_unix_time
-        // and friends take. A record is stamped where it is produced, so this
-        // is older than the frame that delivers it.
+        // Unix seconds, accepted by `Time.get_datetime_string_from_unix_time`
+        // and related Godot APIs. Production stamps the record, so this time
+        // predates the frame that delivers it.
         const double produced_at = std::chrono::duration<double>(record.timestamp.time_since_epoch()).count();
 
         emit_signal(
@@ -273,9 +261,7 @@ void GodotChorus::_process(double /*delta*/) {
     }
 }
 
-// ===========================================================================
 // Core API
-// ===========================================================================
 
 bool GodotChorus::load_model() {
     if (_provider != PROVIDER_ECHO && _model_path.is_empty()) {
@@ -290,8 +276,8 @@ bool GodotChorus::load_model() {
         config.model.format = Chorus::ModelFormat::Gguf;
         config.model.assets.push_back({Chorus::AssetRole::Weights, _model_path.utf8().get_data()});
     }
-    // Echo: empty InitialModelSpec, and it declares no load options, so the loop below
-    // contributes nothing rather than needing a special case.
+    // Echo accepts an empty `Chorus::InitialModelSpec` and declares no load
+    // options, so this generic path contributes nothing without a special case.
     const auto& caps = provider_capabilities();
     if (!caps.load_options.empty())
         config.provider_options[caps.provider_id] = Chorus::resolve_option_defaults(caps.load_options, _load_options);
@@ -346,9 +332,7 @@ int64_t GodotChorus::regenerate(const String& session, const Dictionary& overrid
     return report_submit_result("regenerate", _runtime.regenerate(gen_request));
 }
 
-// ===========================================================================
 // Runtime controls
-// ===========================================================================
 
 bool GodotChorus::cancel_request(int64_t request_id) {
     return _runtime.cancel(request_id);
@@ -363,9 +347,7 @@ int64_t GodotChorus::active_request_for_session(const String& session) const {
     return active.has_value() ? *active : -1;
 }
 
-// ===========================================================================
 // Conversation history
-// ===========================================================================
 
 static Dictionary chat_message_to_dict(const Chorus::ChatMessage& message) {
     Dictionary dict;
@@ -472,9 +454,7 @@ String GodotChorus::render_chat_prompt(const String& session, const String& temp
     return rendered.has_value() ? to_godot_string(*rendered) : String();
 }
 
-// ===========================================================================
 // Properties
-// ===========================================================================
 
 void GodotChorus::set_model_path(const String& path) {
     _model_path = path;
@@ -483,13 +463,19 @@ String GodotChorus::get_model_path() const {
     return _model_path;
 }
 
-// ---------------------------------------------------------------------------
 // Provider load options
 //
-// The selected provider declares its own option schema; these hooks render it.
-// Nothing here names an option, a default, or a range: swap the provider and the
-// inspector follows without a line of adapter code changing.
-// ---------------------------------------------------------------------------
+// The selected provider declares its schema. These hooks render that schema,
+// so the adapter names no provider option, default, or range.
+
+static bool
+is_prerequisite_for_any_option(const Chorus::ProviderOptionDescriptors& declared_options, const std::string& key) {
+    for (const auto& option : declared_options) {
+        if (option.prerequisite_option && *option.prerequisite_option == key)
+            return true;
+    }
+    return false;
+}
 
 const Chorus::EngineCapabilities& GodotChorus::provider_capabilities() const {
     if (_cached_capabilities_provider != _provider) {
@@ -516,11 +502,15 @@ bool GodotChorus::_set(const StringName& name, const Variant& value) {
         UtilityFunctions::push_error(
             String("[Chorus] ") + to_godot_string(descriptor->key) + String(": wrong value type for this option.")
         );
-        return true; // handled: the property exists, the value did not fit
+        // Godot expects true because the property exists, even though its value
+        // could not be accepted.
+        return true;
     }
     _load_options[descriptor->key] = std::move(*coerced);
-    if (is_prerequisite_for_any_option(load_option_descriptors(), descriptor->key))
-        notify_property_list_changed(); // the options naming it just changed state
+    if (is_prerequisite_for_any_option(load_option_descriptors(), descriptor->key)) {
+        // Dependent options may have entered or left the Inspector surface.
+        notify_property_list_changed();
+    }
     return true;
 }
 
@@ -565,7 +555,8 @@ void GodotChorus::set_provider(ProviderChoice provider) {
         );
     }
     _provider = provider;
-    notify_property_list_changed(); // a different provider declares different options
+    // The new provider may expose a different Inspector surface.
+    notify_property_list_changed();
 }
 
 GodotChorus::ProviderChoice GodotChorus::get_provider() const {
@@ -609,9 +600,9 @@ int64_t GodotChorus::get_log_level() const {
 }
 
 bool GodotChorus::push_host_defaults() {
-    // Rebuilt per call rather than pushed from the setters: the assigned
-    // ChorusGenerationDefaults is a Resource a script may edit in place, and
-    // the node gets no notification when it does.
+    // Rebuild on every call because scripts can mutate the assigned
+    // `ChorusGenerationDefaults` resource in place without notifying this
+    // node.
     auto patch = effective_generation_defaults()->to_patch();
     if (!patch) {
         UtilityFunctions::push_error(
@@ -625,9 +616,7 @@ bool GodotChorus::push_host_defaults() {
     return true;
 }
 
-// ===========================================================================
 // Utility
-// ===========================================================================
 
 float GodotChorus::similarity_cos(PackedFloat32Array array1, PackedFloat32Array array2) const {
     if (array1.size() != array2.size() || array1.is_empty()) {
@@ -645,12 +634,10 @@ float GodotChorus::similarity_cos(PackedFloat32Array array1, PackedFloat32Array 
     return (float)(dot / (std::sqrt(norm1) * std::sqrt(norm2)));
 }
 
-// ===========================================================================
-// Bindings
-// ===========================================================================
+// Godot bindings
 
 void GodotChorus::_bind_methods() {
-    // --- Signals ---
+    // Signals
     ADD_SIGNAL(MethodInfo(
         "token_generated",
         PropertyInfo(Variant::INT, "request_id"),
@@ -683,9 +670,9 @@ void GodotChorus::_bind_methods() {
     ADD_SIGNAL(
         MethodInfo("engine_failed", PropertyInfo(Variant::INT, "error_code"), PropertyInfo(Variant::STRING, "message"))
     );
-    // One diagnostic, as the provider stated it: a stable message plus its
-    // typed fields, so a project can group and filter instead of parsing
-    // sentences. request_id is -1 and session "" when the record names no work.
+    // One diagnostic as the provider stated it: a stable message plus typed
+    // fields, allowing projects to group and filter without parsing prose.
+    // `request_id` is `-1` and `session` is empty when no work owns the record.
     ADD_SIGNAL(MethodInfo(
         "log_record",
         PropertyInfo(Variant::INT, "level"),
@@ -696,7 +683,7 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::FLOAT, "produced_at")
     ));
 
-    // --- ErrorCode enum ---
+    // `GodotChorus::ErrorCode`
     BIND_ENUM_CONSTANT(ERR_NONE);
     BIND_ENUM_CONSTANT(ERR_MODEL_LOAD);
     BIND_ENUM_CONSTANT(ERR_CONTEXT_INIT);
@@ -711,17 +698,17 @@ void GodotChorus::_bind_methods() {
     BIND_ENUM_CONSTANT(ERR_SESSION_BUSY);
     BIND_ENUM_CONSTANT(ERR_UNKNOWN);
 
-    // --- ProviderChoice enum ---
+    // `GodotChorus::ProviderChoice`
     BIND_ENUM_CONSTANT(PROVIDER_LLAMA);
     BIND_ENUM_CONSTANT(PROVIDER_ECHO);
 
-    // --- TurnOutcomeCode enum ---
+    // `GodotChorus::TurnOutcomeCode`
     BIND_ENUM_CONSTANT(TURN_NONE);
     BIND_ENUM_CONSTANT(TURN_COMPLETED);
     BIND_ENUM_CONSTANT(TURN_CANCELLED);
     BIND_ENUM_CONSTANT(TURN_ERRORED);
 
-    // --- LogLevelCode enum ---
+    // `GodotChorus::LogLevelCode`
     BIND_ENUM_CONSTANT(LOG_DEBUG);
     BIND_ENUM_CONSTANT(LOG_INFO);
     BIND_ENUM_CONSTANT(LOG_WARN);
@@ -729,7 +716,7 @@ void GodotChorus::_bind_methods() {
     BIND_ENUM_CONSTANT(LOG_FATAL);
     BIND_ENUM_CONSTANT(LOG_OFF);
 
-    // --- Core methods ---
+    // Runtime methods
     ClassDB::bind_method(D_METHOD("load_model"), &GodotChorus::load_model);
     ClassDB::bind_method(D_METHOD("stop_all"), &GodotChorus::stop_all);
     ClassDB::bind_method(D_METHOD("is_loaded"), &GodotChorus::is_loaded);
@@ -737,9 +724,8 @@ void GodotChorus::_bind_methods() {
     ClassDB::bind_method(D_METHOD("cancel_request", "request_id"), &GodotChorus::cancel_request);
     ClassDB::bind_method(D_METHOD("is_request_active", "request_id"), &GodotChorus::is_request_active);
     ClassDB::bind_method(D_METHOD("active_request_for_session", "session"), &GodotChorus::active_request_for_session);
-    ClassDB::bind_method(D_METHOD("similarity_cos", "array1", "array2"), &GodotChorus::similarity_cos);
 
-    // --- Conversation history ---
+    // Conversation history
     ClassDB::bind_method(
         D_METHOD("regenerate", "session", "overrides"), &GodotChorus::regenerate, DEFVAL(Dictionary())
     );
@@ -759,16 +745,19 @@ void GodotChorus::_bind_methods() {
         DEFVAL(Array())
     );
 
-    // --- Properties ---
+    // Utility methods
+    ClassDB::bind_method(D_METHOD("similarity_cos", "array1", "array2"), &GodotChorus::similarity_cos);
+
+    // Properties
     ClassDB::bind_method(D_METHOD("set_model_path", "path"), &GodotChorus::set_model_path);
     ClassDB::bind_method(D_METHOD("get_model_path"), &GodotChorus::get_model_path);
     ADD_PROPERTY(
         PropertyInfo(Variant::STRING, "model_path", PROPERTY_HINT_FILE, "*.gguf"), "set_model_path", "get_model_path"
     );
 
-    // Provider load options (context_size, use_gpu, ...) are not bound here:
-    // the selected provider declares them and _get_property_list renders that
-    // declaration, so the adapter never restates a provider's option schema.
+    // Provider load options such as `context_size` and `use_gpu` are not bound
+    // here. `GodotChorus::_get_property_list` renders the selected provider's
+    // declaration, so the adapter never restates its schema.
 
     ClassDB::bind_method(D_METHOD("set_provider", "provider"), &GodotChorus::set_provider);
     ClassDB::bind_method(D_METHOD("get_provider"), &GodotChorus::get_provider);
