@@ -1,4 +1,5 @@
 #include "chorus/providers/llama/llama_generation.hpp"
+#include "chorus/providers/llama/llama_generation_options.hpp"
 #include "silent_llama_log.hpp"
 #include "test_utils.hpp"
 

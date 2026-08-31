@@ -1,6 +1,7 @@
 #include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/core/common.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
+#include "chorus/providers/llama/llama_generation_options.hpp"
 #include "chorus/providers/llama/llama_scheduler.hpp"
 
 namespace Chorus {
