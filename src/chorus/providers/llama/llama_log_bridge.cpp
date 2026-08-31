@@ -21,7 +21,8 @@ std::optional<LogLevel> map_ggml_level(int ggml_level) {
     case GGML_LOG_LEVEL_ERROR:
         return LogLevel::Error;
     default:
-        // NONE is llama's "not for a reader" marker; CONT never opens a line.
+        // `GGML_LOG_LEVEL_NONE` is llama's "not for a reader" marker;
+        // `GGML_LOG_LEVEL_CONT` never opens a line.
         return std::nullopt;
     }
 }
@@ -34,9 +35,9 @@ void trim_trailing_newlines(std::string& text) {
 /*
  * The one owner of llama's process-global hook.
  *
- * Everything here is guarded by `mutex`: llama may log from its own threads,
- * and `llama_log_set` is documented as not thread-safe, so registration and
- * delivery are serialized against each other.
+ * Everything here is guarded by `Registry::mutex`: llama may log from its
+ * own threads, and `llama_log_set` is documented as not thread-safe, so
+ * registration and delivery are serialized against each other.
  */
 struct Registry {
     std::mutex mutex;
@@ -59,19 +60,12 @@ void deliver(ggml_log_level level, const char* text, void* /*user_data*/) {
     Registry& reg = registry();
     std::lock_guard<std::mutex> lock(reg.mutex);
     for (const auto& record : reg.assembler.feed(static_cast<int>(level), text)) {
-        // Multiplexed on purpose: llama's hook carries no per-engine context,
-        // so with two live engines the choice is a duplicated line or a
-        // missing one.
         for (const auto& entry : reg.loggers)
             entry.second.log(record.level, record.message, record.fields);
     }
 }
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// LlamaLogAssembler
-// ---------------------------------------------------------------------------
 
 std::vector<LogRecord> LlamaLogAssembler::feed(int ggml_level, const char* text) {
     if (text == nullptr || *text == '\0')
@@ -82,11 +76,9 @@ std::vector<LogRecord> LlamaLogAssembler::feed(int ggml_level, const char* text)
     if (!is_continuation) {
         const auto level = map_ggml_level(ggml_level);
         if (!level)
-            return {}; // NONE and anything llama adds later
-        // A non-CONT fragment opens a new line. One arriving while a line is
-        // still open means llama never terminated the old one; it goes out
-        // as-is rather than absorbing this fragment and burying its level,
-        // which could downgrade an error into a maskable Info line.
+            return {};
+        // Flush before replacing the level; otherwise an error can
+        // disappear into a maskable `Chorus::LogLevel::Info` record.
         if (_has_pending) {
             if (auto stale = flush())
                 completed.push_back(std::move(*stale));
@@ -94,7 +86,7 @@ std::vector<LogRecord> LlamaLogAssembler::feed(int ggml_level, const char* text)
         _pending_level = *level;
         _has_pending = true;
     } else if (!_has_pending) {
-        return {}; // a continuation of nothing
+        return {};
     }
 
     const LogLevel fragment_level = _pending_level;
@@ -131,7 +123,8 @@ std::optional<LogRecord> LlamaLogAssembler::flush() {
     _pending.clear();
     _has_pending = false;
 
-    // The newline frames llama's fragments; it is not part of the message.
+    // `LlamaLogAssembler::feed` removes `\n`; this trims the `\r` left by
+    // CRLF framing.
     trim_trailing_newlines(message);
     if (message.empty())
         return std::nullopt;
@@ -142,9 +135,9 @@ std::optional<LogRecord> LlamaLogAssembler::flush() {
     return record;
 }
 
-// ---------------------------------------------------------------------------
-// LlamaLogBridge
-// ---------------------------------------------------------------------------
+std::shared_ptr<LlamaLogBridge> LlamaLogBridge::acquire(Logger logger) {
+    return std::make_shared<LlamaLogBridge>(Registration{}, std::move(logger));
+}
 
 LlamaLogBridge::LlamaLogBridge(Registration, Logger logger) {
     Registry& reg = registry();
@@ -172,10 +165,6 @@ LlamaLogBridge::~LlamaLogBridge() {
     // An unterminated line has no one left to reach; drop it rather than
     // prepend it to whatever the next engine logs.
     reg.assembler.flush();
-}
-
-std::shared_ptr<LlamaLogBridge> LlamaLogBridge::acquire(Logger logger) {
-    return std::make_shared<LlamaLogBridge>(Registration{}, std::move(logger));
 }
 
 } // namespace Chorus
