@@ -3,8 +3,8 @@
 namespace Chorus {
 namespace {
 
-// One applier for both field shapes: assigning an empty Target{} is "unset"
-// for an optional field and "empty list" for a plain one.
+// Clearing resets optional options to unset and the stop list to empty,
+// allowing both field shapes to share the same patch logic.
 template <typename Target, typename T> void apply_patch(Target& target, const ConfigPatch<T>& patch) {
     switch (patch.action) {
     case PatchAction::Inherit:
@@ -50,7 +50,7 @@ void erase_option_path(ProviderOptionMap& options, const std::string& path) {
             return;
         auto* nested = std::get_if<ProviderOptionMap>(&next->second);
         if (!nested)
-            return; // a scalar where the path expects a namespace
+            return;
         level = nested;
         start = dot + 1;
     }
