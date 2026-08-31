@@ -205,6 +205,7 @@ def with_llama_includes(base_env):
 # so they don't clutter the source tree. duplicate=0 keeps sources in place.
 VariantDir("bin/obj/chorus",       "src/chorus",       duplicate=0)
 VariantDir("bin/obj/godot_chorus", "src/godot_chorus", duplicate=0)
+VariantDir("bin/obj/chorus_c",     "src/chorus_c",     duplicate=0)
 VariantDir("bin/obj/tests",        "tests",            duplicate=0)
 
 sources_core    = Glob("bin/obj/chorus/core/*.cpp")
@@ -213,15 +214,18 @@ sources_runtime = Glob("bin/obj/chorus/runtime/*.cpp")
 sources_echo    = Glob("bin/obj/chorus/providers/echo/*.cpp")
 sources_llama   = Glob("bin/obj/chorus/providers/llama/*.cpp")
 sources_godot   = Glob("bin/obj/godot_chorus/*.cpp")
+sources_c       = Glob("bin/obj/chorus_c/*.cpp")
 sources_tests   = (
     Glob("bin/obj/tests/native/*.cpp") +
     Glob("bin/obj/tests/native/support/*.cpp") +
     Glob("bin/obj/tests/native/wlib/*.cpp") +
     Glob("bin/obj/tests/native/core/*.cpp") +
+    Glob("bin/obj/tests/native/chorus_c/*.cpp") +
     Glob("bin/obj/tests/native/factory/*.cpp") +
     Glob("bin/obj/tests/native/providers/echo/*.cpp") +
     Glob("bin/obj/tests/native/runtime/*.cpp")
 )
+sources_tests_c = Glob("bin/obj/tests/native/chorus_c/*.c")
 # Kept apart from the rest: these are the only test objects that may see a
 # vendor header, so they compile under the scoped env alongside the provider.
 sources_tests_llama = Glob("bin/obj/tests/native/providers/llama/*.cpp")
@@ -231,8 +235,18 @@ sources_tests_llama = Glob("bin/obj/tests/native/providers/llama/*.cpp")
 def make_test_env(base_env):
     test_env = base_env.Clone()
     test_env.Append(CPPDEFINES=["TEST_BUILD"])
+    if base_env["platform"] == "windows":
+        test_env.Append(CFLAGS=["/std:c11"])
+    else:
+        test_env.Append(CFLAGS=["-std=c11"])
     test_env.Append(CPPPATH=["tests/native", "tests/native/support"])
     return test_env
+
+def make_chorus_c_build_env(base_env):
+    chorus_c_env = base_env.Clone()
+    if base_env["platform"] == "windows":
+        chorus_c_env.Append(CPPDEFINES=["CHORUS_C_BUILD"])
+    return chorus_c_env
 
 # ----------------------------------------------------------------------
 # CMAKE TARGET DEFINITION
@@ -270,9 +284,10 @@ if "compiledb" in COMMAND_LINE_TARGETS:
     env.Tool("compilation_db")
     compiledb = env.CompilationDatabase("compile_commands.json")
     env.Object(sources_core + sources_factory + sources_runtime + sources_echo + sources_godot)
+    make_chorus_c_build_env(env).SharedObject(sources_c)
     with_llama_includes(env).Object(sources_llama)
     compiledb_test_env = make_test_env(env)
-    compiledb_test_env.Object(sources_tests)
+    compiledb_test_env.Object(sources_tests + sources_tests_c)
     with_llama_includes(compiledb_test_env).Object(sources_tests_llama)
     Alias("compiledb", compiledb)
     Default(compiledb)
@@ -288,10 +303,11 @@ if "test" in COMMAND_LINE_TARGETS:
     test_env.Append(LIBS=llama_libs)
 
     llama_test_objects = with_llama_includes(test_env).Object(sources_llama + sources_tests_llama)
+    chorus_c_test_objects = make_chorus_c_build_env(test_env).Object(sources_c)
 
     test_program = test_env.Program(
         target="bin/run_tests",
-        source=sources_echo + sources_core + sources_factory + sources_runtime + sources_tests + llama_test_objects,
+        source=sources_echo + sources_core + sources_factory + sources_runtime + chorus_c_test_objects + sources_tests + sources_tests_c + llama_test_objects,
     )
 
     test_env.Depends(test_program, cmake_target)
@@ -313,9 +329,15 @@ else:
 
     llama_objects = with_llama_includes(env).SharedObject(sources_llama)
 
-    library = env.SharedLibrary(
+    chorus_c_objects = make_chorus_c_build_env(env).SharedObject(sources_c)
+
+    godot_library = env.SharedLibrary(
         target="bin/libgodot_chorus",
         source=sources_echo + sources_core + sources_factory + sources_runtime + sources_godot + llama_objects
     )
-    env.Depends(library, cmake_target)
-    Default(library)
+    chorus_c_library = env.SharedLibrary(
+        target="bin/libchorus_c",
+        source=sources_echo + sources_core + sources_factory + sources_runtime + chorus_c_objects + llama_objects
+    )
+    env.Depends([godot_library, chorus_c_library], cmake_target)
+    Default(godot_library, chorus_c_library)

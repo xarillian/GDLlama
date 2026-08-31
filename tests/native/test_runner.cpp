@@ -19,6 +19,7 @@ int run_engine_factory_tests();
 int run_runtime_tests();
 int run_runtime_session_tests();
 int run_chat_history_tests();
+int run_chorus_c_tests();
 int run_llama_contract_tests();
 int run_llama_integration_tests();
 int run_llama_generation_tests();
@@ -60,6 +61,7 @@ int main(int argc, char** argv) {
     run_runtime_tests();
     run_runtime_session_tests();
     run_chat_history_tests();
+    run_chorus_c_tests();
     run_llama_contract_tests();
     run_llama_integration_tests();
     run_llama_generation_tests();
