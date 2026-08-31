@@ -157,11 +157,11 @@ void test_reasoning_tokens_route_to_reasoning_channel() {
     auto submitted = runtime.submit(chat_turn("2+2?", "npc_1", /*stream=*/true));
     ASSERT_TRUE(submitted.ok());
     auto events = runtime.poll();
-    // stream=true: ReasoningToken, Token, Complete
+    // stream=true: StreamedReasoningToken, StreamedToken, Complete
     ASSERT_EQ((int)events.size(), 3);
-    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::ReasoningToken);
+    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::StreamedReasoningToken);
     ASSERT_EQ(events[0].text, std::string("thinking... "));
-    ASSERT_TRUE(events[1].kind == Chorus::RuntimeEvent::Kind::Token);
+    ASSERT_TRUE(events[1].kind == Chorus::RuntimeEvent::Kind::StreamedToken);
     ASSERT_TRUE(events[2].kind == Chorus::RuntimeEvent::Kind::Complete);
     ASSERT_EQ(events[2].text, std::string("four"));
     ASSERT_EQ(events[2].reasoning, std::string("thinking... "));

@@ -16,80 +16,108 @@
 
 namespace Chorus {
 
-// Terminal state of a session's most recent chat turn. Protected metadata:
-// read-only to hosts, never rendered into the prompt.
 enum class TurnOutcome { None, Completed, Cancelled, Errored };
 
-// What a host hands the runtime. No id, no callback: those are runtime business.
+/*
+ * Describes one stateless generation or sessioned chat turn.
+ *
+ * `Chorus::GenerationRequest::prompt` is the raw prompt when
+ * `Chorus::GenerationRequest::session_id` is absent and the new user message
+ * when it is present. Chat-only controls are invalid for stateless requests.
+ */
 struct GenerationRequest {
     std::string prompt;
 
-    // Caller-owned continuity lane (NPC, dialogue thread). Absent = stateless.
-    // Empty string is InvalidRequest -- statelessness has one spelling.
+    /// `std::nullopt` selects stateless generation. An empty `Chorus::SessionId` is invalid.
     std::optional<SessionId> session_id;
 
+    /// Higher values indicate higher scheduling priority.
     int priority = 0;
-    bool stream = false; // false: suppress Token events, deliver only Complete
 
-    // An overlay on the runtime's host defaults, not a finished config. Keeping
-    // it a patch is what lets the runtime tell a value the caller asked for
-    // from one that merely drifted down from a host's ambient settings.
+    /// Whether to emit `Chorus::RuntimeEvent::Kind::StreamedToken` and
+    /// `Chorus::RuntimeEvent::Kind::StreamedReasoningToken` events.
+    bool stream = false;
+
+    /// Per-request changes layered over `Chorus::HostDefaults::config`.
     GenerationConfigPatch overrides;
 
-    // Per-request ephemeral injections, applied only to the fitted copy, and
-    // an optional chat-template override. Only meaningful on chat requests.
+    /// Ephemeral messages inserted into this turn without changing stored history.
     std::vector<InjectedMessage> inject;
+
+    /// Per-request chat template. An empty value inherits `Chorus::HostDefaults::chat_template`.
     std::string chat_template;
 };
 
-// A host's ambient settings: the layer every request overlays.
-//
-// Chat-only controls here (show_thinking, chat_template) apply to sessioned
-// requests and are dropped from stateless ones. That asymmetry is the point:
-// an ambient default must not turn a raw-prompt call into a rejection, while
-// the same control set deliberately on a request still earns one. Resolving it
-// here rather than in an adapter is what keeps every host from re-deriving the
-// same workaround.
+/*
+ * Ambient generation settings supplied by a host.
+ *
+ * Changes apply only to requests submitted afterward. Chat controls apply
+ * only to sessions; request-level chat controls still reject stateless requests.
+ */
 struct HostDefaults {
     GenerationConfigPatch config;
+
+    /// Host chat template. An empty value delegates template selection to the engine.
     std::string chat_template;
 };
 
-// What poll() returns. Post-policy, host-thread-safe.
+/// One event delivered on the host thread by `Chorus::ChorusRuntime::poll`.
 struct RuntimeEvent {
-    // EngineFailed reports an engine that died on its own rather than being
-    // unloaded: request_id is -1, session_id absent, error EngineNotReady with
-    // a generic message (the specific cause reaches the host through each dying
-    // request's own Error terminal). It is not a "nothing further" marker.
-    // Requests the engine had already queued may still terminate on a later
-    // poll, so a host tears down on each request's own terminal, exactly as it
-    // otherwise would.
-    enum class Kind { Token, ReasoningToken, Complete, Error, HistoryTruncated, EngineFailed };
+    enum class Kind {
+        StreamedToken,          // Incremental visible text, emitted only for streaming requests.
+        StreamedReasoningToken, // Incremental reasoning text, emitted only for streaming requests.
+        Complete,               // Terminal success with complete visible and reasoning output.
+        Error,                  // Terminal request failure.
+        HistoryTruncated,       // Prompt fitting omitted stored history messages; stored history is unchanged.
+        EngineFailed            // Engine-wide failure that does not terminate a request.
+    };
+
+    /// Accepted request ID, or `-1` for `Chorus::RuntimeEvent::Kind::EngineFailed`.
     RequestId request_id;
-    std::optional<SessionId> session_id; // absent for stateless requests
+
+    /// Absent for stateless requests and `Chorus::RuntimeEvent::Kind::EngineFailed`.
+    std::optional<SessionId> session_id;
+
     Kind kind;
-    // A Token carries a safe text chunk and need not correspond to exactly one model token.
-    std::string text; // Complete: full accumulated text; Error: message
+
+    /// Streamed chunk on token events, full visible output on completion, or failure diagnostic.
+    std::string text;
+
+    /// `Chorus::ChorusError::None` except on failure events.
+    /// Engine-wide failure always carries `Chorus::ChorusError::EngineNotReady`.
     ChorusError error = ChorusError::None;
-    std::string reasoning; // Complete: full accumulated reasoning ("" = none)
-    int32_t dropped = 0;   // HistoryTruncated: history messages dropped
+
+    /// Complete reasoning output on `Chorus::RuntimeEvent::Kind::Complete`.
+    std::string reasoning;
+
+    /// History messages omitted from the fitted prompt by a truncation event.
+    int32_t dropped = 0;
 };
 
-// Synchronous submit outcome. error != None means no request was created and
-// request_id is -1.
+/*
+ * The immediate result of attempting to start work.
+ *
+ * A rejection creates no request and emits no events.
+ */
 struct SubmitResult {
+    /// Nonnegative for an accepted request; `-1` for rejection.
     RequestId request_id = -1;
+
+    /// `Chorus::ChorusError::None` on acceptance; the rejection reason otherwise.
     ChorusError error = ChorusError::None;
-    std::string message; // Human-readable rejection detail; empty on success.
+
+    /// Empty on acceptance; supplied by the rejecting layer otherwise.
+    std::string message;
+
     bool ok() const { return error == ChorusError::None; }
 };
 
-// Application layer: owns the request lifecycle between hosts and engines.
-//
-// Threading: every public method is host-thread-only (latched on first call,
-// asserted in debug builds). The engine's worker touches only the internal
-// pending queue, through the on_event callback the runtime attaches. Pending
-// events are retained without bound until drained: call poll() once per tick.
+/*
+ * Owns request lifecycle between hosts and an inference engine.
+ *
+ * Public methods are confined to the first calling thread. Worker callbacks
+ * remain buffered until the host calls `Chorus::ChorusRuntime::poll`.
+ */
 class ChorusRuntime {
   public:
     ChorusRuntime() = default;
@@ -98,53 +126,162 @@ class ChorusRuntime {
     ChorusRuntime(const ChorusRuntime&) = delete;
     ChorusRuntime& operator=(const ChorusRuntime&) = delete;
 
-    // Takes ownership unconditionally. Replaces any current engine: live
-    // requests receive a Cancelled terminal and the old engine is stopped and
-    // destroyed BEFORE the new one initializes (no transient double model
-    // residency). On failure the runtime is unloaded and the engine destroyed.
+    /*
+     * Replaces the engine and owns its lifetime.
+     *
+     * Live requests receive `Chorus::ChorusError::Cancelled`. The old engine
+     * is destroyed before initialization; failure leaves the runtime unloaded.
+     *
+     * Returns:
+     *  - `std::nullopt`: the engine initialized successfully.
+     *  - `Chorus::ChorusError`: initialization failed.
+     *
+     * Errors:
+     *  - `Chorus::ChorusError::InvalidRequest`: the supplied engine pointer is null.
+     *  - `Chorus::ChorusError::UnsupportedModelFormat`: the provider cannot read the artifact.
+     *  - `Chorus::ChorusError::ModelLoad`: the weights failed to load.
+     *  - `Chorus::ChorusError::ContextInit`: the inference context failed to initialize.
+     *  - `Chorus::ChorusError::UnsupportedOption`: a load option is unsupported.
+     *  - `Chorus::ChorusError::Unknown`: the provider could not classify the failure.
+     */
     std::optional<ChorusError> load_engine(std::unique_ptr<InferenceEngine> engine, const ChorusConfig& config);
 
+    /// Whether an initialized engine is ready to accept work.
     bool is_loaded() const;
 
-    // Installs the ambient layer every subsequent request overlays. Hosts that
-    // expose node- or project-level settings push them here instead of folding
-    // them into each request, so the runtime can distinguish the two.
+    /// Replaces the ambient settings layered beneath future requests.
     void set_host_defaults(HostDefaults defaults);
 
+    /*
+     * Submits a stateless generation or sessioned chat request.
+     *
+     * Rejection creates no request and emits no events. Every accepted request
+     * later emits exactly one terminal event from `Chorus::ChorusRuntime::poll`.
+     *
+     * Errors:
+     *  - `Chorus::ChorusError::EngineNotReady`: no initialized engine can accept work.
+     *  - `Chorus::ChorusError::InvalidRequest`: the request is invalid or cannot fit.
+     *  - `Chorus::ChorusError::SessionBusy`: the session has an active request.
+     *  - `Chorus::ChorusError::UnsupportedFeature`: the provider lacks a requested capability.
+     *  - `Chorus::ChorusError::UnsupportedOption`: the provider rejects a requested option.
+     */
     [[nodiscard]] SubmitResult submit(const GenerationRequest& request);
 
-    // Reroll the session's last assistant line. request.prompt must be
-    // empty; all other request fields (priority, stream, config, inject,
-    // chat_template) apply to the rerolled turn. On Complete the new reply
-    // replaces the old; on Cancelled/Error the old reply is restored.
+    /*
+     * Regenerates the latest assistant reply in a session.
+     *
+     * The request must name a nonempty session whose history ends in an
+     * assistant message, and `Chorus::GenerationRequest::prompt` must be empty.
+     * Completion replaces the reply; cancellation or error restores it.
+     *
+     * Errors:
+     *  - `Chorus::ChorusError::EngineNotReady`: no initialized engine can accept work.
+     *  - `Chorus::ChorusError::InvalidRequest`: the request or stored conversation is invalid.
+     *  - `Chorus::ChorusError::SessionBusy`: the session has an active request.
+     *  - `Chorus::ChorusError::UnsupportedFeature`: the provider lacks a requested capability.
+     *  - `Chorus::ChorusError::UnsupportedOption`: the provider rejects a requested option.
+     */
     [[nodiscard]] SubmitResult regenerate(const GenerationRequest& request);
 
-    // Requests stay active until poll() drains their terminal event.
+    /*
+     * Requests cancellation.
+     *
+     * A successfully cancelled request remains active until
+     * `Chorus::ChorusRuntime::poll` drains its
+     * `Chorus::ChorusError::Cancelled` terminal event.
+     *
+     * Returns:
+     *  - `true`: an active request has that ID and cancellation was requested.
+     *  - `false`: no active request has that ID.
+     */
     bool cancel(RequestId id);
+
+    /// Whether a request with the supplied ID has a terminal event that remains undrained.
     bool is_request_active(RequestId id) const;
+
+    /*
+     * Finds the active request occupying one session.
+     *
+     * Returns:
+     *  - `Chorus::RequestId`: the session's active request.
+     *  - `std::nullopt`: the session has no active request.
+     */
     std::optional<RequestId> active_request_for_session(const SessionId& session_id) const;
 
-    // Conversation history. Host-thread-only, like everything else.
-    // import/clear on a busy session (and reset with ANY busy session) return
-    // SessionBusy: mutating a lane mid-turn would desync terminal rollback.
-    std::optional<ChorusError> import_conversation_history(const SessionId& session, std::vector<ChatMessage> history);
-    std::vector<ChatMessage> export_conversation_history(const SessionId& session) const;
-    std::optional<ChorusError> clear_conversation_history(const SessionId& session);
-    // Rewrites one message's content in place, any role. A negative index
-    // counts from the end (-1 = newest). InvalidRequest for an unknown session
-    // or an out-of-range index; SessionBusy while the lane has a live request.
-    // The lane's last_turn_outcome is untouched: editing what a turn said does
-    // not change how it ended.
-    std::optional<ChorusError> edit_message(const SessionId& session, int64_t index, std::string content);
+    /*
+     * Lists every stored conversation, including an imported empty history.
+     *
+     * The result order is unspecified.
+     */
     std::vector<SessionId> list_conversations() const;
-    std::optional<ChorusError> reset_context();
+
+    /// Copies stored history. Unknown and empty sessions both return an empty vector.
+    std::vector<ChatMessage> export_conversation_history(const SessionId& session) const;
+
+    /// Returns `Chorus::TurnOutcome::None` for an unknown session or one with no recorded turn.
     TurnOutcome last_turn_outcome(const SessionId& session) const;
 
-    // The exact fitted prompt generation would consume for this session right
-    // now, without generating. Pass the same overrides you generate with; the
-    // host defaults apply underneath either way, and the resolved max_tokens
-    // and show_thinking drive the fitting reservation.
-    // nullopt: unknown session, no engine, or no provider rendering.
+    /*
+     * Replaces one session's stored history and resets its recorded turn outcome.
+     *
+     * Returns:
+     *  - `std::nullopt`: the history was imported.
+     *  - `Chorus::ChorusError`: the history was rejected.
+     *
+     * Errors:
+     *  - `Chorus::ChorusError::InvalidRequest`: the supplied session ID is empty.
+     *  - `Chorus::ChorusError::SessionBusy`: the session has an active request.
+     */
+    std::optional<ChorusError> import_conversation_history(const SessionId& session, std::vector<ChatMessage> history);
+
+    /*
+     * Rewrites one stored message without changing its recorded turn outcome.
+     *
+     * Negative indexes count backward from the newest message.
+     *
+     * Returns:
+     *  - `std::nullopt`: the message was changed.
+     *  - `Chorus::ChorusError`: the change was rejected.
+     *
+     * Errors:
+     *  - `Chorus::ChorusError::InvalidRequest`: the session or index does not exist.
+     *  - `Chorus::ChorusError::SessionBusy`: the session has an active request.
+     */
+    std::optional<ChorusError> edit_message(const SessionId& session, int64_t index, std::string content);
+
+    /*
+     * Removes one session's stored history and turn outcome.
+     *
+     * Clearing an unknown session succeeds.
+     *
+     * Returns:
+     *  - `std::nullopt`: the session is absent after the call.
+     *  - `Chorus::ChorusError`: clearing was rejected.
+     *
+     * Errors:
+     *  - `Chorus::ChorusError::SessionBusy`: the session has an active request.
+     */
+    std::optional<ChorusError> clear_conversation_history(const SessionId& session);
+
+    /*
+     * Removes every stored conversation and turn outcome.
+     *
+     * Returns:
+     *  - `std::nullopt`: all context was removed.
+     *  - `Chorus::ChorusError`: reset was rejected.
+     *
+     * Errors:
+     *  - `Chorus::ChorusError::SessionBusy`: at least one session has an active request.
+     */
+    std::optional<ChorusError> reset_context();
+
+    /*
+     * Renders the fitted prompt that generation would consume without submitting work.
+     *
+     * Returns:
+     *  - `std::string`: the rendered prompt.
+     *  - `std::nullopt`: the engine, stored session, prompt fit, or chat renderer is unavailable.
+     */
     std::optional<std::string> render_prompt(
         const SessionId& session,
         const std::string& template_override = "",
@@ -152,18 +289,19 @@ class ChorusRuntime {
         const GenerationConfigPatch& overrides = {}
     ) const;
 
-    // Drains pending engine signals into host-facing events.
+    /// Drains buffered engine signals into host-facing events.
     std::vector<RuntimeEvent> poll();
 
-    // Drains buffered log records. Host-thread-only, like poll(); call it
-    // beside poll(). Logs ride their own channel because log and token volumes
-    // differ by orders of magnitude, so ordering between this stream and
-    // poll()'s is explicitly not guaranteed. After a loss, the next batch
-    // begins with one loss report as metadata; surviving records remain FIFO.
+    /*
+     * Drains buffered log records.
+     *
+     * Log and inference events have independent FIFO channels and no ordering
+     * guarantee between them. A batch following record loss begins with loss metadata.
+     */
     std::vector<LogRecord> poll_logs();
 
-    // Stops and destroys the engine. Every live request receives exactly one
-    // Cancelled terminal on a later poll(). is_loaded() is false afterward.
+    /// Stops and destroys the engine. Live requests receive one
+    /// `Chorus::ChorusError::Cancelled` terminal event on a later `Chorus::ChorusRuntime::poll`.
     void stop_all();
 
   private:
@@ -173,14 +311,8 @@ class ChorusRuntime {
     void cancel_live_requests();
     void retire_request(RequestId id);
 
-    // The EngineNotReady rejection every entry point shares, worded for which
-    // kind of not-ready it is: no engine at all, or one that has failed.
     SubmitResult not_ready() const;
 
-    // A request with its layers already collapsed: host defaults overlaid by
-    // the request's own overrides, with ambient chat controls dropped where
-    // they cannot apply. Everything below submit() works on this, so the
-    // resolution rule has exactly one home.
     struct ResolvedRequest {
         const GenerationRequest& request;
         GenerationConfig config;
@@ -189,31 +321,18 @@ class ChorusRuntime {
     ResolvedRequest resolve_request(const GenerationRequest& request) const;
     static ChorusRequest make_engine_request(const ResolvedRequest& resolved);
 
-    struct LiveRequest; // fwd for the chat-turn helpers below
-    // Shared submit tail: id assignment, validation, live-state install,
-    // durable history commit, dispatch. dropped > 0 queues a HistoryTruncated
-    // host event for the next poll(). replaced_reply set = regenerate turn:
-    // the commit pops the trailing assistant reply instead of appending the
-    // user message, and the popped reply rides the live record for
-    // restore-on-cancel.
+    struct LiveRequest;
     [[nodiscard]] SubmitResult submit_engine_request(
         const ResolvedRequest& resolved,
         ChorusRequest engine_request,
         int32_t dropped = 0,
         std::optional<ChatMessage> replaced_reply = std::nullopt
     );
-    // Applies a chat turn's terminal to its session lane (append or rollback).
     void finish_turn(const LiveRequest& live, TurnOutcome outcome, const std::string& text);
 
-    // A chat turn's message list after budget fitting, or the
-    // rejection to surface. Keeps prompt_fitting types out of this public
-    // header while sparing callers an out-parameter.
     struct FittedTurn {
         std::vector<ChatMessage> messages;
         int32_t dropped = 0;
-        // The probe's render of `messages`, captured during fitting (absent
-        // when fitting was skipped): lets render_prompt reuse the final
-        // probe render instead of rendering the winning candidate twice.
         std::optional<std::string> rendered_text;
     };
     std::variant<FittedTurn, SubmitResult>
@@ -223,62 +342,35 @@ class ChorusRuntime {
         bool streaming = false;
         std::string accumulated_text;
         std::optional<SessionId> session_id;
-        // A sessioned request is a chat turn:
-        // Complete appends the assistant reply, Cancelled/Error rolls back.
         std::string accumulated_reasoning;
-        // Present iff this turn is a regenerate: the assistant reply this turn
-        // replaced, restored on cancel/error instead of the pop-trailing-user
-        // rollback.
         std::optional<ChatMessage> replaced_reply;
     };
 
     std::unique_ptr<InferenceEngine> _engine;
 
-    // Outlives every engine, and each Logger holds it alive on its own: a
-    // provider thread that somehow survives its engine still has somewhere to
-    // write instead of a dangling reference.
     std::shared_ptr<LogChannel> _log_channel = std::make_shared<LogChannel>();
 
-    // Host-thread-only. Set once poll() has told the host that the current
-    // engine died, so the report happens exactly once per engine instance.
-    // Whether the engine is dead is never cached: that is asked of the engine.
     bool _engine_failure_reported = false;
 
     HostDefaults _host_defaults;
 
     RequestId _next_request_id = 0;
 
-    // Written by engine threads via enqueue_signal, drained by poll().
     std::mutex _pending_mutex;
     std::vector<ChorusSignal> _pending_signals;
 
-    // Host-thread-only. A request is live from submit until its terminal event
-    // is drained; this map is the single source of truth for request liveness.
     std::unordered_map<RequestId, LiveRequest> _live_requests;
 
-    // Reverse index for session lookup and exclusivity. A session is busy from
-    // submit until its terminal event is drained by poll(), not merely
-    // emitted. Visible consequence: after stop_all()/replacement, a same-frame
-    // resubmission for that session gets SessionBusy until the next poll()
-    // drains the synthesized Cancelled terminal. Deliberate: drain-time release
-    // guarantees per-session event ordering for history updates.
     std::unordered_map<SessionId, RequestId> _request_by_session;
 
-    // Conversation store with a host-thread-only, explicit lifecycle:
-    // lanes live until clear_conversation_history() or reset_context().
     struct ConversationHistory {
         std::vector<ChatMessage> messages;
         TurnOutcome last_turn_outcome = TurnOutcome::None;
     };
     std::unordered_map<SessionId, ConversationHistory> _histories;
 
-    // Host-side events (e.g. HistoryTruncated) queued at submit time and
-    // drained by poll() ahead of engine signals.
     std::vector<RuntimeEvent> _host_events;
 
-    // Latched on first public call. Unconditional so class layout is stable
-    // across debug/release TUs; only the assert_host_thread() body (and its
-    // cost) is gated behind NDEBUG.
     mutable std::atomic<std::thread::id> _host_thread{};
 };
 

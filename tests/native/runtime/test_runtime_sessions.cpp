@@ -53,7 +53,7 @@ void test_session_id_present_on_all_event_kinds() {
     auto result = runtime.submit(req);
     ASSERT_TRUE(result.ok());
     auto events = runtime.poll();
-    ASSERT_EQ(events.size(), 3); // Token, Token, Complete
+    ASSERT_EQ(events.size(), 3); // StreamedToken, StreamedToken, Complete
     for (const auto& ev : events) {
         ASSERT_TRUE(ev.session_id.has_value());
         ASSERT_EQ(*ev.session_id, "s1");

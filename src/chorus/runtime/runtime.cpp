@@ -20,6 +20,7 @@ ChorusRuntime::load_engine(std::unique_ptr<InferenceEngine> engine, const Chorus
         cancel_live_requests();
     }
 
+    // Loggers share the channel's lifetime, so provider logging cannot outlive its sink.
     Logger logger(_log_channel, config.log_level);
     auto err = engine->initialize(config, std::move(logger));
     if (err.has_value())
@@ -204,12 +205,12 @@ std::vector<RuntimeEvent> ChorusRuntime::poll() {
                 live.accumulated_reasoning += token->text;
                 if (live.streaming)
                     events.push_back(
-                        {id, live.session_id, RuntimeEvent::Kind::ReasoningToken, token->text, ChorusError::None}
+                        {id, live.session_id, RuntimeEvent::Kind::StreamedReasoningToken, token->text, ChorusError::None}
                     );
             } else {
                 live.accumulated_text += token->text;
                 if (live.streaming)
-                    events.push_back({id, live.session_id, RuntimeEvent::Kind::Token, token->text, ChorusError::None});
+                    events.push_back({id, live.session_id, RuntimeEvent::Kind::StreamedToken, token->text, ChorusError::None});
             }
             continue;
         }
@@ -300,6 +301,7 @@ void ChorusRuntime::enqueue_signal(const ChorusSignal& signal) {
 }
 
 void ChorusRuntime::assert_host_thread() const {
+    // Keep the field in every build so class layout cannot differ across translation units.
 #ifndef NDEBUG
     std::thread::id expected{};
     _host_thread.compare_exchange_strong(expected, std::this_thread::get_id());

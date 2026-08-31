@@ -100,9 +100,9 @@ void test_streaming_request_yields_tokens_in_order_then_Complete_with_full_text(
     auto events = runtime.poll();
 
     ASSERT_EQ(events.size(), 3);
-    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Token);
+    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::StreamedToken);
     ASSERT_EQ(events[0].text, "Hello ");
-    ASSERT_TRUE(events[1].kind == Chorus::RuntimeEvent::Kind::Token);
+    ASSERT_TRUE(events[1].kind == Chorus::RuntimeEvent::Kind::StreamedToken);
     ASSERT_EQ(events[1].text, "world");
     ASSERT_TRUE(events[2].kind == Chorus::RuntimeEvent::Kind::Complete);
     ASSERT_EQ(events[2].text, "Hello world");

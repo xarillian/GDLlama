@@ -243,10 +243,10 @@ void GodotChorus::_process(double /*delta*/) {
     for (const auto& event : _runtime.poll()) {
         const String session = event.session_id ? to_godot_string(*event.session_id) : String();
         switch (event.kind) {
-        case Chorus::RuntimeEvent::Kind::Token:
+        case Chorus::RuntimeEvent::Kind::StreamedToken:
             emit_signal("token_generated", event.request_id, session, to_godot_string(event.text));
             break;
-        case Chorus::RuntimeEvent::Kind::ReasoningToken:
+        case Chorus::RuntimeEvent::Kind::StreamedReasoningToken:
             emit_signal("reasoning_token_generated", event.request_id, session, to_godot_string(event.text));
             break;
         case Chorus::RuntimeEvent::Kind::HistoryTruncated:
