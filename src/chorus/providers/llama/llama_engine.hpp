@@ -10,6 +10,13 @@
 class LlamaScheduler;
 
 namespace Chorus {
+/*
+ * llama.cpp-backed implementation of `Chorus::InferenceEngine`.
+ *
+ * Owns at most one `::LlamaScheduler` and synchronizes its publication and
+ * replacement. The scheduler owns model resources, request scheduling, and
+ * worker-thread callback delivery.
+ */
 class LlamaEngine : public InferenceEngine {
   public:
     ~LlamaEngine() override;
@@ -32,7 +39,7 @@ class LlamaEngine : public InferenceEngine {
     std::shared_ptr<LlamaScheduler> scheduler_snapshot() const;
 
     mutable std::mutex _lifecycle_mutex;
-    std::shared_ptr<LlamaScheduler> scheduler;
+    std::shared_ptr<LlamaScheduler> _scheduler;
     Chorus::Logger _log;
 };
 } // namespace Chorus
