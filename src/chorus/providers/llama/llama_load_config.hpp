@@ -12,68 +12,61 @@
 
 namespace Chorus {
 
-/**
- * @brief Configures model loading, device placement, and inference capacity.
+/*
+ * Configures llama model loading, device placement, and inference capacity.
  *
- * The context window is shared by all slots. Disabling GPU use guarantees
- * CPU-only execution. The physical batch size must not exceed the logical
- * batch size.
+ * `Chorus::LlamaLoadConfig::context_size` is shared by every slot. Setting
+ * `Chorus::LlamaLoadConfig::use_gpu` to false guarantees CPU-only execution.
+ * `Chorus::LlamaLoadConfig::gpu_layers` accepts `-1` to assign every layer to
+ * the GPU. `Chorus::LlamaLoadConfig::n_ubatch` must not exceed
+ * `Chorus::LlamaLoadConfig::n_batch`.
  */
 struct LlamaLoadConfig {
-    // Path to the GGUF model file.
-    std::string weights_path;
-
-    // Total context window in tokens, shared by all slots.
-    uint32_t context_size = 2048;
-
-    // Number of CPU threads available to inference.
-    int32_t thread_count = 4;
-
-    // Whether GPU acceleration is allowed. False guarantees CPU-only execution.
-    bool use_gpu = true;
-
-    // Model layers assigned to the GPU. Zero means none; a negative value means all.
-    int32_t gpu_layers = -1;
-
-    // Whether gpu_layers is a requested value rather than a default.
-    bool gpu_layers_explicit = false;
-
-    // Maximum number of concurrent conversations.
-    uint32_t num_slots = 1;
-
-    // Maximum prompt tokens consumed from each active conversation per scheduler pass.
-    int32_t tokens_per_tick = 512;
-
-    // Maximum total tokens combined into one inference batch.
-    uint32_t n_batch = 2048;
-
-    // Maximum physical sub-batch size. Must not exceed n_batch.
-    uint32_t n_ubatch = 512;
-
-    // Requested zero-based primary GPU index.
-    int32_t main_gpu = 0;
-
-    // Whether main_gpu is a requested value rather than a default.
-    bool main_gpu_explicit = false;
+    std::string weights_path;         // Path to the GGUF model file.
+    uint32_t context_size = 2048;     // Total context window in tokens, shared by all slots.
+    int32_t thread_count = 4;         // Number of CPU threads available to inference.
+    bool use_gpu = true;              // Whether GPU acceleration is allowed. False guarantees CPU-only execution.
+    int32_t gpu_layers = -1;          // Model layers assigned to the GPU. Zero means none; a negative value means all.
+    bool gpu_layers_explicit = false; // Whether gpu_layers is a requested value rather than a default.
+    uint32_t num_slots = 1;           // Maximum number of concurrent conversations.
+    int32_t tokens_per_tick = 512;  // Maximum prompt tokens consumed from each active conversation per scheduler pass.
+    uint32_t n_batch = 2048;        // Maximum total tokens combined into one inference batch.
+    uint32_t n_ubatch = 512;        // Maximum physical sub-batch size. Must not exceed n_batch.
+    int32_t main_gpu = 0;           // Requested zero-based primary GPU index.
+    bool main_gpu_explicit = false; // Whether main_gpu is a requested value rather than a default.
 };
 
-/**
- * @brief Stores the empty, null-terminated device list used by CPU-only loads.
+/*
+ * Provides stable storage for CPU-only offload device selection.
  *
- * Value-initialize this array so its sole element is nullptr. llama.cpp treats
- * that list as "use no offload devices"; the storage must survive the model-load call.
+ * A value-initialized `Chorus::LlamaOffloadDeviceList` contains one null
+ * device. That list tells `::llama_model_load_from_file` not to use an offload
+ * device, and its storage must survive the model-load call.
  */
 using LlamaOffloadDeviceList = std::array<ggml_backend_dev_t, 1>;
 
-/**
- * @brief Declares every load option this provider accepts, for hosts to render.
+/*
+ * Declares llama load options for host rendering and parser validation.
  *
- * Defaults come from a default-constructed LlamaLoadConfig, so the member
- * initializers above stay the single source of truth. parse_llama_load_config
- * rejects any key absent from this table, so the two cannot disagree on names.
+ * Defaults come from a default-constructed `Chorus::LlamaLoadConfig`, keeping
+ * its member initializers as the single source of truth. The parser rejects
+ * schema and implementation mismatches instead of ignoring options.
  */
 const ProviderOptionDescriptors& llama_load_option_descriptors();
 
+/*
+ * Parses provider configuration into normalized llama load settings.
+ *
+ * Validation failures are returned as `Chorus::RequestRejection`.
+ *
+ * Returns:
+ *  - `Chorus::LlamaLoadConfig`: the validated load settings.
+ *  - `Chorus::RequestRejection`: the reason the configuration was rejected.
+ *
+ * Errors:
+ *  - `Chorus::ChorusError::InvalidRequest`: the model has no weights asset.
+ *  - `Chorus::ChorusError::UnsupportedOption`: an asset or option is unsupported.
+ */
 std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const ChorusConfig& config);
 llama_model_params make_llama_model_params(const LlamaLoadConfig& config, LlamaOffloadDeviceList& no_offload_devices);
 llama_context_params make_llama_context_params(const LlamaLoadConfig& config);

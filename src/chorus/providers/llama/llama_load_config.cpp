@@ -25,16 +25,67 @@ const char* value_shape(const ProviderOptionValue& value) {
     return "a map";
 }
 
-// Name and type agreement between the declared schema and what the parser
-// below will consume. Running it first means the value checks never see an
-// undeclared key, so a descriptor removed without its parse arm (or the
-// reverse) surfaces as a rejection rather than a silently ignored option.
 std::optional<RequestRejection> check_against_schema(const std::string& key, const ProviderOptionValue& value) {
     const auto* descriptor = find_option_descriptor(llama_load_option_descriptors(), key);
     if (!descriptor)
         return unsupported("Unknown llama load option '" + key + "'");
     if (value.index() != descriptor->default_value.index())
         return unsupported("Llama load option '" + key + "' must be " + value_shape(descriptor->default_value) + ".");
+    return std::nullopt;
+}
+
+std::optional<RequestRejection> apply_load_option(
+        LlamaLoadConfig& config, const std::string& key, const ProviderOptionValue& option) {
+    if (auto rejection = check_against_schema(key, option))
+        return rejection;
+
+    const auto* as_int = std::get_if<int64_t>(&option);
+    const auto* as_bool = std::get_if<bool>(&option);
+    if (key == "context_size" && as_int) {
+        if (*as_int <= 0 || static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
+            return unsupported("Llama load option 'context_size' must be a positive uint32.");
+        config.context_size = static_cast<uint32_t>(*as_int);
+    } else if (key == "thread_count" && as_int) {
+        if (*as_int <= 0 || *as_int > std::numeric_limits<int32_t>::max())
+            return unsupported("Llama load option 'thread_count' must be a positive int32.");
+        config.thread_count = static_cast<int32_t>(*as_int);
+    } else if (key == "use_gpu" && as_bool) {
+        config.use_gpu = *as_bool;
+    } else if (key == "gpu_layers" && as_int) {
+        if (*as_int < -1 || *as_int > std::numeric_limits<int32_t>::max())
+            return unsupported("Llama load option 'gpu_layers' must fit an int32 and be -1 or greater.");
+        config.gpu_layers = static_cast<int32_t>(*as_int);
+        config.gpu_layers_explicit = true;
+    } else if (key == "num_slots" && as_int) {
+        if (*as_int <= 0 || static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
+            return unsupported("Llama load option 'num_slots' must be a positive uint32.");
+        config.num_slots = static_cast<uint32_t>(*as_int);
+    } else if (key == "tokens_per_tick" && as_int) {
+        if (*as_int <= 0 || *as_int > std::numeric_limits<int32_t>::max())
+            return unsupported("Llama load option 'tokens_per_tick' must be a positive int32.");
+        config.tokens_per_tick = static_cast<int32_t>(*as_int);
+    } else if (key == "n_batch" && as_int) {
+        if (*as_int <= 0)
+            return unsupported("Llama load option 'n_batch' must be greater than zero.");
+        if (*as_int > std::numeric_limits<int32_t>::max())
+            return unsupported("Llama load option 'n_batch' does not fit llama_batch_init's capacity.");
+        config.n_batch = static_cast<uint32_t>(*as_int);
+    } else if (key == "n_ubatch" && as_int) {
+        if (*as_int <= 0)
+            return unsupported("Llama load option 'n_ubatch' must be greater than zero.");
+        if (static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
+            return unsupported("Llama load option 'n_ubatch' does not fit llama_context_params::n_ubatch.");
+        config.n_ubatch = static_cast<uint32_t>(*as_int);
+    } else if (key == "main_gpu" && as_int) {
+        if (*as_int < 0)
+            return unsupported("Llama load option 'main_gpu' must not be negative.");
+        if (*as_int > std::numeric_limits<int32_t>::max())
+            return unsupported("Llama load option 'main_gpu' does not fit llama_model_params::main_gpu.");
+        config.main_gpu = static_cast<int32_t>(*as_int);
+        config.main_gpu_explicit = true;
+    } else {
+        return unsupported("Llama load option '" + key + "' is declared but not applied; this is a bug.");
+    }
     return std::nullopt;
 }
 
@@ -92,11 +143,8 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
              4096,
              1,
              std::nullopt},
-            // These two constrain each other -- n_ubatch must not exceed
-            // n_batch -- and a widget bound cannot depend on a sibling option's
-            // live value. So each bound tracks the other's default: the pair is
-            // freely adjustable within the declared ranges, and moving one past
-            // the other is a deliberate act that earns the provider's rejection.
+            // Widget bounds cannot depend on sibling values, so each bound uses
+            // the other option's default. The parser validates the final pair.
             {"n_batch",
              "Batch Size",
              "Maximum total tokens combined into one inference batch.",
@@ -141,55 +189,8 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
             return unsupported("'llama' options must be a map.");
 
         for (const auto& [key, option] : *opts) {
-            if (auto rejection = check_against_schema(key, option))
+            if (auto rejection = apply_load_option(out, key, option))
                 return *rejection;
-            const auto* as_int = std::get_if<int64_t>(&option);
-            const auto* as_bool = std::get_if<bool>(&option);
-            if (key == "context_size" && as_int) {
-                if (*as_int <= 0 || static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
-                    return unsupported("Llama load option 'context_size' must be a positive uint32.");
-                out.context_size = static_cast<uint32_t>(*as_int);
-            } else if (key == "thread_count" && as_int) {
-                if (*as_int <= 0 || *as_int > std::numeric_limits<int32_t>::max())
-                    return unsupported("Llama load option 'thread_count' must be a positive int32.");
-                out.thread_count = static_cast<int32_t>(*as_int);
-            } else if (key == "use_gpu" && as_bool)
-                out.use_gpu = *as_bool;
-            else if (key == "gpu_layers" && as_int) {
-                if (*as_int < -1 || *as_int > std::numeric_limits<int32_t>::max())
-                    return unsupported("Llama load option 'gpu_layers' must fit an int32 and be -1 or greater.");
-                out.gpu_layers = static_cast<int32_t>(*as_int);
-                out.gpu_layers_explicit = true;
-            } else if (key == "num_slots" && as_int) {
-                if (*as_int <= 0 || static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
-                    return unsupported("Llama load option 'num_slots' must be a positive uint32.");
-                out.num_slots = static_cast<uint32_t>(*as_int);
-            } else if (key == "tokens_per_tick" && as_int) {
-                if (*as_int <= 0 || *as_int > std::numeric_limits<int32_t>::max())
-                    return unsupported("Llama load option 'tokens_per_tick' must be a positive int32.");
-                out.tokens_per_tick = static_cast<int32_t>(*as_int);
-            } else if (key == "n_batch" && as_int) {
-                if (*as_int <= 0)
-                    return unsupported("Llama load option 'n_batch' must be greater than zero.");
-                if (*as_int > std::numeric_limits<int32_t>::max())
-                    return unsupported("Llama load option 'n_batch' does not fit llama_batch_init's capacity.");
-                out.n_batch = static_cast<uint32_t>(*as_int);
-            } else if (key == "n_ubatch" && as_int) {
-                if (*as_int <= 0)
-                    return unsupported("Llama load option 'n_ubatch' must be greater than zero.");
-                if (static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
-                    return unsupported("Llama load option 'n_ubatch' does not fit llama_context_params::n_ubatch.");
-                out.n_ubatch = static_cast<uint32_t>(*as_int);
-            } else if (key == "main_gpu" && as_int) {
-                if (*as_int < 0)
-                    return unsupported("Llama load option 'main_gpu' must not be negative.");
-                if (*as_int > std::numeric_limits<int32_t>::max())
-                    return unsupported("Llama load option 'main_gpu' does not fit llama_model_params::main_gpu.");
-                out.main_gpu = static_cast<int32_t>(*as_int);
-                out.main_gpu_explicit = true;
-            } else {
-                return unsupported("Llama load option '" + key + "' is declared but not applied; this is a bug.");
-            }
         }
     }
 
