@@ -18,9 +18,39 @@ using namespace godot;
 namespace godot_chorus {
 namespace {
 
-// ===========================================================================
-// Common scalar keys: absent inherits, null clears, a present value sets.
-// ===========================================================================
+std::optional<String> apply_generation_config_overlays(
+    const Dictionary& request,
+    Chorus::GenerationConfigPatch& patch
+);
+std::optional<String> apply_generation_request_fields(
+    const Dictionary& request,
+    Chorus::GenerationRequest& gen_request
+);
+
+} // namespace
+
+std::variant<Chorus::GenerationRequest, String> normalize_generation_request(const Dictionary& request) {
+    if (!request.has("prompt"))
+        return String("[Chorus] generate() requires a 'prompt' key in the request dictionary.");
+    if (request["prompt"].get_type() == Variant::NIL)
+        return String("[Chorus] generate(): 'prompt' must not be null.");
+    return normalize_generation_input(request);
+}
+
+std::variant<Chorus::GenerationRequest, String> normalize_generation_input(const Dictionary& request) {
+    Chorus::GenerationConfigPatch patch;
+    if (auto error = apply_generation_config_overlays(request, patch))
+        return *error;
+
+    Chorus::GenerationRequest gen_request;
+    if (auto error = apply_generation_request_fields(request, gen_request))
+        return *error;
+
+    gen_request.overrides = std::move(patch);
+    return gen_request;
+}
+
+namespace {
 
 String scalar_error(const char* key, const char* requirement) {
     return String("[Chorus] generate(): '") + key + "' " + requirement;
@@ -99,11 +129,6 @@ std::optional<String> apply_common_scalar_overlays(const Dictionary& request, Ch
     return apply_float_overlay(request, "presence_penalty", patch.presence_penalty);
 }
 
-// ===========================================================================
-// stop: null clears to the provider default; [] explicitly disables inherited
-// stops; a non-empty array replaces them.
-// ===========================================================================
-
 std::optional<String> apply_stop_overlay(const Dictionary& request, Chorus::GenerationConfigPatch& patch) {
     if (!request.has("stop"))
         return std::nullopt;
@@ -127,12 +152,6 @@ std::optional<String> apply_stop_overlay(const Dictionary& request, Chorus::Gene
     patch.stop = Chorus::ConfigPatch<std::vector<std::string>>::set(std::move(stops));
     return std::nullopt;
 }
-
-// ===========================================================================
-// constraint: the canonical {"format", "source"} spelling plus the grammar /
-// json_schema / json conveniences. At most one spelling may be present; null
-// clears an inherited constraint.
-// ===========================================================================
 
 constexpr std::array<const char*, 4> kConstraintKeys = {"constraint", "grammar", "json_schema", "json"};
 
@@ -183,7 +202,7 @@ std::optional<String> apply_constraint_overlay(const Dictionary& request, Chorus
     } else if (key == "grammar") {
         constraint.format = Chorus::ConstraintFormat::Gbnf;
         constraint.source = std::string(((String)value).utf8().get_data());
-    } else { // "json_schema" or "json": two spellings of the same schema-text convenience.
+    } else {
         constraint.format = Chorus::ConstraintFormat::JsonSchema;
         constraint.source = std::string(((String)value).utf8().get_data());
     }
@@ -191,15 +210,6 @@ std::optional<String> apply_constraint_overlay(const Dictionary& request, Chorus
     patch.constraint = Chorus::ConfigPatch<Chorus::OutputConstraint>::set(constraint);
     return std::nullopt;
 }
-
-// ===========================================================================
-// provider_options: recursive namespace merge into the patch's ProviderOptionMap. A
-// nested Dictionary deep-merges; any other value overwrites the leaf via
-// option_conversion's Variant->ProviderOptionValue. A null leaf records a dotted
-// erasure path instead of a value: the layer it has to remove lives below the
-// patch, in the runtime's host defaults, so the removal travels as an
-// instruction rather than happening here.
-// ===========================================================================
 
 std::optional<String> merge_provider_dictionary_overrides(
     Chorus::GenerationConfigPatch& patch,
@@ -216,6 +226,8 @@ std::optional<String> merge_provider_dictionary_overrides(
         const std::string path = prefix.empty() ? key : prefix + "." + key;
         const Variant value = overrides[key_variant];
 
+        // The inherited value lives in the runtime's host defaults, so erasure
+        // must cross the boundary as an instruction in the patch.
         if (value.get_type() == Variant::NIL) {
             patch.provider_option_erasures.push_back(path);
             continue;
@@ -243,11 +255,6 @@ std::optional<String> merge_provider_dictionary_overrides(
     }
     return std::nullopt;
 }
-
-// ===========================================================================
-// repeat_penalty: convenience for provider_options["llama"]["repeat_penalty"],
-// applied after provider_options so it wins; null erases the inherited leaf.
-// ===========================================================================
 
 constexpr const char* kRepeatPenaltyPath = "llama.repeat_penalty";
 
@@ -286,11 +293,6 @@ apply_repeat_penalty_convenience(Chorus::GenerationConfigPatch& patch, const Dic
     return std::nullopt;
 }
 
-// ===========================================================================
-// show_thinking: reasoning-model toggle. Absent inherits, null clears an
-// inherited value back to the template/provider default, a bool sets it.
-// ===========================================================================
-
 std::optional<String> apply_show_thinking_overlay(const Dictionary& request, Chorus::GenerationConfigPatch& patch) {
     if (!request.has("show_thinking"))
         return std::nullopt;
@@ -305,10 +307,6 @@ std::optional<String> apply_show_thinking_overlay(const Dictionary& request, Cho
     return std::nullopt;
 }
 
-// ===========================================================================
-// inject: per-request ephemeral messages, {role, content, depth?} entries.
-// ===========================================================================
-
 std::optional<String> apply_inject_overlay(const Dictionary& request, Chorus::GenerationRequest& gen_request) {
     if (!request.has("inject"))
         return std::nullopt;
@@ -321,11 +319,6 @@ std::optional<String> apply_inject_overlay(const Dictionary& request, Chorus::Ge
     gen_request.inject = std::move(std::get<std::vector<Chorus::InjectedMessage>>(parsed));
     return std::nullopt;
 }
-
-// ===========================================================================
-// chat_template: per-request jinja override. Null reads as absent (the node
-// default may still apply downstream).
-// ===========================================================================
 
 std::optional<String> apply_chat_template_overlay(const Dictionary& request, Chorus::GenerationRequest& gen_request) {
     if (!request.has("chat_template"))
@@ -363,24 +356,20 @@ std::variant<std::vector<Chorus::InjectedMessage>, String> normalize_inject_arra
     return inject;
 }
 
-std::variant<Chorus::GenerationRequest, String> normalize_generation_request(const Dictionary& request) {
-    if (!request.has("prompt"))
-        return String("[Chorus] generate() requires a 'prompt' key in the request dictionary.");
-    if (request["prompt"].get_type() == Variant::NIL)
-        return String("[Chorus] generate(): 'prompt' must not be null.");
-    return normalize_generation_overrides(request);
-}
+namespace {
 
-std::variant<Chorus::GenerationRequest, String> normalize_generation_overrides(const Dictionary& request) {
-    Chorus::GenerationConfigPatch patch;
+std::optional<String> apply_generation_config_overlays(
+    const Dictionary& request,
+    Chorus::GenerationConfigPatch& patch
+) {
     if (auto error = apply_common_scalar_overlays(request, patch))
-        return *error;
+        return error;
     if (auto error = apply_stop_overlay(request, patch))
-        return *error;
+        return error;
     if (auto error = apply_constraint_overlay(request, patch))
-        return *error;
+        return error;
     if (auto error = apply_show_thinking_overlay(request, patch))
-        return *error;
+        return error;
 
     if (request.has("provider_options")) {
         const Variant provider_options = request["provider_options"];
@@ -388,12 +377,15 @@ std::variant<Chorus::GenerationRequest, String> normalize_generation_overrides(c
             return String("[Chorus] generate(): 'provider_options' must be a Dictionary.");
         if (auto error =
                 merge_provider_dictionary_overrides(patch, patch.provider_options, "", (Dictionary)provider_options))
-            return *error;
+            return error;
     }
-    if (auto error = apply_repeat_penalty_convenience(patch, request))
-        return *error;
+    return apply_repeat_penalty_convenience(patch, request);
+}
 
-    Chorus::GenerationRequest gen_request;
+std::optional<String> apply_generation_request_fields(
+    const Dictionary& request,
+    Chorus::GenerationRequest& gen_request
+) {
     if (request.has("prompt") && request["prompt"].get_type() != Variant::NIL) {
         if (request["prompt"].get_type() != Variant::STRING)
             return scalar_error("prompt", "must be a String.");
@@ -418,11 +410,10 @@ std::variant<Chorus::GenerationRequest, String> normalize_generation_overrides(c
         gen_request.session_id = std::string(((String)request["session"]).utf8().get_data());
     }
     if (auto error = apply_inject_overlay(request, gen_request))
-        return *error;
-    if (auto error = apply_chat_template_overlay(request, gen_request))
-        return *error;
-    gen_request.overrides = std::move(patch);
-    return gen_request;
+        return error;
+    return apply_chat_template_overlay(request, gen_request);
 }
+
+} // namespace
 
 } // namespace godot_chorus

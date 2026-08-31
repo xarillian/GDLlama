@@ -9,11 +9,14 @@
 
 #include "chorus/core/generation_config.hpp"
 
-// Reusable, shared generation defaults for one or more GodotChorus nodes. Every
-// scalar is an override flag paired with a typed value; disabled overrides
-// contribute nothing when merged onto a request. The Godot-facing state is
-// backed directly by a Chorus::GenerationConfigPatch so to_patch() reuses the
-// same overlay vocabulary.
+/*
+ * Stores reusable generation overrides shared by one or more `GodotChorus` nodes.
+ *
+ * Standard generation settings pair an override flag with a typed value.
+ * Disabled overrides contribute nothing when merged onto a request. The
+ * Godot-facing state is backed directly by `Chorus::GenerationConfigPatch`,
+ * so `ChorusGenerationDefaults::to_patch` uses the same overlay vocabulary.
+ */
 class ChorusGenerationDefaults : public godot::Resource {
     GDCLASS(ChorusGenerationDefaults, godot::Resource);
 
@@ -29,6 +32,19 @@ class ChorusGenerationDefaults : public godot::Resource {
     };
 
     ChorusGenerationDefaults();
+
+    /*
+     * Converts the current Inspector state into a host-neutral generation patch.
+     *
+     * Disabled overrides remain `Chorus::PatchAction::Inherit`; enabled
+     * overrides become `Chorus::PatchAction::Set`. An enabled empty stop array
+     * is therefore an explicit empty replacement.
+     *
+     * Returns:
+     *  - `Chorus::GenerationConfigPatch`: the completed generation overlay.
+     *  - `std::nullopt`: the `provider_options` property contains an unsupported value.
+     */
+    std::optional<Chorus::GenerationConfigPatch> to_patch() const;
 
     void set_override_max_tokens(bool enabled);
     bool get_override_max_tokens() const;
@@ -84,12 +100,6 @@ class ChorusGenerationDefaults : public godot::Resource {
 
     void set_provider_options(const godot::Dictionary& options);
     godot::Dictionary get_provider_options() const;
-
-    // Converts the current Inspector state into the host-neutral overlay
-    // patch. Disabled overrides map to Inherit, enabled ones to Set (an
-    // enabled, empty stop array is therefore an explicit empty replacement).
-    // Returns no patch when provider_options contains an unsupported value.
-    std::optional<Chorus::GenerationConfigPatch> to_patch() const;
 
   private:
     Chorus::GenerationConfigPatch _patch;

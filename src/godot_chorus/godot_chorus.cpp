@@ -335,7 +335,7 @@ int64_t GodotChorus::regenerate(const String& session, const Dictionary& overrid
     if (!push_host_defaults())
         return -1;
 
-    auto normalized = godot_chorus::normalize_generation_overrides(overrides);
+    auto normalized = godot_chorus::normalize_generation_input(overrides);
     if (std::holds_alternative<String>(normalized)) {
         UtilityFunctions::push_error(std::get<String>(normalized));
         return -1;

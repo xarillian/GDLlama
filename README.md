@@ -6,11 +6,8 @@ Chorus treats resource-constrained hardware, such as consumer desktop GPUs or mo
 
 ## Setup
 
-## Implementations
+## Godot
 
-### Godot
+## C ABI
 
-### C ABI
-
-### CLI
 

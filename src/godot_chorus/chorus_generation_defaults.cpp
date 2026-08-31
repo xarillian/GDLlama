@@ -50,9 +50,16 @@ ChorusGenerationDefaults::ChorusGenerationDefaults() {
     _patch.max_tokens = Chorus::ConfigPatch<int32_t>::set(128);
 }
 
-// ===========================================================================
-// max_tokens
-// ===========================================================================
+std::optional<Chorus::GenerationConfigPatch> ChorusGenerationDefaults::to_patch() const {
+    Chorus::GenerationConfigPatch patch = _patch;
+    if (!_provider_options.is_empty()) {
+        auto converted = godot_chorus::variant_to_option_value(_provider_options);
+        if (!converted || !std::holds_alternative<Chorus::ProviderOptionMap>(*converted))
+            return std::nullopt;
+        patch.provider_options = std::get<Chorus::ProviderOptionMap>(std::move(*converted));
+    }
+    return patch;
+}
 
 void ChorusGenerationDefaults::set_override_max_tokens(bool enabled) {
     _patch.max_tokens.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
@@ -67,10 +74,6 @@ int32_t ChorusGenerationDefaults::get_max_tokens() const {
     return _patch.max_tokens.value;
 }
 
-// ===========================================================================
-// temperature
-// ===========================================================================
-
 void ChorusGenerationDefaults::set_override_temperature(bool enabled) {
     _patch.temperature.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
 }
@@ -83,10 +86,6 @@ void ChorusGenerationDefaults::set_temperature(float value) {
 float ChorusGenerationDefaults::get_temperature() const {
     return _patch.temperature.value;
 }
-
-// ===========================================================================
-// top_k
-// ===========================================================================
 
 void ChorusGenerationDefaults::set_override_top_k(bool enabled) {
     _patch.top_k.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
@@ -101,10 +100,6 @@ int32_t ChorusGenerationDefaults::get_top_k() const {
     return _patch.top_k.value;
 }
 
-// ===========================================================================
-// top_p
-// ===========================================================================
-
 void ChorusGenerationDefaults::set_override_top_p(bool enabled) {
     _patch.top_p.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
 }
@@ -117,10 +112,6 @@ void ChorusGenerationDefaults::set_top_p(float value) {
 float ChorusGenerationDefaults::get_top_p() const {
     return _patch.top_p.value;
 }
-
-// ===========================================================================
-// seed
-// ===========================================================================
 
 void ChorusGenerationDefaults::set_override_seed(bool enabled) {
     _patch.seed.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
@@ -135,10 +126,6 @@ int64_t ChorusGenerationDefaults::get_seed() const {
     return (int64_t)_patch.seed.value;
 }
 
-// ===========================================================================
-// frequency_penalty
-// ===========================================================================
-
 void ChorusGenerationDefaults::set_override_frequency_penalty(bool enabled) {
     _patch.frequency_penalty.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
 }
@@ -151,10 +138,6 @@ void ChorusGenerationDefaults::set_frequency_penalty(float value) {
 float ChorusGenerationDefaults::get_frequency_penalty() const {
     return _patch.frequency_penalty.value;
 }
-
-// ===========================================================================
-// presence_penalty
-// ===========================================================================
 
 void ChorusGenerationDefaults::set_override_presence_penalty(bool enabled) {
     _patch.presence_penalty.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
@@ -169,10 +152,6 @@ float ChorusGenerationDefaults::get_presence_penalty() const {
     return _patch.presence_penalty.value;
 }
 
-// ===========================================================================
-// stop
-// ===========================================================================
-
 void ChorusGenerationDefaults::set_override_stop(bool enabled) {
     _patch.stop.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
 }
@@ -185,10 +164,6 @@ void ChorusGenerationDefaults::set_stop(const PackedStringArray& value) {
 PackedStringArray ChorusGenerationDefaults::get_stop() const {
     return to_packed_string_array(_patch.stop.value);
 }
-
-// ===========================================================================
-// constraint
-// ===========================================================================
 
 void ChorusGenerationDefaults::set_override_constraint(bool enabled) {
     _patch.constraint.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
@@ -209,10 +184,6 @@ String ChorusGenerationDefaults::get_constraint_source() const {
     return godot_chorus::to_godot_string(_patch.constraint.value.source);
 }
 
-// ===========================================================================
-// show_thinking (disabled = the template/provider default, typically on)
-// ===========================================================================
-
 void ChorusGenerationDefaults::set_override_show_thinking(bool enabled) {
     _patch.show_thinking.action = enabled ? Chorus::PatchAction::Set : Chorus::PatchAction::Inherit;
 }
@@ -226,10 +197,6 @@ bool ChorusGenerationDefaults::get_show_thinking() const {
     return _patch.show_thinking.value;
 }
 
-// ===========================================================================
-// provider_options
-// ===========================================================================
-
 void ChorusGenerationDefaults::set_provider_options(const Dictionary& options) {
     _provider_options = options;
 }
@@ -237,27 +204,7 @@ Dictionary ChorusGenerationDefaults::get_provider_options() const {
     return _provider_options;
 }
 
-// ===========================================================================
-// Conversion
-// ===========================================================================
-
-std::optional<Chorus::GenerationConfigPatch> ChorusGenerationDefaults::to_patch() const {
-    Chorus::GenerationConfigPatch patch = _patch;
-    if (!_provider_options.is_empty()) {
-        auto converted = godot_chorus::variant_to_option_value(_provider_options);
-        if (!converted || !std::holds_alternative<Chorus::ProviderOptionMap>(*converted))
-            return std::nullopt;
-        patch.provider_options = std::get<Chorus::ProviderOptionMap>(std::move(*converted));
-    }
-    return patch;
-}
-
-// ===========================================================================
-// Bindings
-// ===========================================================================
-
 void ChorusGenerationDefaults::_bind_methods() {
-    // === ConstraintFormat enum ===
     BIND_ENUM_CONSTANT(CONSTRAINT_FORMAT_GBNF);
     BIND_ENUM_CONSTANT(CONSTRAINT_FORMAT_JSON_SCHEMA);
     BIND_ENUM_CONSTANT(CONSTRAINT_FORMAT_REGEX);
