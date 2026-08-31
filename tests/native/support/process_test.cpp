@@ -143,7 +143,7 @@ bool run_isolated_test_child(const std::string& child_name, std::chrono::millise
 
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     int status = 0;
-    while (true) {
+    for (bool first_poll = true; first_poll || std::chrono::steady_clock::now() < deadline; first_poll = false) {
         const pid_t result = waitpid(child, &status, WNOHANG);
         if (result == child) {
             if (WIFEXITED(status)) {
@@ -168,13 +168,13 @@ bool run_isolated_test_child(const std::string& child_name, std::chrono::millise
                       << wait_error << ".\n";
             return false;
         }
-        if (std::chrono::steady_clock::now() >= deadline) {
-            terminate_and_reap(child);
-            std::cerr << "[process test] Child '" << child_name << "' timed out after " << timeout.count() << " ms.\n";
-            return false;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+
+    terminate_and_reap(child);
+    std::cerr << "[process test] Child '" << child_name << "' timed out after " << timeout.count() << " ms.\n";
+    return false;
 #endif
 }
 

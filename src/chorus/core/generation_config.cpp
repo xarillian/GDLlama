@@ -41,10 +41,7 @@ ProviderOptionMap merge_option_maps(const ProviderOptionMap& base, const Provide
 void erase_option_path(ProviderOptionMap& options, const std::string& path) {
     ProviderOptionMap* level = &options;
     size_t start = 0;
-    while (true) {
-        const size_t dot = path.find('.', start);
-        if (dot == std::string::npos)
-            break;
+    for (size_t dot = path.find('.', start); dot != std::string::npos; dot = path.find('.', start)) {
         const auto next = level->find(path.substr(start, dot - start));
         if (next == level->end())
             return;

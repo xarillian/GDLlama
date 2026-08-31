@@ -92,10 +92,8 @@ std::vector<LogRecord> LlamaLogAssembler::feed(int ggml_level, const char* text)
     const LogLevel fragment_level = _pending_level;
     const std::string_view fragment(text);
     size_t start = 0;
-    while (true) {
-        const size_t newline = fragment.find('\n', start);
-        if (newline == std::string_view::npos)
-            break;
+    for (size_t newline = fragment.find('\n', start); newline != std::string_view::npos;
+         newline = fragment.find('\n', start)) {
         if (!_has_pending) {
             _pending_level = fragment_level;
             _has_pending = true;

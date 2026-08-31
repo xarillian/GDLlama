@@ -307,6 +307,9 @@ class ChorusRuntime {
   private:
     void assert_host_thread() const;
     void enqueue_signal(const ChorusSignal& signal);
+    std::vector<ChorusSignal> drain_pending_signals();
+    void append_signal_events(const ChorusSignal& signal, std::vector<RuntimeEvent>& events);
+    void append_engine_failure(std::vector<RuntimeEvent>& events);
     void unload_engine();
     void cancel_live_requests();
     void retire_request(RequestId id);

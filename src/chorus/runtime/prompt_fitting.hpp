@@ -16,16 +16,29 @@ struct FitResult {
 
 using RenderProbe = std::function<std::optional<int32_t>(const std::vector<ChatMessage>&)>;
 
-// Returns `base` with `inject` entries placed by depth-from-end (0 = append;
-// clamped to just after the leading system run). Equal depths keep array order.
+/*
+ * Places injected messages by depth from the end of a conversation.
+ *
+ * Depth zero appends. Entries that would cross the leading system-message run
+ * are clamped just after it, and entries at equal depths retain array order.
+ */
 std::vector<ChatMessage> place_injections(std::vector<ChatMessage> base, const std::vector<InjectedMessage>& inject);
 
-// Pin the leading system run and all injections, then drop the oldest
-// non-pinned message until the probe fits the budget. Once dropping begins,
-// the window is advanced to the next user turn (strict-alternation templates
-// reject assistant-led windows; orphaned replies are dangling context).
-// InvalidRequest when nothing droppable remains. A nullopt probe
-// short-circuits to "unfitted".
+/*
+ * Fits a conversation within a rendered-token budget.
+ *
+ * The leading system-message run and every injection remain pinned while the
+ * oldest eligible messages are removed. After removal begins, the surviving
+ * history starts at a user turn. A probe returning `std::nullopt` disables
+ * fitting and preserves the complete history.
+ *
+ * Returns:
+ *  - `Chorus::FitResult`: the fitted messages and number of removed history messages.
+ *  - `Chorus::ChorusError`: the conversation cannot fit.
+ *
+ * Errors:
+ *  - `Chorus::ChorusError::InvalidRequest`: pinned messages exceed the budget.
+ */
 std::variant<FitResult, ChorusError> fit_messages_to_budget(
     const std::vector<ChatMessage>& history,
     const std::vector<InjectedMessage>& inject,

@@ -82,56 +82,6 @@ TurnOutcome ChorusRuntime::last_turn_outcome(const SessionId& session) const {
     return it == _histories.end() ? TurnOutcome::None : it->second.last_turn_outcome;
 }
 
-std::variant<ChorusRuntime::FittedTurn, SubmitResult>
-ChorusRuntime::fit_turn_messages(const ResolvedRequest& resolved, std::vector<ChatMessage> prospective) const {
-    const GenerationRequest& request = resolved.request;
-    const bool show_thinking = resolved.config.show_thinking.value_or(true);
-
-    auto info = _engine->loaded_model_info();
-    if (!info || !info->per_request_context) // no budget known: fitting doesn't apply
-        return FittedTurn{place_injections(std::move(prospective), request.inject), 0};
-
-    const auto& max_tokens = resolved.config.max_tokens;
-    const int32_t reservation =
-        (max_tokens.has_value() && *max_tokens >= 0) ? *max_tokens : kFallbackResponseReservation;
-    // Clamp before the signed subtraction; a window over INT32_MAX would wrap
-    // the budget negative and reject every turn.
-    const int32_t context = (int32_t)std::min<uint32_t>(*info->per_request_context, (uint32_t)INT32_MAX);
-    const int32_t budget = context - reservation;
-    if (budget <= 0)
-        return SubmitResult{
-            -1,
-            ChorusError::InvalidRequest,
-            "Response reservation (" + std::to_string(reservation) + " tokens, from max_tokens or the " +
-                std::to_string(kFallbackResponseReservation) +
-                "-token default) leaves no prompt room in the per-request context (" + std::to_string(context) +
-                " tokens)."
-        };
-
-    // The probe keeps the text of its most recent successful render; when the
-    // fit succeeds that is exactly the winning candidate's render, which
-    // render_prompt can then reuse. A failed render invalidates it so a
-    // skipped fit can never pair stale text with a different message list.
-    std::optional<std::string> last_render;
-    RenderProbe probe = [&](const std::vector<ChatMessage>& candidate) -> std::optional<int32_t> {
-        auto rendered = _engine->render_chat_prompt(candidate, resolved.chat_template, show_thinking);
-        if (!rendered) {
-            last_render.reset();
-            return std::nullopt;
-        }
-        last_render = std::move(rendered->text);
-        return rendered->token_count;
-    };
-
-    auto fit = fit_messages_to_budget(prospective, request.inject, budget, probe);
-    if (std::holds_alternative<ChorusError>(fit))
-        return SubmitResult{
-            -1, std::get<ChorusError>(fit), "Conversation does not fit the context window even after truncation."
-        };
-    auto& result = std::get<FitResult>(fit);
-    return FittedTurn{std::move(result.fitted), result.dropped, std::move(last_render)};
-}
-
 std::optional<std::string> ChorusRuntime::render_prompt(
     const SessionId& session,
     const std::string& template_override,
@@ -189,7 +139,6 @@ SubmitResult ChorusRuntime::regenerate(const GenerationRequest& request) {
 
     const ResolvedRequest resolved = resolve_request(request);
 
-    // Prospective list = history minus the trailing assistant reply.
     std::vector<ChatMessage> prospective(history_it->second.messages.begin(), history_it->second.messages.end() - 1);
     auto fitted = fit_turn_messages(resolved, std::move(prospective));
     if (std::holds_alternative<SubmitResult>(fitted))
@@ -204,9 +153,59 @@ SubmitResult ChorusRuntime::regenerate(const GenerationRequest& request) {
     return submit_engine_request(resolved, std::move(engine_request), turn.dropped, history_it->second.messages.back());
 }
 
+std::variant<ChorusRuntime::FittedTurn, SubmitResult>
+ChorusRuntime::fit_turn_messages(const ResolvedRequest& resolved, std::vector<ChatMessage> prospective) const {
+    const GenerationRequest& request = resolved.request;
+    const bool show_thinking = resolved.config.show_thinking.value_or(true);
+
+    auto info = _engine->loaded_model_info();
+    if (!info || !info->per_request_context) // no budget known: fitting doesn't apply
+        return FittedTurn{place_injections(std::move(prospective), request.inject), 0};
+
+    const auto& max_tokens = resolved.config.max_tokens;
+    const int32_t reservation =
+        (max_tokens.has_value() && *max_tokens >= 0) ? *max_tokens : kFallbackResponseReservation;
+    // Clamp before the signed subtraction; a window over INT32_MAX would wrap
+    // the budget negative and reject every turn.
+    const int32_t context = (int32_t)std::min<uint32_t>(*info->per_request_context, (uint32_t)INT32_MAX);
+    const int32_t budget = context - reservation;
+    if (budget <= 0)
+        return SubmitResult{
+            -1,
+            ChorusError::InvalidRequest,
+            "Response reservation (" + std::to_string(reservation) + " tokens, from max_tokens or the " +
+                std::to_string(kFallbackResponseReservation) +
+                "-token default) leaves no prompt room in the per-request context (" + std::to_string(context) +
+                " tokens)."
+        };
+
+    // The probe keeps the text of its most recent successful render; when the
+    // fit succeeds that is exactly the winning candidate's render, which
+    // render_prompt can then reuse. A failed render invalidates it so a
+    // skipped fit can never pair stale text with a different message list.
+    std::optional<std::string> last_render;
+    RenderProbe probe = [&](const std::vector<ChatMessage>& candidate) -> std::optional<int32_t> {
+        auto rendered = _engine->render_chat_prompt(candidate, resolved.chat_template, show_thinking);
+        if (!rendered) {
+            last_render.reset();
+            return std::nullopt;
+        }
+        last_render = std::move(rendered->text);
+        return rendered->token_count;
+    };
+
+    auto fit = fit_messages_to_budget(prospective, request.inject, budget, probe);
+    if (std::holds_alternative<ChorusError>(fit))
+        return SubmitResult{
+            -1, std::get<ChorusError>(fit), "Conversation does not fit the context window even after truncation."
+        };
+    auto& result = std::get<FitResult>(fit);
+    return FittedTurn{std::move(result.fitted), result.dropped, std::move(last_render)};
+}
+
 void ChorusRuntime::finish_turn(const LiveRequest& live, TurnOutcome outcome, const std::string& text) {
     if (!live.session_id)
-        return; // stateless request: no turn bookkeeping
+        return;
     auto history_it = _histories.find(*live.session_id);
     if (history_it == _histories.end())
         return; // defensive: lane vanished (should be impossible under busy-mutation rule)
@@ -220,7 +219,7 @@ void ChorusRuntime::finish_turn(const LiveRequest& live, TurnOutcome outcome, co
     // Cancelled/Errored: undo this turn's mutation. SessionBusy guarantees the
     // trailing message is exactly what this turn added.
     if (live.replaced_reply) {
-        conversation.messages.push_back(*live.replaced_reply); // regenerate: restore old reply
+        conversation.messages.push_back(*live.replaced_reply);
     } else if (!conversation.messages.empty() && conversation.messages.back().role == "user") {
         conversation.messages.pop_back();
     }
