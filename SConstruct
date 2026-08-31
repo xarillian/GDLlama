@@ -4,6 +4,159 @@ import sys
 import subprocess
 from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, Glob, SConscript, Value
 
+# Build variant
+use_vulkan = ARGUMENTS.pop("use_vulkan", "no") == "yes"
+use_metal = ARGUMENTS.pop("use_metal", "no") == "yes"
+env = SConscript("third-party/godot-cpp/SConstruct")
+
+llama_variant_parts = []
+if use_vulkan:
+    llama_variant_parts.append("vulkan")
+if use_metal:
+    llama_variant_parts.append("metal")
+llama_variant = "-".join(llama_variant_parts) or "cpu"
+llama_platform = str(env["platform"])
+llama_arch = str(env.get("arch", "unknown") or "unknown")
+llama_build_identity = f"{llama_platform}-{llama_arch}"
+llama_build_dir = os.path.join(
+    "third-party", "llama.cpp", "build", "chorus", llama_build_identity, llama_variant
+)
+print(f">>> [SCons] llama.cpp variant: {os.path.abspath(llama_build_dir)}")
+
+env["use_vulkan"] = use_vulkan
+env["use_metal"] = use_metal
+env["llama_build_dir"] = llama_build_dir
+
+# Platform toolchain
+if env["platform"] == "windows":
+    lib_paths = [
+        os.path.join(llama_build_dir, "src", "Release"),
+        os.path.join(llama_build_dir, "ggml", "src", "Release"),
+        os.path.join(llama_build_dir, "common", "Release"),
+    ]
+    if use_vulkan:
+        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-vulkan", "Release"))
+else:
+    lib_paths = [
+        os.path.join(llama_build_dir, "src"),
+        os.path.join(llama_build_dir, "ggml", "src"),
+        os.path.join(llama_build_dir, "common"),
+    ]
+    if use_vulkan:
+        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-vulkan"))
+    if use_metal and env["platform"] == "macos":
+        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-metal"))
+
+if env["platform"] == "windows":
+    # llama.cpp's Release archive uses `/MD`, so every linked object must use the same CRT.
+    for flag in ["/MT", "/MTd", "/MDd"]:
+        if flag in env["CCFLAGS"]:
+            env["CCFLAGS"].remove(flag)
+    
+    env.Append(CCFLAGS=["/MD"])
+
+    # Template-heavy llama.cpp headers can exceed COFF's default section limit.
+    env.Append(CXXFLAGS=["/std:c++20", "/EHsc", "/bigobj"])
+    env["LIBPATH"] = lib_paths
+    env.Append(LIBS=["advapi32", "user32", "kernel32"])
+
+    if use_vulkan:
+        env.Append(LIBS=["vulkan-1"])
+        vulkan_sdk = os.environ.get("VULKAN_SDK")
+        if vulkan_sdk:
+            print(f">>> [SCons] Found Vulkan SDK at: {vulkan_sdk}")
+            env.Append(LIBPATH=[os.path.join(vulkan_sdk, "Lib")])
+        else:
+            print(">>> [SCons] WARNING: VULKAN_SDK env var not found. Linking might fail.")
+else:
+    env.Append(CXXFLAGS=["-std=c++20", "-fexceptions"])
+
+    if sys.platform.startswith("linux"):
+        env.Append(CXXFLAGS=["-fopenmp"])
+        env.Append(LINKFLAGS=["-fopenmp"])
+
+    env["LIBPATH"] = lib_paths
+
+    if use_vulkan and sys.platform.startswith("linux"):
+        env.Append(LIBS=["vulkan"])
+
+    if sys.platform == "darwin" or env["platform"] == "macos":
+        env.Append(LINKFLAGS=[
+            "-framework", "Accelerate",
+            "-framework", "Foundation",
+            "-framework", "Metal",
+            "-framework", "MetalKit"
+            ]
+        )
+
+
+# Vendor boundary
+env.Append(CPPPATH=["include", "src"])
+
+# Vendor headers are scoped to the llama provider and its tests. An include
+# from an inner layer or host adapter fails at compile time.
+llama_cpppath = [
+    "third-party/llama.cpp/include",
+    "third-party/llama.cpp/common",
+    "third-party/llama.cpp/src",
+    "third-party/llama.cpp/ggml/include",
+    "third-party/llama.cpp/ggml/src",
+    "third-party/llama.cpp/vendor",  # nlohmann/json, vendored inside llama.cpp
+]
+
+def with_llama_includes(base_env):
+    scoped = base_env.Clone()
+    scoped.Append(CPPPATH=llama_cpppath)
+    return scoped
+
+# Layer source sets
+# VariantDir redirects intermediate build artifacts (.os/.o) into bin/obj/
+# so they don't clutter the source tree. duplicate=0 keeps sources in place.
+VariantDir("bin/obj/chorus",       "src/chorus",       duplicate=0)
+VariantDir("bin/obj/godot_chorus", "src/godot_chorus", duplicate=0)
+VariantDir("bin/obj/chorus_c",     "src/chorus_c",     duplicate=0)
+VariantDir("bin/obj/tests",        "tests",            duplicate=0)
+
+sources_core    = Glob("bin/obj/chorus/core/*.cpp")
+sources_factory = Glob("bin/obj/chorus/*.cpp")
+sources_runtime = Glob("bin/obj/chorus/runtime/*.cpp")
+sources_echo    = Glob("bin/obj/chorus/providers/echo/*.cpp")
+sources_llama   = Glob("bin/obj/chorus/providers/llama/*.cpp")
+sources_godot   = Glob("bin/obj/godot_chorus/*.cpp")
+sources_c       = Glob("bin/obj/chorus_c/*.cpp")
+sources_chorus  = sources_echo + sources_core + sources_factory + sources_runtime
+sources_tests   = (
+    Glob("bin/obj/tests/native/*.cpp") +
+    Glob("bin/obj/tests/native/support/*.cpp") +
+    Glob("bin/obj/tests/native/wlib/*.cpp") +
+    Glob("bin/obj/tests/native/core/*.cpp") +
+    Glob("bin/obj/tests/native/chorus_c/*.cpp") +
+    Glob("bin/obj/tests/native/factory/*.cpp") +
+    Glob("bin/obj/tests/native/providers/echo/*.cpp") +
+    Glob("bin/obj/tests/native/runtime/*.cpp")
+)
+sources_tests_c = Glob("bin/obj/tests/native/chorus_c/*.c")
+# llama tests stay separate so only they compile with vendor headers.
+sources_tests_llama = Glob("bin/obj/tests/native/providers/llama/*.cpp")
+
+# One helper keeps the real test build and clangd flags identical.
+def make_test_env(base_env):
+    test_env = base_env.Clone()
+    test_env.Append(CPPDEFINES=["TEST_BUILD"])
+    if base_env["platform"] == "windows":
+        test_env.Append(CFLAGS=["/std:c11"])
+    else:
+        test_env.Append(CFLAGS=["-std=c11"])
+    test_env.Append(CPPPATH=["tests/native", "tests/native/support"])
+    return test_env
+
+def make_chorus_c_build_env(base_env):
+    chorus_c_env = base_env.Clone()
+    if base_env["platform"] == "windows":
+        chorus_c_env.Append(CPPDEFINES=["CHORUS_C_BUILD"])
+    return chorus_c_env
+
+# llama.cpp dependency
 def discover_llama_revision():
     try:
         return subprocess.check_output(
@@ -31,9 +184,6 @@ def build_llama_with_cmake(target, source, env):
         "-DGGML_NATIVE=ON"
     ]
 
-    # --- GPU CONFIG --- #
-
-    # llama.cpp b9934 renamed the `common` target to `llama-common` (+ `llama-common-base`).
     targets_to_build = ["llama", "llama-common"]
 
     if env.get("use_vulkan", False):
@@ -48,11 +198,10 @@ def build_llama_with_cmake(target, source, env):
         cmake_config.append("-DLLAMA_METAL_EMBED_LIBRARY=ON")
     else:
         cmake_config.append("-DLLAMA_METAL=OFF")
-        cmake_config.append("-DGGML_METAL=OFF")  # Taking a "belt and suspenders" approach with metal
+        cmake_config.append("-DGGML_METAL=OFF")
         if sys.platform == "darwin":
             cmake_config.append("-DGGML_BLAS=OFF")
 
-    # Build Type
     if sys.platform == "win32":
         cmake_config.append("-DCMAKE_CONFIGURATION_TYPES=Release")
     else:
@@ -60,8 +209,6 @@ def build_llama_with_cmake(target, source, env):
 
     if sys.platform == "darwin":
         cmake_config.append("-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64")
-
-    # --- EXECUTE CMAKE COMMANDS --- #
 
     cmake_build = [
             "cmake", 
@@ -86,171 +233,6 @@ def build_llama_with_cmake(target, source, env):
 
     return 0
 
-# ----------------------------------------------------------------------
-# BASE CONFIGURATION
-# ----------------------------------------------------------------------
-use_vulkan = ARGUMENTS.pop("use_vulkan", "no") == "yes"
-use_metal = ARGUMENTS.pop("use_metal", "no") == "yes"
-env = SConscript("third-party/godot-cpp/SConstruct")
-
-llama_variant_parts = []
-if use_vulkan:
-    llama_variant_parts.append("vulkan")
-if use_metal:
-    llama_variant_parts.append("metal")
-llama_variant = "-".join(llama_variant_parts) or "cpu"
-llama_platform = str(env["platform"])
-llama_arch = str(env.get("arch", "unknown") or "unknown")
-llama_build_identity = f"{llama_platform}-{llama_arch}"
-llama_build_dir = os.path.join(
-    "third-party", "llama.cpp", "build", "chorus", llama_build_identity, llama_variant
-)
-print(f">>> [SCons] llama.cpp variant: {os.path.abspath(llama_build_dir)}")
-
-env["use_vulkan"] = use_vulkan
-env["use_metal"] = use_metal
-env["llama_build_dir"] = llama_build_dir
-
-if env["platform"] == "windows":
-    lib_paths = [
-        os.path.join(llama_build_dir, "src", "Release"),
-        os.path.join(llama_build_dir, "ggml", "src", "Release"),
-        os.path.join(llama_build_dir, "common", "Release"),
-    ]
-    if use_vulkan:
-        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-vulkan", "Release"))
-else:
-    lib_paths = [
-        os.path.join(llama_build_dir, "src"),
-        os.path.join(llama_build_dir, "ggml", "src"),
-        os.path.join(llama_build_dir, "common"),
-    ]
-    if use_vulkan:
-        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-vulkan"))
-    if use_metal and env["platform"] == "macos":
-        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-metal"))
-
-if env["platform"] == "windows":
-    # Force /MD to match llama.cpp Release build
-    for flag in ["/MT", "/MTd", "/MDd"]:
-        if flag in env["CCFLAGS"]:
-            env["CCFLAGS"].remove(flag)
-    
-    env.Append(CCFLAGS=["/MD"])
-
-    # /std:c++20 : Enable C++20 features (our code; vendored deps stay at C++17)
-    # /EHsc      : Enable C++ exceptions (Required by llama.cpp/json)
-    # /bigobj    : Often needed for heavy template headers like json.hpp
-    env.Append(CXXFLAGS=["/std:c++20", "/EHsc", "/bigobj"])
-    env["LIBPATH"] = lib_paths
-    env.Append(LIBS=["advapi32", "user32", "kernel32"])
-
-    if use_vulkan:
-        env.Append(LIBS=["vulkan-1"])
-        vulkan_sdk = os.environ.get("VULKAN_SDK")
-        if vulkan_sdk:
-            print(f">>> [SCons] Found Vulkan SDK at: {vulkan_sdk}")
-            env.Append(LIBPATH=[os.path.join(vulkan_sdk, "Lib")])
-        else:
-            print(">>> [SCons] WARNING: VULKAN_SDK env var not found. Linking might fail.")
-else:
-    # Linux / macOS settings
-    env.Append(CXXFLAGS=["-std=c++20", "-fexceptions"])
-
-    if sys.platform.startswith("linux"):
-        env.Append(CXXFLAGS=["-fopenmp"])
-        env.Append(LINKFLAGS=["-fopenmp"])
-
-    env["LIBPATH"] = lib_paths
-
-    if use_vulkan and sys.platform.startswith("linux"):
-        env.Append(LIBS=["vulkan"])
-
-    if sys.platform == "darwin" or env["platform"] == "macos":
-        env.Append(LINKFLAGS=[
-            "-framework", "Accelerate",
-            "-framework", "Foundation",
-            "-framework", "Metal",
-            "-framework", "MetalKit"
-            ]
-        )
-
-
-env.Append(CPPPATH=["include", "src"])
-
-# Vendor headers reach only the objects allowed to see them: the llama provider
-# and the llama tests. An #include of <llama.h> from the core, the runtime, the
-# factory, or a host adapter fails to compile rather than waiting on review
-# (ARCHITECTURE.md, include discipline). The matching link seam -- an
-# inner-layer target that builds with no llama.cpp artifacts present -- is
-# heavier and lands with #11, where a second heavyweight provider pays for it.
-llama_cpppath = [
-    "third-party/llama.cpp/include",
-    "third-party/llama.cpp/common",
-    "third-party/llama.cpp/src",
-    "third-party/llama.cpp/ggml/include",
-    "third-party/llama.cpp/ggml/src",
-    "third-party/llama.cpp/vendor",  # nlohmann/json, vendored inside llama.cpp
-]
-
-def with_llama_includes(base_env):
-    scoped = base_env.Clone()
-    scoped.Append(CPPPATH=llama_cpppath)
-    return scoped
-
-# ----------------------------------------------------------------------
-# SOURCE DEFINITIONS
-# ----------------------------------------------------------------------
-# VariantDir redirects intermediate build artifacts (.os/.o) into bin/obj/
-# so they don't clutter the source tree. duplicate=0 keeps sources in place.
-VariantDir("bin/obj/chorus",       "src/chorus",       duplicate=0)
-VariantDir("bin/obj/godot_chorus", "src/godot_chorus", duplicate=0)
-VariantDir("bin/obj/chorus_c",     "src/chorus_c",     duplicate=0)
-VariantDir("bin/obj/tests",        "tests",            duplicate=0)
-
-sources_core    = Glob("bin/obj/chorus/core/*.cpp")
-sources_factory = Glob("bin/obj/chorus/*.cpp")
-sources_runtime = Glob("bin/obj/chorus/runtime/*.cpp")
-sources_echo    = Glob("bin/obj/chorus/providers/echo/*.cpp")
-sources_llama   = Glob("bin/obj/chorus/providers/llama/*.cpp")
-sources_godot   = Glob("bin/obj/godot_chorus/*.cpp")
-sources_c       = Glob("bin/obj/chorus_c/*.cpp")
-sources_tests   = (
-    Glob("bin/obj/tests/native/*.cpp") +
-    Glob("bin/obj/tests/native/support/*.cpp") +
-    Glob("bin/obj/tests/native/wlib/*.cpp") +
-    Glob("bin/obj/tests/native/core/*.cpp") +
-    Glob("bin/obj/tests/native/chorus_c/*.cpp") +
-    Glob("bin/obj/tests/native/factory/*.cpp") +
-    Glob("bin/obj/tests/native/providers/echo/*.cpp") +
-    Glob("bin/obj/tests/native/runtime/*.cpp")
-)
-sources_tests_c = Glob("bin/obj/tests/native/chorus_c/*.c")
-# Kept apart from the rest: these are the only test objects that may see a
-# vendor header, so they compile under the scoped env alongside the provider.
-sources_tests_llama = Glob("bin/obj/tests/native/providers/llama/*.cpp")
-
-# Tests compile under their own env. Built by one helper so the compiledb section
-# below mirrors the exact flags the real test build uses (clangd needs them too).
-def make_test_env(base_env):
-    test_env = base_env.Clone()
-    test_env.Append(CPPDEFINES=["TEST_BUILD"])
-    if base_env["platform"] == "windows":
-        test_env.Append(CFLAGS=["/std:c11"])
-    else:
-        test_env.Append(CFLAGS=["-std=c11"])
-    test_env.Append(CPPPATH=["tests/native", "tests/native/support"])
-    return test_env
-
-def make_chorus_c_build_env(base_env):
-    chorus_c_env = base_env.Clone()
-    if base_env["platform"] == "windows":
-        chorus_c_env.Append(CPPDEFINES=["CHORUS_C_BUILD"])
-    return chorus_c_env
-
-# ----------------------------------------------------------------------
-# CMAKE TARGET DEFINITION
-# ----------------------------------------------------------------------
 # Static link order: llama-common pulls from llama-common-base and llama, so it comes first.
 llama_libs = ["llama-common", "llama-common-base", "llama", "ggml", "ggml-cpu", "ggml-base"]
 
@@ -276,10 +258,7 @@ cmake_target = env.Command(
     action=build_llama_with_cmake
 )
 
-# ----------------------------------------------------------------------
-# COMPILE COMMANDS (for clangd / IDE tooling)
-# ----------------------------------------------------------------------
-# Run `scons compiledb` to regenerate compile_commands.json.
+# Tooling target
 if "compiledb" in COMMAND_LINE_TARGETS:
     env.Tool("compilation_db")
     compiledb = env.CompilationDatabase("compile_commands.json")
@@ -292,9 +271,7 @@ if "compiledb" in COMMAND_LINE_TARGETS:
     Alias("compiledb", compiledb)
     Default(compiledb)
 
-# ----------------------------------------------------------------------
-# BUILD TARGETS
-# ----------------------------------------------------------------------
+# Product targets
 if "test" in COMMAND_LINE_TARGETS:
     test_env = make_test_env(env)
     if env["platform"] == "windows":
@@ -307,7 +284,7 @@ if "test" in COMMAND_LINE_TARGETS:
 
     test_program = test_env.Program(
         target="bin/run_tests",
-        source=sources_echo + sources_core + sources_factory + sources_runtime + chorus_c_test_objects + sources_tests + sources_tests_c + llama_test_objects,
+        source=sources_chorus + chorus_c_test_objects + sources_tests + sources_tests_c + llama_test_objects,
     )
 
     test_env.Depends(test_program, cmake_target)
@@ -315,7 +292,6 @@ if "test" in COMMAND_LINE_TARGETS:
     Alias("test", test_program)
 
 else:
-    # --- LIBRARY BUILD (DEFAULT) ---
     env.Append(LIBS=llama_libs)
 
     # llama.cpp/ggml are archived in with a static libstdc++, so the .so carries a
@@ -333,11 +309,11 @@ else:
 
     godot_library = env.SharedLibrary(
         target="bin/libgodot_chorus",
-        source=sources_echo + sources_core + sources_factory + sources_runtime + sources_godot + llama_objects
+        source=sources_chorus + sources_godot + llama_objects
     )
     chorus_c_library = env.SharedLibrary(
         target="bin/libchorus_c",
-        source=sources_echo + sources_core + sources_factory + sources_runtime + chorus_c_objects + llama_objects
+        source=sources_chorus + chorus_c_objects + llama_objects
     )
     env.Depends([godot_library, chorus_c_library], cmake_target)
     Default(godot_library, chorus_c_library)
