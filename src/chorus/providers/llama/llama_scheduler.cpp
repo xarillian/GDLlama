@@ -484,16 +484,18 @@ bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
             size_t n_remaining = slot.current_input_tokens.size() - slot.input_cursor;
             size_t n_chunk = std::min({n_remaining, (size_t)tokens_per_tick, capacity_left});
 
-            for (size_t i = 0; i < n_chunk; ++i) {
-                int32_t pos = slot.n_past + i;
-                bool is_last_in_sequence = (slot.input_cursor + i == slot.current_input_tokens.size() - 1);
+            const int32_t chunk_size = static_cast<int32_t>(n_chunk);
+            for (int32_t offset = 0; offset < chunk_size; ++offset) {
+                const size_t token_index = slot.input_cursor + static_cast<size_t>(offset);
+                const int32_t pos = slot.n_past + offset;
+                const bool is_last_in_sequence = token_index == slot.current_input_tokens.size() - 1;
 
                 Chorus::LlamaUtils::batch_add_seq(
-                    curr_batch, slot.current_input_tokens[slot.input_cursor + i], slot.id, pos, is_last_in_sequence
+                    curr_batch, slot.current_input_tokens[token_index], slot.id, pos, is_last_in_sequence
                 );
             }
 
-            slot.n_past += n_chunk;
+            slot.n_past += chunk_size;
             slot.input_cursor += n_chunk;
         }
     }
