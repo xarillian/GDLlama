@@ -73,16 +73,13 @@ LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger lo
         );
     }
 
-    batch = new llama_batch(llama_batch_init(_batch_capacity, 0, 1));
+    batch.initialize(_batch_capacity, 0, 1);
 
     Chorus::LoadedModelInfo info;
     info.model_id = config.model.model_id;
     info.format = Chorus::ModelFormat::Gguf;
-    char buf[256];
-    if (llama_model_meta_val_str(model, "general.architecture", buf, sizeof(buf)) > 0)
-        info.family = buf;
-    if (llama_model_desc(model, buf, sizeof(buf)) > 0)
-        info.quantization = buf;
+    info.family = Chorus::LlamaUtils::model_metadata(model, "general.architecture");
+    info.quantization = Chorus::LlamaUtils::model_description(model);
     info.maximum_context = (uint32_t)llama_model_n_ctx_train(model);
     // Prompt fitting budgets against an even division of the context across
     // concurrent slots.
@@ -123,11 +120,7 @@ void LlamaScheduler::shutdown() {
         worker_thread.join();
     }
 
-    if (batch) {
-        llama_batch_free(*batch);
-        delete batch;
-        batch = nullptr;
-    }
+    batch.reset();
     for (auto& slot : slots)
         slot.sampler.reset();
     if (context) {
@@ -466,7 +459,7 @@ void LlamaScheduler::ingest_new_requests() {
 }
 
 bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
-    llama_batch& curr_batch = *batch;
+    llama_batch& curr_batch = batch.get();
     curr_batch.n_tokens = 0;
 
     for (auto& slot : slots) {
@@ -504,7 +497,7 @@ bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
 }
 
 int LlamaScheduler::run_inference() {
-    int rc = llama_decode(context, *batch);
+    int rc = llama_decode(context, batch.get());
     if (rc != 0) {
         _log.error("Decode failed", {{"code", (int64_t)rc}});
     }
@@ -513,7 +506,7 @@ int LlamaScheduler::run_inference() {
 
 void LlamaScheduler::sample_batch() {
     const llama_vocab* vocab = llama_model_get_vocab(model);
-    llama_batch& curr_batch = *batch;
+    llama_batch& curr_batch = batch.get();
     for (int i = 0; i < curr_batch.n_tokens; ++i) {
         if (!curr_batch.logits[i])
             continue;

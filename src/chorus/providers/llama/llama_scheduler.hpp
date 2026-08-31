@@ -5,6 +5,7 @@
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
 #include "chorus/providers/llama/llama_log_bridge.hpp"
+#include "chorus/providers/llama/llama_utils.hpp"
 #include "chorus/providers/llama/stop_sequence_filter.hpp"
 #include "wlib/utf8.hpp"
 
@@ -23,7 +24,6 @@
 
 struct llama_model;
 struct llama_context;
-struct llama_batch;
 
 /*
  * Schedules concurrent llama.cpp generation requests.
@@ -162,7 +162,7 @@ class LlamaScheduler {
 
     llama_model* model = nullptr;
     llama_context* context = nullptr;
-    struct llama_batch* batch = nullptr;
+    Chorus::LlamaUtils::Batch batch;
     Chorus::LlamaOffloadDeviceList _no_offload_devices{};
 
     std::vector<Slot> slots;

@@ -3,11 +3,63 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <limits>
+#include <optional>
 #include <utility>
 
 namespace Chorus {
 namespace {
+
+std::optional<size_t>
+find_earliest_marker(std::string_view pending, const std::vector<std::string>& markers) {
+    std::optional<size_t> earliest;
+    for (const auto& marker : markers) {
+        const size_t position = pending.find(marker);
+        if (position != std::string_view::npos && (!earliest || position < *earliest))
+            earliest = position;
+    }
+    return earliest;
+}
+
+size_t find_pending_marker_prefix_length(
+    std::string_view pending, const std::vector<std::string>& markers
+) {
+    size_t longest_prefix = 0;
+    for (const auto& marker : markers) {
+        const size_t maximum = std::min(marker.size(), pending.size());
+        for (size_t length = maximum; length > longest_prefix; --length) {
+            if (pending.compare(pending.size() - length, length, marker, 0, length) == 0) {
+                longest_prefix = length;
+                break;
+            }
+        }
+    }
+    return longest_prefix;
+}
+
+std::string release_valid_text(std::string& pending, size_t emission_limit) {
+    size_t consumed = 0;
+    std::string safe_text;
+    safe_text.reserve(emission_limit);
+
+    while (consumed < emission_limit) {
+        const std::string_view candidate(pending.data() + consumed, emission_limit - consumed);
+        const size_t safe_length = wlib::valid_utf8_prefix_length(candidate);
+        safe_text.append(pending, consumed, safe_length);
+        consumed += safe_length;
+        if (consumed == emission_limit)
+            break;
+
+        const std::string_view unresolved(pending.data() + consumed, emission_limit - consumed);
+        if (wlib::is_utf8_incomplete_sequence(unresolved))
+            break;
+
+        // Reject one malformed byte without joining marker matching across it.
+        ++consumed;
+    }
+
+    pending.erase(0, consumed);
+    return safe_text;
+}
 
 bool is_marker_prefix(std::string_view shorter, std::string_view longer) {
     return longer.starts_with(shorter);
@@ -20,49 +72,17 @@ StopSequenceFilter::StopSequenceFilter(std::vector<std::string> markers) : _mark
 StopFilterResult StopSequenceFilter::push(std::string_view piece) {
     _pending.append(piece);
 
-    size_t match_position = std::numeric_limits<size_t>::max();
-    for (const auto& marker : _markers) {
-        const size_t position = _pending.find(marker);
-        if (position != std::string::npos)
-            match_position = std::min(match_position, position);
-    }
-
-    if (match_position != std::numeric_limits<size_t>::max()) {
-        const size_t safe_length = wlib::valid_utf8_prefix_length(std::string_view(_pending).substr(0, match_position));
+    if (const auto match_position = find_earliest_marker(_pending, _markers)) {
+        const size_t safe_length =
+            wlib::valid_utf8_prefix_length(std::string_view(_pending).substr(0, *match_position));
         std::string safe_text = _pending.substr(0, safe_length);
         _pending.clear();
         return {std::move(safe_text), true};
     }
 
-    size_t marker_prefix_length = 0;
-    for (const auto& marker : _markers) {
-        const size_t maximum = std::min(marker.size(), _pending.size());
-        for (size_t length = maximum; length > marker_prefix_length; --length) {
-            if (_pending.compare(_pending.size() - length, length, marker, 0, length) == 0) {
-                marker_prefix_length = length;
-                break;
-            }
-        }
-    }
-
-    const size_t emission_limit = _pending.size() - marker_prefix_length;
-    size_t remaining = emission_limit;
-    std::string safe_text;
-    while (remaining > 0) {
-        const std::string_view candidate(_pending.data(), remaining);
-        const size_t safe_length = wlib::valid_utf8_prefix_length(candidate);
-        safe_text.append(_pending, 0, safe_length);
-        _pending.erase(0, safe_length);
-        remaining -= safe_length;
-        if (remaining == 0)
-            break;
-        const std::string_view unresolved(_pending.data(), remaining);
-        if (wlib::is_utf8_incomplete_sequence(unresolved))
-            break;
-        _pending.erase(0, 1);
-        --remaining;
-    }
-    return {std::move(safe_text), false};
+    const size_t held_marker_prefix = find_pending_marker_prefix_length(_pending, _markers);
+    const size_t emission_limit = _pending.size() - held_marker_prefix;
+    return {release_valid_text(_pending, emission_limit), false};
 }
 
 StopFilterResult StopSequenceFilter::finish(std::string_view final_piece) {
