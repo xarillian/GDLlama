@@ -1,7 +1,10 @@
 #include "chorus/providers/llama/llama_load_config.hpp"
 
+#include <algorithm>
+#include <array>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 namespace Chorus {
@@ -34,59 +37,161 @@ std::optional<RequestRejection> check_against_schema(const std::string& key, con
     return std::nullopt;
 }
 
+template <typename Target>
+std::optional<RequestRejection> assign_bounded_integer(
+    Target& destination,
+    int64_t value,
+    int64_t minimum,
+    int64_t maximum,
+    const char* below_minimum_message,
+    const char* above_maximum_message
+) {
+    if (value < minimum)
+        return unsupported(below_minimum_message);
+    if (value > maximum)
+        return unsupported(above_maximum_message);
+    destination = static_cast<Target>(value);
+    return std::nullopt;
+}
+
+template <typename Target>
+std::optional<RequestRejection> assign_bounded_integer(
+    Target& destination,
+    int64_t value,
+    int64_t minimum,
+    int64_t maximum,
+    const char* rejection_message
+) {
+    return assign_bounded_integer(
+        destination, value, minimum, maximum, rejection_message, rejection_message
+    );
+}
+
+std::optional<RequestRejection> apply_context_size(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    return assign_bounded_integer(
+        config.context_size,
+        std::get<int64_t>(option),
+        1,
+        std::numeric_limits<uint32_t>::max(),
+        "Llama load option 'context_size' must be a positive uint32."
+    );
+}
+
+std::optional<RequestRejection> apply_thread_count(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    return assign_bounded_integer(
+        config.thread_count,
+        std::get<int64_t>(option),
+        1,
+        std::numeric_limits<int32_t>::max(),
+        "Llama load option 'thread_count' must be a positive int32."
+    );
+}
+
+std::optional<RequestRejection> apply_use_gpu(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    config.use_gpu = std::get<bool>(option);
+    return std::nullopt;
+}
+
+std::optional<RequestRejection> apply_gpu_layers(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    auto rejection = assign_bounded_integer(
+        config.gpu_layers,
+        std::get<int64_t>(option),
+        -1,
+        std::numeric_limits<int32_t>::max(),
+        "Llama load option 'gpu_layers' must fit an int32 and be -1 or greater."
+    );
+    if (!rejection)
+        config.gpu_layers_explicit = true;
+    return rejection;
+}
+
+std::optional<RequestRejection> apply_num_slots(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    return assign_bounded_integer(
+        config.num_slots,
+        std::get<int64_t>(option),
+        1,
+        std::numeric_limits<uint32_t>::max(),
+        "Llama load option 'num_slots' must be a positive uint32."
+    );
+}
+
+std::optional<RequestRejection> apply_tokens_per_tick(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    return assign_bounded_integer(
+        config.tokens_per_tick,
+        std::get<int64_t>(option),
+        1,
+        std::numeric_limits<int32_t>::max(),
+        "Llama load option 'tokens_per_tick' must be a positive int32."
+    );
+}
+
+std::optional<RequestRejection> apply_n_batch(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    return assign_bounded_integer(
+        config.n_batch,
+        std::get<int64_t>(option),
+        1,
+        std::numeric_limits<int32_t>::max(),
+        "Llama load option 'n_batch' must be greater than zero.",
+        "Llama load option 'n_batch' does not fit llama_batch_init's capacity."
+    );
+}
+
+std::optional<RequestRejection> apply_n_ubatch(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    return assign_bounded_integer(
+        config.n_ubatch,
+        std::get<int64_t>(option),
+        1,
+        std::numeric_limits<uint32_t>::max(),
+        "Llama load option 'n_ubatch' must be greater than zero.",
+        "Llama load option 'n_ubatch' does not fit llama_context_params::n_ubatch."
+    );
+}
+
+std::optional<RequestRejection> apply_main_gpu(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    auto rejection = assign_bounded_integer(
+        config.main_gpu,
+        std::get<int64_t>(option),
+        0,
+        std::numeric_limits<int32_t>::max(),
+        "Llama load option 'main_gpu' must not be negative.",
+        "Llama load option 'main_gpu' does not fit llama_model_params::main_gpu."
+    );
+    if (!rejection)
+        config.main_gpu_explicit = true;
+    return rejection;
+}
+
+using LoadOptionApplier = std::optional<RequestRejection> (*)(LlamaLoadConfig&, const ProviderOptionValue&);
+
+struct LoadOptionBinding {
+    std::string_view key;
+    LoadOptionApplier apply;
+};
+
+constexpr std::array load_option_bindings{
+    LoadOptionBinding{"context_size", apply_context_size},
+    LoadOptionBinding{"thread_count", apply_thread_count},
+    LoadOptionBinding{"use_gpu", apply_use_gpu},
+    LoadOptionBinding{"gpu_layers", apply_gpu_layers},
+    LoadOptionBinding{"num_slots", apply_num_slots},
+    LoadOptionBinding{"tokens_per_tick", apply_tokens_per_tick},
+    LoadOptionBinding{"n_batch", apply_n_batch},
+    LoadOptionBinding{"n_ubatch", apply_n_ubatch},
+    LoadOptionBinding{"main_gpu", apply_main_gpu},
+};
+
 std::optional<RequestRejection> apply_load_option(
-        LlamaLoadConfig& config, const std::string& key, const ProviderOptionValue& option) {
+    LlamaLoadConfig& config,
+    const std::string& key,
+    const ProviderOptionValue& option
+) {
     if (auto rejection = check_against_schema(key, option))
         return rejection;
 
-    const auto* as_int = std::get_if<int64_t>(&option);
-    const auto* as_bool = std::get_if<bool>(&option);
-    if (key == "context_size" && as_int) {
-        if (*as_int <= 0 || static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
-            return unsupported("Llama load option 'context_size' must be a positive uint32.");
-        config.context_size = static_cast<uint32_t>(*as_int);
-    } else if (key == "thread_count" && as_int) {
-        if (*as_int <= 0 || *as_int > std::numeric_limits<int32_t>::max())
-            return unsupported("Llama load option 'thread_count' must be a positive int32.");
-        config.thread_count = static_cast<int32_t>(*as_int);
-    } else if (key == "use_gpu" && as_bool) {
-        config.use_gpu = *as_bool;
-    } else if (key == "gpu_layers" && as_int) {
-        if (*as_int < -1 || *as_int > std::numeric_limits<int32_t>::max())
-            return unsupported("Llama load option 'gpu_layers' must fit an int32 and be -1 or greater.");
-        config.gpu_layers = static_cast<int32_t>(*as_int);
-        config.gpu_layers_explicit = true;
-    } else if (key == "num_slots" && as_int) {
-        if (*as_int <= 0 || static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
-            return unsupported("Llama load option 'num_slots' must be a positive uint32.");
-        config.num_slots = static_cast<uint32_t>(*as_int);
-    } else if (key == "tokens_per_tick" && as_int) {
-        if (*as_int <= 0 || *as_int > std::numeric_limits<int32_t>::max())
-            return unsupported("Llama load option 'tokens_per_tick' must be a positive int32.");
-        config.tokens_per_tick = static_cast<int32_t>(*as_int);
-    } else if (key == "n_batch" && as_int) {
-        if (*as_int <= 0)
-            return unsupported("Llama load option 'n_batch' must be greater than zero.");
-        if (*as_int > std::numeric_limits<int32_t>::max())
-            return unsupported("Llama load option 'n_batch' does not fit llama_batch_init's capacity.");
-        config.n_batch = static_cast<uint32_t>(*as_int);
-    } else if (key == "n_ubatch" && as_int) {
-        if (*as_int <= 0)
-            return unsupported("Llama load option 'n_ubatch' must be greater than zero.");
-        if (static_cast<uint64_t>(*as_int) > std::numeric_limits<uint32_t>::max())
-            return unsupported("Llama load option 'n_ubatch' does not fit llama_context_params::n_ubatch.");
-        config.n_ubatch = static_cast<uint32_t>(*as_int);
-    } else if (key == "main_gpu" && as_int) {
-        if (*as_int < 0)
-            return unsupported("Llama load option 'main_gpu' must not be negative.");
-        if (*as_int > std::numeric_limits<int32_t>::max())
-            return unsupported("Llama load option 'main_gpu' does not fit llama_model_params::main_gpu.");
-        config.main_gpu = static_cast<int32_t>(*as_int);
-        config.main_gpu_explicit = true;
-    } else {
+    const auto binding = std::ranges::find(load_option_bindings, key, &LoadOptionBinding::key);
+    if (binding == load_option_bindings.end())
         return unsupported("Llama load option '" + key + "' is declared but not applied; this is a bug.");
-    }
-    return std::nullopt;
+    return binding->apply(config, option);
 }
 
 } // namespace

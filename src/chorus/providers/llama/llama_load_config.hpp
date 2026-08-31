@@ -12,15 +12,6 @@
 
 namespace Chorus {
 
-/*
- * Configures llama model loading, device placement, and inference capacity.
- *
- * `Chorus::LlamaLoadConfig::context_size` is shared by every slot. Setting
- * `Chorus::LlamaLoadConfig::use_gpu` to false guarantees CPU-only execution.
- * `Chorus::LlamaLoadConfig::gpu_layers` accepts `-1` to assign every layer to
- * the GPU. `Chorus::LlamaLoadConfig::n_ubatch` must not exceed
- * `Chorus::LlamaLoadConfig::n_batch`.
- */
 struct LlamaLoadConfig {
     std::string weights_path;         // Path to the GGUF model file.
     uint32_t context_size = 2048;     // Total context window in tokens, shared by all slots.
@@ -49,8 +40,9 @@ using LlamaOffloadDeviceList = std::array<ggml_backend_dev_t, 1>;
  * Declares llama load options for host rendering and parser validation.
  *
  * Defaults come from a default-constructed `Chorus::LlamaLoadConfig`, keeping
- * its member initializers as the single source of truth. The parser rejects
- * schema and implementation mismatches instead of ignoring options.
+ * its member initializers as the single source of truth. For every supplied
+ * option, the parser requires a matching descriptor, value type, and
+ * implementation binding.
  */
 const ProviderOptionDescriptors& llama_load_option_descriptors();
 
@@ -68,7 +60,18 @@ const ProviderOptionDescriptors& llama_load_option_descriptors();
  *  - `Chorus::ChorusError::UnsupportedOption`: an asset or option is unsupported.
  */
 std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const ChorusConfig& config);
+
+/*
+ * Builds llama.cpp model parameters from normalized load settings.
+ *
+ * During CPU-only execution, the returned `::llama_model_params::devices`
+ * borrows `no_offload_devices`; its storage must survive the model-load call.
+ */
 llama_model_params make_llama_model_params(const LlamaLoadConfig& config, LlamaOffloadDeviceList& no_offload_devices);
+
+/*
+ * Builds llama.cpp context parameters from normalized load settings.
+ */
 llama_context_params make_llama_context_params(const LlamaLoadConfig& config);
 
 } // namespace Chorus
