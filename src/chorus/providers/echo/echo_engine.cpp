@@ -13,7 +13,7 @@ std::optional<ChorusError> EchoEngine::initialize(const ChorusConfig& config, Lo
         return std::nullopt;
     }
 
-    // No model asset is needed; any InitialModelSpec is accepted and unread by design.
+    // No model asset is needed; model configuration is accepted and unread by design.
     if (!config.provider_options.empty()) {
         _log.error("Engine accepts no provider options");
         return ChorusError::UnsupportedOption;
@@ -22,6 +22,80 @@ std::optional<ChorusError> EchoEngine::initialize(const ChorusConfig& config, Lo
     _running = true;
     _worker = std::thread(&EchoEngine::worker_loop, this);
     _initialized = true;
+    return std::nullopt;
+}
+
+bool EchoEngine::is_initialized() const {
+    return _initialized;
+}
+
+EngineCapabilities EchoEngine::capabilities() const {
+    EngineCapabilities caps;
+    caps.provider_id = "echo";
+    caps.input_modalities = {Modality::Text};
+    caps.output_modalities = {Modality::Text};
+    caps.scheduling = SchedulingAuthority::ProviderManaged;
+    caps.streaming = true;
+    caps.cancellation = true;
+    caps.common_generation_options = {"max_tokens"};
+    return caps;
+}
+
+std::optional<LoadedModelInfo> EchoEngine::loaded_model_info() const {
+    return std::nullopt;
+}
+
+std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest& request) const {
+    if (!_initialized)
+        return RequestRejection{ChorusError::EngineNotReady, "EchoEngine is not initialized."};
+    if (request.type == RequestType::Embedding)
+        return RequestRejection{ChorusError::UnsupportedFeature, "EchoEngine does not produce embeddings."};
+    const auto& c = request.gen_config;
+    if (c.max_tokens && *c.max_tokens < -1)
+        return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine max_tokens must be -1 or greater."};
+    // Options addressed to the Echo namespace are demands. The provider has no
+    // options, so any `echo` entry is a typo to catch.
+    if (request.gen_config.provider_options.count("echo"))
+        return RequestRejection{
+            ChorusError::UnsupportedOption, "EchoEngine has no provider options; remove the 'echo' entry."
+        };
+
+    // Content controls are inert because echoed output makes no content claims.
+    // Accept them so real request pipelines can exercise the provider seam
+    // unmodified, then warn once per engine lifetime so the discard is not silent.
+    std::vector<const char*> ignored;
+    if (c.temperature)
+        ignored.push_back("temperature");
+    if (c.top_k)
+        ignored.push_back("top_k");
+    if (c.top_p)
+        ignored.push_back("top_p");
+    if (c.seed)
+        ignored.push_back("seed");
+    if (c.frequency_penalty)
+        ignored.push_back("frequency_penalty");
+    if (c.presence_penalty)
+        ignored.push_back("presence_penalty");
+    if (!c.stop.empty())
+        ignored.push_back("stop");
+    if (c.constraint)
+        ignored.push_back("constraint");
+    if (c.show_thinking.has_value())
+        ignored.push_back("show_thinking");
+    if (!request.chat_template.empty())
+        ignored.push_back("chat_template");
+    if (!request.gen_config.provider_options.empty())
+        ignored.push_back("provider_options");
+
+    if (!ignored.empty() && !_warned_ignored_content_controls.exchange(true)) {
+        std::string names;
+        for (size_t i = 0; i < ignored.size(); ++i) {
+            if (i)
+                names += ", ";
+            names += ignored[i];
+        }
+        _log.warn("Ignoring content controls; echoed output makes no content claims", {{"controls", names}});
+    }
     return std::nullopt;
 }
 
@@ -97,10 +171,10 @@ void EchoEngine::cancel_request(RequestId id) {
 void EchoEngine::shutdown() {
     std::vector<ChorusRequest> queued;
     {
-        // The store must happen under the queue mutex: the worker evaluates its wait
-        // predicate while holding it, and an unlocked store+notify can land between
-        // that check and the block, losing the wakeup forever (shutdown() then hangs on
-        // join). The running flag alone does not prevent the lost wakeup.
+        // Store under `_queue_mutex`: the worker evaluates its wait predicate while
+        // holding the same mutex. An unlocked store and notification can land between
+        // that check and the wait, losing the wakeup and leaving
+        // `Chorus::EchoEngine::shutdown` blocked in `std::thread::join`.
         std::lock_guard<std::mutex> lock(_queue_mutex);
         _running = false;
         if (_active)
@@ -132,83 +206,6 @@ void EchoEngine::shutdown() {
     }
 }
 
-bool EchoEngine::is_initialized() const {
-    return _initialized;
-}
-
-EngineCapabilities EchoEngine::capabilities() const {
-    EngineCapabilities caps;
-    caps.provider_id = "echo";
-    caps.input_modalities = {Modality::Text};
-    caps.output_modalities = {Modality::Text};
-    caps.scheduling = SchedulingAuthority::ProviderManaged;
-    caps.streaming = true;
-    caps.cancellation = true;
-    caps.common_generation_options = {"max_tokens"};
-    return caps;
-}
-
-std::optional<LoadedModelInfo> EchoEngine::loaded_model_info() const {
-    return std::nullopt; // model-free by design
-}
-
-std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest& request) const {
-    if (!_initialized)
-        return RequestRejection{ChorusError::EngineNotReady, "EchoEngine is not initialized."};
-    if (request.type == RequestType::Embedding)
-        return RequestRejection{ChorusError::UnsupportedFeature, "EchoEngine does not produce embeddings."};
-    const auto& c = request.gen_config;
-    if (c.max_tokens && *c.max_tokens < -1)
-        return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine max_tokens must be -1 or greater."};
-    // Options addressed to this engine by namespace are demands: Echo has no
-    // options, so any 'echo' entry is a typo to catch.
-    if (request.gen_config.provider_options.count("echo"))
-        return RequestRejection{
-            ChorusError::UnsupportedOption, "EchoEngine has no provider options; remove the 'echo' entry."
-        };
-
-    // Content controls (sampling, stop, constraint, showing thinking, templates,
-    // foreign provider namespaces) are inert here: echoed output makes no
-    // content claims, so any value is vacuously honored. Accept them so real
-    // request pipelines run unmodified against the test double, and warn once
-    // per engine lifetime so the discard is not silent (user decision
-    // 2026-07-17 amending the no-silent-discard posture for Echo).
-    std::vector<const char*> ignored;
-    if (c.temperature)
-        ignored.push_back("temperature");
-    if (c.top_k)
-        ignored.push_back("top_k");
-    if (c.top_p)
-        ignored.push_back("top_p");
-    if (c.seed)
-        ignored.push_back("seed");
-    if (c.frequency_penalty)
-        ignored.push_back("frequency_penalty");
-    if (c.presence_penalty)
-        ignored.push_back("presence_penalty");
-    if (!c.stop.empty())
-        ignored.push_back("stop");
-    if (c.constraint)
-        ignored.push_back("constraint");
-    if (c.show_thinking.has_value())
-        ignored.push_back("show_thinking");
-    if (!request.chat_template.empty())
-        ignored.push_back("chat_template");
-    if (!request.gen_config.provider_options.empty())
-        ignored.push_back("provider_options");
-
-    if (!ignored.empty() && !_warned_ignored.exchange(true)) {
-        std::string names;
-        for (size_t i = 0; i < ignored.size(); ++i) {
-            if (i)
-                names += ", ";
-            names += ignored[i];
-        }
-        _log.warn("Ignoring content controls; echoed output makes no content claims", {{"controls", names}});
-    }
-    return std::nullopt;
-}
-
 void EchoEngine::worker_loop() {
     while (true) {
         Chorus::ChorusRequest req;
@@ -229,49 +226,8 @@ void EchoEngine::worker_loop() {
             continue;
         }
 
-        // Chat requests echo the last user message (keeps the model-free
-        // path exercising the messages carrier).
-        std::string chat_source;
-        if (!req.messages.empty()) {
-            chat_source = req.messages.back().content;
-            for (auto it = req.messages.rbegin(); it != req.messages.rend(); ++it) {
-                if (it->role == "user") {
-                    chat_source = it->content;
-                    break;
-                }
-            }
-        }
-        // One Token per space-delimited chunk (spaces only, not all whitespace); each
-        // chunk keeps its trailing space(s) so the concatenation of all token texts
-        // equals the prompt exactly.
-        const std::string& text = req.messages.empty() ? req.prompt : chat_source;
-        size_t start = 0;
-        int32_t chunks = 0;
-        const int32_t max_chunks = req.gen_config.max_tokens.value_or(-1);
-        while (start < text.size() && (max_chunks < 0 || chunks < max_chunks)) {
-            {
-                std::lock_guard<std::mutex> lock(_queue_mutex);
-                if (_cancelled_ids.count(req.id) || !_running)
-                    break;
-            }
-
-            size_t end = text.find(' ', start);
-            if (end == std::string::npos) {
-                end = text.size();
-            } else {
-                while (end < text.size() && text[end] == ' ')
-                    ++end;
-            }
-
-            ChorusSignal token_sig{
-                req.id,
-                ChorusSignal::Token{TokenChannel::Content, text.substr(start, end - start)},
-            };
-            req.on_event(token_sig);
-
-            start = end;
-            ++chunks;
-        }
+        const std::string& text = select_echo_text(req);
+        emit_echo_tokens(req, text);
 
         bool cancelled = false;
         {
@@ -285,6 +241,49 @@ void EchoEngine::worker_loop() {
                 ? ChorusSignal{req.id, ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled."}}
                 : ChorusSignal{req.id, ChorusSignal::Stop{}};
         req.on_event(terminal);
+    }
+}
+
+const std::string& EchoEngine::select_echo_text(const ChorusRequest& request) {
+    if (request.messages.empty())
+        return request.prompt;
+
+    for (auto it = request.messages.rbegin(); it != request.messages.rend(); ++it) {
+        if (it->role == "user")
+            return it->content;
+    }
+    return request.messages.back().content;
+}
+
+void EchoEngine::emit_echo_tokens(const ChorusRequest& request, const std::string& text) {
+    // Split only on spaces and retain each run so concatenating the emitted
+    // `Chorus::ChorusSignal::Token` content reconstructs the input exactly.
+    size_t start = 0;
+    int32_t chunks = 0;
+    const int32_t max_chunks = request.gen_config.max_tokens.value_or(-1);
+    while (start < text.size() && (max_chunks < 0 || chunks < max_chunks)) {
+        {
+            std::lock_guard<std::mutex> lock(_queue_mutex);
+            if (_cancelled_ids.count(request.id) || !_running)
+                break;
+        }
+
+        size_t end = text.find(' ', start);
+        if (end == std::string::npos) {
+            end = text.size();
+        } else {
+            while (end < text.size() && text[end] == ' ')
+                ++end;
+        }
+
+        ChorusSignal token_signal{
+            request.id,
+            ChorusSignal::Token{TokenChannel::Content, text.substr(start, end - start)},
+        };
+        request.on_event(token_signal);
+
+        start = end;
+        ++chunks;
     }
 }
 } // namespace Chorus

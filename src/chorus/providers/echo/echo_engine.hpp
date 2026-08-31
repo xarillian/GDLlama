@@ -8,18 +8,21 @@
 #include <deque>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <unordered_set>
 
 namespace Chorus {
-// Reference implementation of InferenceEngine: model-free and dependency-free.
-//
-// Echoes each request's prompt back word-by-word as Token signals (their concatenation
-// equals the prompt exactly), then a Stop, from a worker thread mirroring the real
-// engines' async contract. Exists to prove the provider seam, to let CI and day-one
-// integrations exercise the full signal path with no model file, and to keep the
-// interface contract compiler-enforced as it grows. It is not a gameplay test space:
-// echoed prompts say nothing about how real dialogue reads or paces.
+/*
+ * Reference implementation of `Chorus::InferenceEngine`.
+ *
+ * Echoes each request's prompt in space-delimited `Chorus::ChorusSignal::Token`
+ * signals whose concatenation equals the prompt exactly, then emits
+ * `Chorus::ChorusSignal::Stop`. A worker thread mirrors the asynchronous engine
+ * contract without a model or external dependency, keeping the provider seam
+ * compiler-enforced and available to CI and integrations. Echoed prompts do not
+ * represent the dialogue quality or pacing of a real provider.
+ */
 class EchoEngine : public InferenceEngine {
   public:
     ~EchoEngine() override;
@@ -37,6 +40,8 @@ class EchoEngine : public InferenceEngine {
 
   private:
     void worker_loop();
+    static const std::string& select_echo_text(const Chorus::ChorusRequest& request);
+    void emit_echo_tokens(const Chorus::ChorusRequest& request, const std::string& text);
 
     std::deque<Chorus::ChorusRequest> _queue;
     std::optional<Chorus::ChorusRequest> _active;
@@ -48,8 +53,6 @@ class EchoEngine : public InferenceEngine {
     bool _running = false;
     bool _initialized = false;
     Chorus::Logger _log;
-    // Content controls are accepted-and-inert (see validate_request); the
-    // one-per-lifetime warning keeps the discard from being silent.
-    mutable std::atomic<bool> _warned_ignored{false};
+    mutable std::atomic<bool> _warned_ignored_content_controls{false};
 };
 } // namespace Chorus

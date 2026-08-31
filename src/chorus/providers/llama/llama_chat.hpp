@@ -1,6 +1,5 @@
 #pragma once
 
-#include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 
 #include <chat.h>
@@ -14,7 +13,6 @@ struct llama_model;
 
 namespace Chorus {
 
-// What the ingest path needs from one template application.
 struct LlamaChatRender {
     std::string prompt;
     std::vector<std::string> additional_stops;
@@ -22,11 +20,20 @@ struct LlamaChatRender {
     common_chat_parser_params parser_params;
 };
 
-// Selects an explicit override or the model's defaults, then renders messages
-// through llama.cpp common's jinja path. Throws nothing: template failures
-// come back as RequestRejection{InvalidRequest}.
-// Callers sharing `model` or `defaults` must serialize calls because llama.cpp
-// does not guarantee thread-safe chat-template initialization or application.
+/*
+ * Renders messages through an explicit or model-provided llama.cpp chat template.
+ *
+ * Calls sharing the same model or template instances must be serialized because
+ * llama.cpp does not guarantee thread-safe template initialization or application.
+ * llama.cpp template failures are returned as `Chorus::RequestRejection`.
+ *
+ * Returns:
+ *  - `Chorus::LlamaChatRender`: the rendered prompt and response parser state.
+ *  - `Chorus::RequestRejection`: no template is available or llama.cpp rejects template initialization or application.
+ *
+ * Errors:
+ *  - `Chorus::ChorusError::InvalidRequest`: template selection or application failed.
+ */
 std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
     const llama_model* model,
     const common_chat_templates* defaults,
@@ -35,8 +42,21 @@ std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
     bool enable_thinking
 );
 
-// Incremental reasoning/content splitter over accumulated raw output.
-// Wraps common_chat_parse(is_partial=true) + common_chat_msg_diff.
+/*
+ * Separates accumulated model output into visible-content and reasoning deltas.
+ *
+ * `Chorus::LlamaChatParseStream::push` may return an empty delta while reasoning
+ * accumulates between throttled partial parses. During successful parsing, each
+ * classified fragment is returned at most once. `Chorus::LlamaChatParseStream::finalize`
+ * performs the final parse and returns any residual output.
+ *
+ * Once parsing reaches terminal visible content, subsequent pieces pass through
+ * as content and `Chorus::LlamaChatParseStream::finalize` becomes a no-op. If a
+ * partial parse fails, the triggering and subsequent pieces pass through while
+ * buffered but unsurfaced output is discarded. A failed final parse likewise
+ * discards residual output. These policies prevent duplicate content and reasoning
+ * from leaking into the visible channel.
+ */
 class LlamaChatParseStream {
   public:
     struct Delta {
@@ -45,22 +65,28 @@ class LlamaChatParseStream {
     };
 
     explicit LlamaChatParseStream(common_chat_parser_params params);
-    Delta push(const std::string& piece); // accumulate + partial parse + diff
-    Delta finalize();                     // final full parse + diff
+    /// Adds one output piece and returns newly classified output.
+    Delta push(const std::string& piece);
+    /// Returns output remaining after the final, non-partial parse.
+    Delta finalize();
 
   private:
     Delta diff_against_previous(const common_chat_msg& parsed);
 
     common_chat_parser_params _params;
-    std::string _raw;
-    common_chat_msg _previous;
-    // Parser retired: pieces pass through as content, finalize is a no-op.
-    // Entered deliberately after an identity flip on a single-think format,
-    // or defensively (a partial parse threw; break-once policy).
+    std::string _raw_output;
+    common_chat_msg _previous_parse;
     bool _passthrough = false;
-    std::size_t _parsed_bytes = 0; // _raw size at the last parse (throttle bookkeeping)
+    std::size_t _parsed_bytes = 0;
 };
 
+/*
+ * Creates a response parser when the rendered template supports reasoning.
+ *
+ * Returns:
+ *  - `Chorus::LlamaChatParseStream`: the template supports reasoning separation.
+ *  - `std::nullopt`: the template does not support reasoning separation.
+ */
 std::optional<LlamaChatParseStream> make_llama_chat_parse_stream(const LlamaChatRender& render);
 
 } // namespace Chorus
