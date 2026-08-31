@@ -80,7 +80,7 @@ std::variant<ResolvedLlamaGeneration, RequestRejection> resolve_llama_generation
  * loaded vocabulary. Rejections are returned directly.
  *
  * Returns:
- *  - `common_sampler_ptr`: The constructed llama.cpp sampler.
+ *  - `::common_sampler_ptr`: The constructed llama.cpp sampler.
  *  - `Chorus::RequestRejection`: The sampler cannot be constructed.
  *
  * Errors:

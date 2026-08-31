@@ -8,57 +8,55 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <variant>
 
 namespace Chorus {
 namespace {
 
-enum class ProviderOptionValueKind { Int64, Double, Bool, StringList, Map };
-
-enum class RangePolicy {
-    Boolean,
-    StringList,
+enum class IntegerRange {
     NonnegativeInt32,
     SentinelInt32,
     Mirostat,
+};
+
+enum class FloatRange {
     Probability,
-    FiniteFloat,
-    NonnegativeFloat,
+    Finite,
+    Nonnegative,
     DryBase,
     AdaptiveTarget,
     AdaptiveDecay,
 };
 
-enum class TargetMember {
-    MinKeep,
-    MinP,
-    TypicalP,
-    DynamicTemperatureRange,
-    DynamicTemperatureExponent,
-    PenaltyLastN,
-    RepeatPenalty,
-    IgnoreEos,
-    Mirostat,
-    MirostatTau,
-    MirostatEta,
-    XtcProbability,
-    XtcThreshold,
-    DryMultiplier,
-    DryBase,
-    DryAllowedLength,
-    DryPenaltyLastN,
-    DrySequenceBreakers,
-    SamplerOrder,
-    LogitBias,
-    TopNSigma,
-    AdaptiveTarget,
-    AdaptiveDecay,
+struct IntegerOption {
+    IntegerRange range;
+    int32_t common_params_sampling::*member;
 };
+
+struct FloatOption {
+    FloatRange range;
+    float common_params_sampling::*member;
+};
+
+struct BoolOption {
+    bool common_params_sampling::*member;
+};
+
+struct DrySequenceBreakersOption {};
+struct SamplerOrderOption {};
+struct LogitBiasOption {};
+
+using OptionRule = std::variant<
+    IntegerOption,
+    FloatOption,
+    BoolOption,
+    DrySequenceBreakersOption,
+    SamplerOrderOption,
+    LogitBiasOption>;
 
 struct OptionDescriptor {
     const char* public_key;
-    ProviderOptionValueKind value_kind;
-    RangePolicy range_policy;
-    TargetMember target_member;
+    OptionRule rule;
 };
 
 constexpr std::array<const char*, 10> kCommonOptions{
@@ -74,58 +72,62 @@ constexpr std::array<const char*, 10> kCommonOptions{
     "show_thinking", // honored at chat-render time, not in the sampler
 };
 
-constexpr std::array<OptionDescriptor, 23> kProviderOptions{{
-    {"min_keep", ProviderOptionValueKind::Int64, RangePolicy::NonnegativeInt32, TargetMember::MinKeep},
-    {"min_p", ProviderOptionValueKind::Double, RangePolicy::Probability, TargetMember::MinP},
-    {"typical_p", ProviderOptionValueKind::Double, RangePolicy::Probability, TargetMember::TypicalP},
+const std::array<OptionDescriptor, 23> kProviderOptions{{
+    {"min_keep", IntegerOption{IntegerRange::NonnegativeInt32, &common_params_sampling::min_keep}},
+    {"min_p", FloatOption{FloatRange::Probability, &common_params_sampling::min_p}},
+    {"typical_p", FloatOption{FloatRange::Probability, &common_params_sampling::typ_p}},
     {"dynamic_temperature_range",
-     ProviderOptionValueKind::Double,
-     RangePolicy::NonnegativeFloat,
-     TargetMember::DynamicTemperatureRange},
+     FloatOption{FloatRange::Nonnegative, &common_params_sampling::dynatemp_range}},
     {"dynamic_temperature_exponent",
-     ProviderOptionValueKind::Double,
-     RangePolicy::FiniteFloat,
-     TargetMember::DynamicTemperatureExponent},
-    {"penalty_last_n", ProviderOptionValueKind::Int64, RangePolicy::SentinelInt32, TargetMember::PenaltyLastN},
-    {"repeat_penalty", ProviderOptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::RepeatPenalty},
-    {"ignore_eos", ProviderOptionValueKind::Bool, RangePolicy::Boolean, TargetMember::IgnoreEos},
-    {"mirostat", ProviderOptionValueKind::Int64, RangePolicy::Mirostat, TargetMember::Mirostat},
-    {"mirostat_tau", ProviderOptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::MirostatTau},
-    {"mirostat_eta", ProviderOptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::MirostatEta},
-    {"xtc_probability", ProviderOptionValueKind::Double, RangePolicy::Probability, TargetMember::XtcProbability},
-    {"xtc_threshold", ProviderOptionValueKind::Double, RangePolicy::Probability, TargetMember::XtcThreshold},
-    {"dry_multiplier", ProviderOptionValueKind::Double, RangePolicy::NonnegativeFloat, TargetMember::DryMultiplier},
-    {"dry_base", ProviderOptionValueKind::Double, RangePolicy::DryBase, TargetMember::DryBase},
+     FloatOption{FloatRange::Finite, &common_params_sampling::dynatemp_exponent}},
+    {"penalty_last_n", IntegerOption{IntegerRange::SentinelInt32, &common_params_sampling::penalty_last_n}},
+    {"repeat_penalty", FloatOption{FloatRange::Finite, &common_params_sampling::penalty_repeat}},
+    {"ignore_eos", BoolOption{&common_params_sampling::ignore_eos}},
+    {"mirostat", IntegerOption{IntegerRange::Mirostat, &common_params_sampling::mirostat}},
+    {"mirostat_tau", FloatOption{FloatRange::Finite, &common_params_sampling::mirostat_tau}},
+    {"mirostat_eta", FloatOption{FloatRange::Finite, &common_params_sampling::mirostat_eta}},
+    {"xtc_probability", FloatOption{FloatRange::Probability, &common_params_sampling::xtc_probability}},
+    {"xtc_threshold", FloatOption{FloatRange::Probability, &common_params_sampling::xtc_threshold}},
+    {"dry_multiplier", FloatOption{FloatRange::Nonnegative, &common_params_sampling::dry_multiplier}},
+    {"dry_base", FloatOption{FloatRange::DryBase, &common_params_sampling::dry_base}},
     {"dry_allowed_length",
-     ProviderOptionValueKind::Int64,
-     RangePolicy::NonnegativeInt32,
-     TargetMember::DryAllowedLength},
-    {"dry_penalty_last_n", ProviderOptionValueKind::Int64, RangePolicy::SentinelInt32, TargetMember::DryPenaltyLastN},
-    {"dry_sequence_breakers",
-     ProviderOptionValueKind::StringList,
-     RangePolicy::StringList,
-     TargetMember::DrySequenceBreakers},
-    {"sampler_order", ProviderOptionValueKind::StringList, RangePolicy::StringList, TargetMember::SamplerOrder},
-    {"logit_bias", ProviderOptionValueKind::Map, RangePolicy::FiniteFloat, TargetMember::LogitBias},
-    {"top_n_sigma", ProviderOptionValueKind::Double, RangePolicy::FiniteFloat, TargetMember::TopNSigma},
-    {"adaptive_target", ProviderOptionValueKind::Double, RangePolicy::AdaptiveTarget, TargetMember::AdaptiveTarget},
-    {"adaptive_decay", ProviderOptionValueKind::Double, RangePolicy::AdaptiveDecay, TargetMember::AdaptiveDecay},
+     IntegerOption{IntegerRange::NonnegativeInt32, &common_params_sampling::dry_allowed_length}},
+    {"dry_penalty_last_n",
+     IntegerOption{IntegerRange::SentinelInt32, &common_params_sampling::dry_penalty_last_n}},
+    {"dry_sequence_breakers", DrySequenceBreakersOption{}},
+    {"sampler_order", SamplerOrderOption{}},
+    {"logit_bias", LogitBiasOption{}},
+    {"top_n_sigma", FloatOption{FloatRange::Finite, &common_params_sampling::top_n_sigma}},
+    {"adaptive_target", FloatOption{FloatRange::AdaptiveTarget, &common_params_sampling::adaptive_target}},
+    {"adaptive_decay", FloatOption{FloatRange::AdaptiveDecay, &common_params_sampling::adaptive_decay}},
 }};
 
-const char* expected_type(ProviderOptionValueKind kind) {
-    switch (kind) {
-    case ProviderOptionValueKind::Int64:
-        return "int64";
-    case ProviderOptionValueKind::Double:
-        return "double";
-    case ProviderOptionValueKind::Bool:
-        return "bool";
-    case ProviderOptionValueKind::StringList:
-        return "string list";
-    case ProviderOptionValueKind::Map:
-        return "map";
-    }
-    return "unknown";
+const char* expected_type(const IntegerOption&) {
+    return "int64";
+}
+
+const char* expected_type(const FloatOption&) {
+    return "double";
+}
+
+const char* expected_type(const BoolOption&) {
+    return "bool";
+}
+
+const char* expected_type(const DrySequenceBreakersOption&) {
+    return "string list";
+}
+
+const char* expected_type(const SamplerOrderOption&) {
+    return "string list";
+}
+
+const char* expected_type(const LogitBiasOption&) {
+    return "map";
+}
+
+const char* expected_type(const OptionRule& rule) {
+    return std::visit([](const auto& typed_rule) { return expected_type(typed_rule); }, rule);
 }
 
 std::string received_type(const ProviderOptionValue& value) {
@@ -142,32 +144,62 @@ std::string received_type(const ProviderOptionValue& value) {
     return "map";
 }
 
-const char* allowed_range(RangePolicy policy) {
-    switch (policy) {
-    case RangePolicy::Boolean:
-        return "{false, true}";
-    case RangePolicy::StringList:
-        return "list containing only strings";
-    case RangePolicy::NonnegativeInt32:
+const char* allowed_range(IntegerRange range) {
+    switch (range) {
+    case IntegerRange::NonnegativeInt32:
         return "[0, 2147483647]";
-    case RangePolicy::SentinelInt32:
+    case IntegerRange::SentinelInt32:
         return "[-1, 2147483647]";
-    case RangePolicy::Mirostat:
+    case IntegerRange::Mirostat:
         return "{0, 1, 2}";
-    case RangePolicy::Probability:
+    }
+    return "valid integer range";
+}
+
+const char* allowed_range(FloatRange range) {
+    switch (range) {
+    case FloatRange::Probability:
         return "[0.0, 1.0]";
-    case RangePolicy::FiniteFloat:
+    case FloatRange::Finite:
         return "finite float range";
-    case RangePolicy::NonnegativeFloat:
+    case FloatRange::Nonnegative:
         return "[0.0, finite float maximum]";
-    case RangePolicy::DryBase:
+    case FloatRange::DryBase:
         return "[1.0, finite float maximum]";
-    case RangePolicy::AdaptiveTarget:
+    case FloatRange::AdaptiveTarget:
         return "[finite float minimum, 1.0]";
-    case RangePolicy::AdaptiveDecay:
+    case FloatRange::AdaptiveDecay:
         return "[0.0, 0.99]";
     }
-    return "valid range";
+    return "valid float range";
+}
+
+const char* allowed_range(const IntegerOption& rule) {
+    return allowed_range(rule.range);
+}
+
+const char* allowed_range(const FloatOption& rule) {
+    return allowed_range(rule.range);
+}
+
+const char* allowed_range(const BoolOption&) {
+    return "{false, true}";
+}
+
+const char* allowed_range(const DrySequenceBreakersOption&) {
+    return "list containing only strings";
+}
+
+const char* allowed_range(const SamplerOrderOption&) {
+    return "list containing only strings";
+}
+
+const char* allowed_range(const LogitBiasOption&) {
+    return "finite float range";
+}
+
+const char* allowed_range(const OptionRule& rule) {
+    return std::visit([](const auto& typed_rule) { return allowed_range(typed_rule); }, rule);
 }
 
 RequestRejection option_rejection(
@@ -188,9 +220,9 @@ RequestRejection option_rejection(const OptionDescriptor& descriptor, const Prov
     return option_rejection(
         "llama",
         descriptor.public_key,
-        expected_type(descriptor.value_kind),
+        expected_type(descriptor.rule),
         received_type(value),
-        allowed_range(descriptor.range_policy)
+        allowed_range(descriptor.rule)
     );
 }
 
@@ -202,29 +234,6 @@ const OptionDescriptor* find_descriptor(const std::string& key) {
     return nullptr;
 }
 
-bool matches_kind(const ProviderOptionValue& value, ProviderOptionValueKind kind) {
-    switch (kind) {
-    case ProviderOptionValueKind::Int64:
-        return std::holds_alternative<int64_t>(value);
-    case ProviderOptionValueKind::Double:
-        return std::holds_alternative<double>(value);
-    case ProviderOptionValueKind::Bool:
-        return std::holds_alternative<bool>(value);
-    case ProviderOptionValueKind::StringList: {
-        const auto* list = std::get_if<ProviderOptionList>(&value);
-        if (!list)
-            return false;
-        for (const auto& item : *list) {
-            if (!std::holds_alternative<std::string>(item))
-                return false;
-        }
-        return true;
-    }
-    case ProviderOptionValueKind::Map:
-        return std::holds_alternative<ProviderOptionMap>(value);
-    }
-    return false;
-}
 
 std::optional<common_sampler_type> sampler_type_for_name(const std::string& name) {
     constexpr std::array<std::pair<const char*, common_sampler_type>, 10> sampler_types{{
@@ -325,165 +334,137 @@ std::optional<RequestRejection> apply_logit_bias(common_params_sampling& samplin
     return std::nullopt;
 }
 
-bool integer_in_range(int64_t value, RangePolicy policy) {
+bool integer_in_range(int64_t value, IntegerRange range) {
     const auto max = int64_t{std::numeric_limits<int32_t>::max()};
-    switch (policy) {
-    case RangePolicy::NonnegativeInt32:
+    switch (range) {
+    case IntegerRange::NonnegativeInt32:
         return value >= 0 && value <= max;
-    case RangePolicy::SentinelInt32:
+    case IntegerRange::SentinelInt32:
         return value >= -1 && value <= max;
-    case RangePolicy::Mirostat:
+    case IntegerRange::Mirostat:
         return value >= 0 && value <= 2;
-    default:
-        return false;
     }
+    return false;
 }
 
-bool double_in_range(double value, RangePolicy policy) {
+bool double_in_range(double value, FloatRange range) {
     if (!std::isfinite(value))
         return false;
     const double float_max = std::numeric_limits<float>::max();
     if (value < -float_max || value > float_max)
         return false;
-    switch (policy) {
-    case RangePolicy::Probability:
+    switch (range) {
+    case FloatRange::Probability:
         return value >= 0.0 && value <= 1.0;
-    case RangePolicy::FiniteFloat:
+    case FloatRange::Finite:
         return true;
-    case RangePolicy::NonnegativeFloat:
+    case FloatRange::Nonnegative:
         return value >= 0.0;
-    case RangePolicy::DryBase:
+    case FloatRange::DryBase:
         return value >= 1.0;
-    case RangePolicy::AdaptiveTarget:
+    case FloatRange::AdaptiveTarget:
         return value <= 1.0;
-    case RangePolicy::AdaptiveDecay:
+    case FloatRange::AdaptiveDecay:
         return value >= 0.0 && value <= 0.99;
-    default:
-        return false;
     }
+    return false;
 }
 
-void assign_integer(common_params_sampling& sampling, TargetMember target, int32_t value) {
-    switch (target) {
-    case TargetMember::MinKeep:
-        sampling.min_keep = value;
-        return;
-    case TargetMember::PenaltyLastN:
-        sampling.penalty_last_n = value;
-        return;
-    case TargetMember::Mirostat:
-        sampling.mirostat = value;
-        return;
-    case TargetMember::DryAllowedLength:
-        sampling.dry_allowed_length = value;
-        return;
-    case TargetMember::DryPenaltyLastN:
-        sampling.dry_penalty_last_n = value;
-        return;
-    default:
-        return;
-    }
+std::optional<RequestRejection> apply_option_rule(
+    common_params_sampling& sampling,
+    const OptionDescriptor& descriptor,
+    const IntegerOption& rule,
+    const ProviderOptionValue& value
+) {
+    const auto* integer = std::get_if<int64_t>(&value);
+    if (!integer || !integer_in_range(*integer, rule.range))
+        return option_rejection(descriptor, value);
+    sampling.*rule.member = static_cast<int32_t>(*integer);
+    return std::nullopt;
 }
 
-void assign_double(common_params_sampling& sampling, TargetMember target, float value) {
-    switch (target) {
-    case TargetMember::MinP:
-        sampling.min_p = value;
-        return;
-    case TargetMember::TypicalP:
-        sampling.typ_p = value;
-        return;
-    case TargetMember::DynamicTemperatureRange:
-        sampling.dynatemp_range = value;
-        return;
-    case TargetMember::DynamicTemperatureExponent:
-        sampling.dynatemp_exponent = value;
-        return;
-    case TargetMember::RepeatPenalty:
-        sampling.penalty_repeat = value;
-        return;
-    case TargetMember::MirostatTau:
-        sampling.mirostat_tau = value;
-        return;
-    case TargetMember::MirostatEta:
-        sampling.mirostat_eta = value;
-        return;
-    case TargetMember::XtcProbability:
-        sampling.xtc_probability = value;
-        return;
-    case TargetMember::XtcThreshold:
-        sampling.xtc_threshold = value;
-        return;
-    case TargetMember::DryMultiplier:
-        sampling.dry_multiplier = value;
-        return;
-    case TargetMember::DryBase:
-        sampling.dry_base = value;
-        return;
-    case TargetMember::TopNSigma:
-        sampling.top_n_sigma = value;
-        return;
-    case TargetMember::AdaptiveTarget:
-        sampling.adaptive_target = value;
-        return;
-    case TargetMember::AdaptiveDecay:
-        sampling.adaptive_decay = value;
-        return;
-    default:
-        return;
-    }
+std::optional<RequestRejection> apply_option_rule(
+    common_params_sampling& sampling,
+    const OptionDescriptor& descriptor,
+    const FloatOption& rule,
+    const ProviderOptionValue& value
+) {
+    const auto* number = std::get_if<double>(&value);
+    if (!number || !double_in_range(*number, rule.range))
+        return option_rejection(descriptor, value);
+    sampling.*rule.member = static_cast<float>(*number);
+    return std::nullopt;
 }
 
-void assign_bool(common_params_sampling& sampling, TargetMember target, bool value) {
-    switch (target) {
-    case TargetMember::IgnoreEos:
-        sampling.ignore_eos = value;
-        return;
-    default:
-        return;
+std::optional<RequestRejection> apply_option_rule(
+    common_params_sampling& sampling,
+    const OptionDescriptor& descriptor,
+    const BoolOption& rule,
+    const ProviderOptionValue& value
+) {
+    const auto* boolean = std::get_if<bool>(&value);
+    if (!boolean)
+        return option_rejection(descriptor, value);
+    sampling.*rule.member = *boolean;
+    return std::nullopt;
+}
+
+std::optional<RequestRejection> apply_option_rule(
+    common_params_sampling& sampling,
+    const OptionDescriptor& descriptor,
+    const DrySequenceBreakersOption&,
+    const ProviderOptionValue& value
+) {
+    const auto* items = std::get_if<ProviderOptionList>(&value);
+    if (!items)
+        return option_rejection(descriptor, value);
+
+    std::vector<std::string> breakers;
+    breakers.reserve(items->size());
+    for (const auto& item : *items) {
+        const auto* breaker = std::get_if<std::string>(&item);
+        if (!breaker)
+            return option_rejection(descriptor, value);
+        breakers.push_back(*breaker);
     }
+    sampling.dry_sequence_breakers = std::move(breakers);
+    return std::nullopt;
+}
+
+std::optional<RequestRejection> apply_option_rule(
+    common_params_sampling& sampling,
+    const OptionDescriptor& descriptor,
+    const SamplerOrderOption&,
+    const ProviderOptionValue& value
+) {
+    const auto* order = std::get_if<ProviderOptionList>(&value);
+    if (!order)
+        return option_rejection(descriptor, value);
+    for (const auto& item : *order) {
+        if (!std::holds_alternative<std::string>(item))
+            return option_rejection(descriptor, value);
+    }
+    return apply_sampler_order(sampling, *order);
+}
+
+std::optional<RequestRejection> apply_option_rule(
+    common_params_sampling& sampling,
+    const OptionDescriptor& descriptor,
+    const LogitBiasOption&,
+    const ProviderOptionValue& value
+) {
+    const auto* biases = std::get_if<ProviderOptionMap>(&value);
+    if (!biases)
+        return option_rejection(descriptor, value);
+    return apply_logit_bias(sampling, *biases);
 }
 
 std::optional<RequestRejection> apply_provider_option(
     common_params_sampling& sampling, const OptionDescriptor& descriptor, const ProviderOptionValue& value
 ) {
-    if (!matches_kind(value, descriptor.value_kind))
-        return option_rejection(descriptor, value);
-
-    if (descriptor.target_member == TargetMember::SamplerOrder)
-        return apply_sampler_order(sampling, std::get<ProviderOptionList>(value));
-    if (descriptor.target_member == TargetMember::LogitBias)
-        return apply_logit_bias(sampling, std::get<ProviderOptionMap>(value));
-
-    switch (descriptor.value_kind) {
-    case ProviderOptionValueKind::Int64: {
-        const auto integer = std::get<int64_t>(value);
-        if (!integer_in_range(integer, descriptor.range_policy))
-            return option_rejection(descriptor, value);
-        assign_integer(sampling, descriptor.target_member, static_cast<int32_t>(integer));
-        return std::nullopt;
-    }
-    case ProviderOptionValueKind::Double: {
-        const auto number = std::get<double>(value);
-        if (!double_in_range(number, descriptor.range_policy))
-            return option_rejection(descriptor, value);
-        assign_double(sampling, descriptor.target_member, static_cast<float>(number));
-        return std::nullopt;
-    }
-    case ProviderOptionValueKind::Bool:
-        assign_bool(sampling, descriptor.target_member, std::get<bool>(value));
-        return std::nullopt;
-    case ProviderOptionValueKind::StringList: {
-        std::vector<std::string> breakers;
-        for (const auto& item : std::get<ProviderOptionList>(value))
-            breakers.push_back(std::get<std::string>(item));
-        sampling.dry_sequence_breakers = std::move(breakers);
-        return std::nullopt;
-    }
-    case ProviderOptionValueKind::Map:
-        return std::nullopt;
-    }
-    return std::nullopt;
+    return std::visit(
+        [&](const auto& rule) { return apply_option_rule(sampling, descriptor, rule, value); }, descriptor.rule
+    );
 }
 
 } // namespace
@@ -516,7 +497,8 @@ apply_llama_generation_options(common_params_sampling& sampling, const ProviderO
             }
             if (auto rejection = apply_provider_option(sampling, *descriptor, value))
                 return *rejection;
-            if (key == "sampler_order" && !std::get<ProviderOptionList>(value).empty())
+            if (std::holds_alternative<SamplerOrderOption>(descriptor->rule) &&
+                !std::get<ProviderOptionList>(value).empty())
                 has_custom_sampler_order = true;
         }
     }

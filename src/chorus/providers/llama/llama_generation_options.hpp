@@ -13,7 +13,7 @@ namespace Chorus {
 /*
  * Applies the `llama` provider-option namespace to provider-ready sampling state.
  *
- * `common_params_sampling` must already contain llama.cpp defaults and resolved
+ * `::common_params_sampling` must already contain llama.cpp defaults and resolved
  * common options. Unknown namespaces, unknown keys, invalid values, and incompatible
  * Llama options are returned as rejections.
  *
