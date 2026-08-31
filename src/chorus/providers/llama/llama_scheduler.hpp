@@ -142,7 +142,7 @@ class LlamaScheduler {
     // worker (ingest) and the host (render_chat_prompt); llama.cpp declares no
     // thread-safety for common_chat_templates_apply, so every application
     // takes _template_mutex first.
-    common_chat_templates_ptr _chat_templates;
+    common_chat_templates_ptr _model_default_chat_templates;
     mutable std::mutex _template_mutex;
 
     struct llama_batch* batch = nullptr;

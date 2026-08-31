@@ -97,7 +97,7 @@ LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger lo
     _model_info = info;
 
     try {
-        _chat_templates = common_chat_templates_init(model, /*chat_template_override=*/"");
+        _model_default_chat_templates = common_chat_templates_init(model, /*chat_template_override=*/"");
     } catch (const std::exception& e) {
         // Embedded chat templates are unavailable. Explicit overrides still
         // work; without one, chat requests reject at ingest and
@@ -141,7 +141,7 @@ void LlamaScheduler::shutdown() {
         llama_model_free(model);
         model = nullptr;
     }
-    _chat_templates.reset();
+    _model_default_chat_templates.reset();
     _model_info = std::nullopt;
     // Last: llama_model_free and llama_free log on their way out, and those
     // lines belong to this engine's host.
@@ -155,7 +155,9 @@ std::optional<Chorus::RenderedPrompt> LlamaScheduler::render_chat_prompt(
         return std::nullopt;
     auto rendered = [&] {
         std::lock_guard<std::mutex> template_lock(_template_mutex);
-        return Chorus::render_llama_chat(model, _chat_templates.get(), template_override, messages, enable_thinking);
+        return Chorus::render_llama_chat(
+            model, _model_default_chat_templates.get(), template_override, messages, enable_thinking
+        );
     }();
     if (std::holds_alternative<Chorus::RequestRejection>(rendered))
         return std::nullopt;
@@ -484,7 +486,7 @@ void LlamaScheduler::ingest_new_requests() {
                 std::lock_guard<std::mutex> template_lock(_template_mutex);
                 return Chorus::render_llama_chat(
                     model,
-                    _chat_templates.get(),
+                    _model_default_chat_templates.get(),
                     chorus_request.chat_template,
                     chorus_request.messages,
                     chorus_request.gen_config.show_thinking.value_or(true)
@@ -496,8 +498,8 @@ void LlamaScheduler::ingest_new_requests() {
                 auto& render = std::get<Chorus::LlamaChatRender>(rendered);
                 tokens =
                     Chorus::LlamaUtils::tokenize(context, render.prompt, /*add_special=*/true, /*parse_special=*/true);
-                for (auto& stop : render.additional_stops)
-                    stop_sequences.push_back(std::move(stop));
+                for (auto& template_stop_sequence : render.template_stop_sequences)
+                    stop_sequences.push_back(std::move(template_stop_sequence));
                 // The request flag controls template rendering, not channel
                 // separation. Some reasoning templates ignore the flag and
                 // still open a think block, so capability alone selects the

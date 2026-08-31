@@ -19,22 +19,22 @@ common_chat_msg to_common(const ChatMessage& message) {
 
 std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
     const llama_model* model,
-    const common_chat_templates* defaults,
+    const common_chat_templates* model_default_chat_templates,
     const std::string& template_override,
     const std::vector<ChatMessage>& messages,
     bool enable_thinking
 ) {
-    common_chat_templates_ptr override_templates;
-    const common_chat_templates* templates = defaults;
+    common_chat_templates_ptr override_chat_templates;
+    const common_chat_templates* selected_chat_templates = model_default_chat_templates;
     if (!template_override.empty()) {
         try {
-            override_templates = common_chat_templates_init(model, template_override);
-            templates = override_templates.get();
+            override_chat_templates = common_chat_templates_init(model, template_override);
+            selected_chat_templates = override_chat_templates.get();
         } catch (const std::exception& e) {
             return RequestRejection{ChorusError::InvalidRequest, std::string("Invalid chat_template: ") + e.what()};
         }
     }
-    if (!templates)
+    if (!selected_chat_templates)
         return RequestRejection{ChorusError::InvalidRequest, "No chat template available for messages."};
 
     common_chat_templates_inputs inputs;
@@ -47,10 +47,10 @@ std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
     inputs.reasoning_format = COMMON_REASONING_FORMAT_AUTO;
 
     try {
-        common_chat_params params = common_chat_templates_apply(templates, inputs);
+        common_chat_params params = common_chat_templates_apply(selected_chat_templates, inputs);
         LlamaChatRender render;
         render.prompt = std::move(params.prompt);
-        render.additional_stops = std::move(params.additional_stops);
+        render.template_stop_sequences = std::move(params.additional_stops);
         render.supports_thinking = params.supports_thinking;
         render.parser_params = common_chat_parser_params(params);
         render.parser_params.reasoning_format = COMMON_REASONING_FORMAT_AUTO;

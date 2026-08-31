@@ -15,7 +15,7 @@ namespace Chorus {
 
 struct LlamaChatRender {
     std::string prompt;
-    std::vector<std::string> additional_stops;
+    std::vector<std::string> template_stop_sequences;
     bool supports_thinking = false;
     common_chat_parser_params parser_params;
 };
@@ -36,7 +36,7 @@ struct LlamaChatRender {
  */
 std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
     const llama_model* model,
-    const common_chat_templates* defaults,
+    const common_chat_templates* model_default_chat_templates,
     const std::string& template_override,
     const std::vector<ChatMessage>& messages,
     bool enable_thinking
