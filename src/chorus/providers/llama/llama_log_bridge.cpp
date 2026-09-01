@@ -56,12 +56,16 @@ Registry& registry() {
     return instance;
 }
 
-void deliver(ggml_log_level level, const char* text, void* /*user_data*/) {
-    Registry& reg = registry();
-    std::lock_guard<std::mutex> lock(reg.mutex);
-    for (const auto& record : reg.assembler.feed(static_cast<int>(level), text)) {
-        for (const auto& entry : reg.loggers)
-            entry.second.log(record.level, record.message, record.fields);
+void deliver(ggml_log_level level, const char* text, void* /*user_data*/) noexcept {
+    try {
+        Registry& reg = registry();
+        std::lock_guard<std::mutex> lock(reg.mutex);
+        for (const auto& record : reg.assembler.feed(static_cast<int>(level), text)) {
+            for (const auto& entry : reg.loggers)
+                entry.second.log(record.level, record.message, record.fields);
+        }
+    } catch (...) {
+        // Exceptions cannot cross the vendor's C callback boundary.
     }
 }
 

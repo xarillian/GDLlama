@@ -39,6 +39,7 @@ std::variant<FitResult, ChorusError> fit_messages_to_budget(
     const size_t pin = leading_system_run(history);
     const size_t droppable = history.size() > pin ? history.size() - pin - 1 : 0;
     for (size_t drop = 0; drop <= droppable; ++drop) {
+        // Strict-alternation templates reject assistant-led retained windows.
         while (drop > 0 && drop < droppable && history[pin + drop].role != "user")
             ++drop;
 

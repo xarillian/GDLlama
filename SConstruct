@@ -265,7 +265,7 @@ if "compiledb" in COMMAND_LINE_TARGETS:
     env.Object(sources_core + sources_factory + sources_runtime + sources_echo + sources_godot)
     make_chorus_c_build_env(env).SharedObject(sources_c)
     with_llama_includes(env).Object(sources_llama)
-    compiledb_test_env = make_test_env(env)
+    compiledb_test_env = make_chorus_c_build_env(make_test_env(env))
     compiledb_test_env.Object(sources_tests + sources_tests_c)
     with_llama_includes(compiledb_test_env).Object(sources_tests_llama)
     Alias("compiledb", compiledb)
@@ -273,14 +273,14 @@ if "compiledb" in COMMAND_LINE_TARGETS:
 
 # Product targets
 if "test" in COMMAND_LINE_TARGETS:
-    test_env = make_test_env(env)
+    test_env = make_chorus_c_build_env(make_test_env(env))
     if env["platform"] == "windows":
         test_env.Append(LINKFLAGS=["/SUBSYSTEM:CONSOLE"])
 
     test_env.Append(LIBS=llama_libs)
 
     llama_test_objects = with_llama_includes(test_env).Object(sources_llama + sources_tests_llama)
-    chorus_c_test_objects = make_chorus_c_build_env(test_env).Object(sources_c)
+    chorus_c_test_objects = test_env.Object(sources_c)
 
     test_program = test_env.Program(
         target="bin/run_tests",

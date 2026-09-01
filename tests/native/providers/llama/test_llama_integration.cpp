@@ -106,6 +106,39 @@ void test_model_loading() {
     ASSERT_TRUE(!engine.is_initialized());
 }
 
+void test_repeated_healthy_initialization_changes_no_engine_state() {
+    SKIP_IF_MODEL_TESTS_DISABLED();
+
+    EngineLogCapture original_logs;
+    EngineLogCapture replacement_logs;
+    Chorus::LlamaEngine engine;
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
+    ASSERT_TRUE(!engine.initialize(config, original_logs.logger()).has_value());
+    const auto before = engine.loaded_model_info();
+    ASSERT_TRUE(before.has_value());
+
+    Chorus::ChorusConfig replacement = make_gguf_config("/unused/replacement.gguf");
+    replacement.model.model_id = "unused-replacement";
+    replacement.model.format = Chorus::ModelFormat::SafeTensors;
+    ASSERT_TRUE(!engine.initialize(replacement, replacement_logs.logger()).has_value());
+    const auto after = engine.loaded_model_info();
+    ASSERT_TRUE(after.has_value());
+    ASSERT_EQ(after->model_id, before->model_id);
+    ASSERT_TRUE(after->format == before->format);
+    ASSERT_EQ(after->family, before->family);
+    ASSERT_EQ(after->quantization, before->quantization);
+
+    engine.shutdown();
+    Chorus::ChorusRequest stopped_request;
+    stopped_request.id = 9010;
+    stopped_request.prompt = "not accepted";
+    engine.submit_request(stopped_request);
+
+    ASSERT_TRUE(replacement_logs.text().empty());
+    ASSERT_TRUE(original_logs.text().find("Request submitted to a stopped engine") != std::string::npos);
+}
+
 void test_llama_cpu_placement_avoids_vulkan_compute_buffer() {
     SKIP_IF_MODEL_TESTS_DISABLED();
 
@@ -1930,6 +1963,10 @@ int run_llama_integration_tests() {
     run_test("Llama: unsupported model format is rejected", test_unsupported_model_format_is_rejected);
     run_test("Llama: unknown load option is rejected", test_unknown_llama_load_option_is_rejected);
     run_test("Llama_Model_Load", test_model_loading);
+    run_test(
+        "Llama repeated healthy initialization changes no engine state",
+        test_repeated_healthy_initialization_changes_no_engine_state
+    );
     run_test("Llama CPU placement avoids Vulkan compute buffer", test_llama_cpu_placement_avoids_vulkan_compute_buffer);
     run_test(
         "Llama Vulkan compute-buffer oracle covers every device index",

@@ -1,6 +1,15 @@
 #include "chorus/providers/echo/echo_engine.hpp"
 
 namespace Chorus {
+namespace {
+struct QueuedCancelCallbackFrame {
+    EchoEngine* engine;
+    QueuedCancelCallbackFrame* previous;
+};
+
+thread_local QueuedCancelCallbackFrame* current_queued_cancel_callback = nullptr;
+} // namespace
+
 EchoEngine::~EchoEngine() {
     shutdown();
 }
@@ -150,25 +159,31 @@ void EchoEngine::cancel_request(RequestId id) {
             queued->id,
             ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled."},
         };
-        try {
-            queued->on_event(signal);
-        } catch (...) {
+        QueuedCancelCallbackFrame frame{this, current_queued_cancel_callback};
+        current_queued_cancel_callback = &frame;
+        const auto finish_callback = [this, &frame] {
+            current_queued_cancel_callback = frame.previous;
             {
                 std::lock_guard<std::mutex> lock(_queue_mutex);
                 --_queued_cancel_callbacks_in_flight;
             }
             _queue_cv.notify_all();
+        };
+        try {
+            queued->on_event(signal);
+        } catch (...) {
+            finish_callback();
             throw;
         }
-        {
-            std::lock_guard<std::mutex> lock(_queue_mutex);
-            --_queued_cancel_callbacks_in_flight;
-        }
-        _queue_cv.notify_all();
+        finish_callback();
     }
 }
 
 void EchoEngine::shutdown() {
+    size_t callbacks_on_this_thread = 0;
+    for (auto* frame = current_queued_cancel_callback; frame; frame = frame->previous)
+        callbacks_on_this_thread += frame->engine == this;
+
     std::vector<ChorusRequest> queued;
     {
         // Store under `_queue_mutex`: the worker evaluates its wait predicate while
@@ -191,7 +206,11 @@ void EchoEngine::shutdown() {
     }
     {
         std::unique_lock<std::mutex> lock(_queue_mutex);
-        _queue_cv.wait(lock, [this] { return _queued_cancel_callbacks_in_flight == 0; });
+        // The current callback cannot wait for its own return. Every callback
+        // running on another thread remains inside the shutdown fence.
+        _queue_cv.wait(lock, [this, callbacks_on_this_thread] {
+            return _queued_cancel_callbacks_in_flight == callbacks_on_this_thread;
+        });
     }
     _initialized = false;
 

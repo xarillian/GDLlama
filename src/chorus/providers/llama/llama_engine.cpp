@@ -11,19 +11,15 @@ LlamaEngine::~LlamaEngine() {
 }
 
 std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config, Logger logger) {
-    _log = std::move(logger);
-
-    bool already_initialized = false;
     bool holds_dead_scheduler = false;
     {
         std::lock_guard<std::mutex> lock(_lifecycle_mutex);
-        already_initialized = _scheduler && _scheduler->is_healthy();
-        holds_dead_scheduler = _scheduler && !already_initialized;
+        if (_scheduler && _scheduler->is_healthy())
+            return std::nullopt;
+        holds_dead_scheduler = static_cast<bool>(_scheduler);
     }
-    if (already_initialized) {
-        _log.warn("Engine is already initialized");
-        return std::nullopt;
-    }
+
+    _log = std::move(logger);
     if (holds_dead_scheduler) {
         _log.warn("Re-initializing engine after a failure");
         shutdown();

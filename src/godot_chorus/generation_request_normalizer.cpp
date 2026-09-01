@@ -29,6 +29,18 @@ std::optional<String> apply_generation_request_fields(
 
 } // namespace
 
+std::variant<Chorus::ChatMessage, ChatMessageParseError>
+parse_chat_message_dictionary(const Dictionary& entry) {
+    if (!entry.has("role") || !entry.has("content"))
+        return ChatMessageParseError::MissingFields;
+    if (entry["role"].get_type() != Variant::STRING || entry["content"].get_type() != Variant::STRING)
+        return ChatMessageParseError::InvalidFieldTypes;
+    return Chorus::ChatMessage{
+        std::string(((String)entry["role"]).utf8().get_data()),
+        std::string(((String)entry["content"]).utf8().get_data()),
+    };
+}
+
 std::variant<Chorus::GenerationRequest, String> normalize_generation_request(const Dictionary& request) {
     if (!request.has("prompt"))
         return String("[Chorus] generate() requires a 'prompt' key in the request dictionary.");
@@ -341,15 +353,16 @@ std::variant<std::vector<Chorus::InjectedMessage>, String> normalize_inject_arra
         if (entries[i].get_type() != Variant::DICTIONARY)
             return String("[Chorus] generate(): 'inject' entries must be Dictionaries.");
         const Dictionary entry = entries[i];
-        if (!entry.has("role") || !entry.has("content"))
-            return String("[Chorus] generate(): 'inject' entries require 'role' and 'content'.");
-        if (entry["role"].get_type() != Variant::STRING || entry["content"].get_type() != Variant::STRING)
+        auto message = parse_chat_message_dictionary(entry);
+        if (std::holds_alternative<ChatMessageParseError>(message)) {
+            if (std::get<ChatMessageParseError>(message) == ChatMessageParseError::MissingFields)
+                return String("[Chorus] generate(): 'inject' entries require 'role' and 'content'.");
             return String("[Chorus] generate(): 'inject' role and content must be Strings.");
+        }
         if (entry.has("depth") && entry["depth"].get_type() != Variant::INT)
             return String("[Chorus] generate(): 'inject' depth must be an int.");
         Chorus::InjectedMessage injected;
-        injected.message.role = std::string(((String)entry["role"]).utf8().get_data());
-        injected.message.content = std::string(((String)entry["content"]).utf8().get_data());
+        injected.message = std::move(std::get<Chorus::ChatMessage>(message));
         injected.depth = entry.has("depth") ? (int32_t)(int64_t)entry["depth"] : 0;
         inject.push_back(std::move(injected));
     }

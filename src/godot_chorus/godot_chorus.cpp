@@ -269,20 +269,21 @@ bool GodotChorus::load_model() {
         return false;
     }
 
+    const Chorus::Provider provider = to_chorus_provider(_provider);
     Chorus::ChorusConfig config;
     config.log_level = effective_log_level();
-    if (_provider != PROVIDER_ECHO) {
-        config.model.model_id = _model_path.get_file().get_basename().utf8().get_data();
-        config.model.format = Chorus::ModelFormat::Gguf;
-        config.model.assets.push_back({Chorus::AssetRole::Weights, _model_path.utf8().get_data()});
-    }
+    config.model = Chorus::make_initial_model_spec(
+        provider,
+        std::string(_model_path.get_file().get_basename().utf8().get_data()),
+        std::string(_model_path.utf8().get_data())
+    );
     // Echo accepts an empty `Chorus::InitialModelSpec` and declares no load
     // options, so this generic path contributes nothing without a special case.
     const auto& caps = provider_capabilities();
     if (!caps.load_options.empty())
         config.provider_options[caps.provider_id] = Chorus::resolve_option_defaults(caps.load_options, _load_options);
 
-    auto engine = Chorus::make_engine(to_chorus_provider(_provider));
+    auto engine = Chorus::make_engine(provider);
     auto err = _runtime.load_engine(std::move(engine), config);
     // Before the verdict: a load logs the provider's own account of what
     // happened, and a failure code with no account is the complaint this
@@ -366,19 +367,21 @@ bool GodotChorus::import_conversation_history(const String& session, const Array
             );
             return false;
         }
-        const Dictionary entry = history[i];
-        if (!entry.has("role") || !entry.has("content")) {
-            UtilityFunctions::push_error("[Chorus] import_conversation_history: entries require 'role' and 'content'.");
+        auto message = godot_chorus::parse_chat_message_dictionary((Dictionary)history[i]);
+        if (std::holds_alternative<godot_chorus::ChatMessageParseError>(message)) {
+            if (std::get<godot_chorus::ChatMessageParseError>(message) ==
+                godot_chorus::ChatMessageParseError::MissingFields) {
+                UtilityFunctions::push_error(
+                    "[Chorus] import_conversation_history: entries require 'role' and 'content'."
+                );
+            } else {
+                UtilityFunctions::push_error(
+                    "[Chorus] import_conversation_history: 'role' and 'content' must be Strings."
+                );
+            }
             return false;
         }
-        if (entry["role"].get_type() != Variant::STRING || entry["content"].get_type() != Variant::STRING) {
-            UtilityFunctions::push_error("[Chorus] import_conversation_history: 'role' and 'content' must be Strings.");
-            return false;
-        }
-        messages.push_back(
-            {std::string(((String)entry["role"]).utf8().get_data()),
-             std::string(((String)entry["content"]).utf8().get_data())}
-        );
+        messages.push_back(std::move(std::get<Chorus::ChatMessage>(message)));
     }
     auto err = _runtime.import_conversation_history(std::string(session.utf8().get_data()), std::move(messages));
     if (err.has_value()) {

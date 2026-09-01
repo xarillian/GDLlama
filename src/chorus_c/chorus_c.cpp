@@ -402,11 +402,8 @@ chorus_error chorus_load(
     try {
         Chorus::ChorusConfig config;
         config.log_level = cpp_log_level;
-        if (provider == CHORUS_PROVIDER_LLAMA) {
-            config.model.model_id = model_path;
-            config.model.format = Chorus::ModelFormat::Gguf;
-            config.model.assets.push_back({Chorus::AssetRole::Weights, model_path});
-        }
+        const std::string model_source = model_path ? model_path : "";
+        config.model = Chorus::make_initial_model_spec(cpp_provider, model_source, model_source);
         if (options && !options->values.empty())
             config.provider_options[provider_id] = options->values;
 

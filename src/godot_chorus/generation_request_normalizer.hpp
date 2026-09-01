@@ -12,6 +12,21 @@
 
 namespace godot_chorus {
 
+enum class ChatMessageParseError {
+    MissingFields,
+    InvalidFieldTypes,
+};
+
+/*
+ * Converts one `{role, content}` dictionary into a host-neutral message.
+ *
+ * Returns:
+ *  - `Chorus::ChatMessage`: the normalized message.
+ *  - `godot_chorus::ChatMessageParseError`: the rejected dictionary shape.
+ */
+std::variant<Chorus::ChatMessage, ChatMessageParseError>
+parse_chat_message_dictionary(const godot::Dictionary& entry);
+
 /*
  * Converts a Godot request dictionary into a host-neutral generation request.
  *

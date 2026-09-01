@@ -31,12 +31,16 @@ int run_llama_log_bridge_tests();
 int run_llama_reasoning_tests();
 int run_stop_sequence_filter_tests();
 int run_prompt_fitting_tests();
+int run_echo_engine_child_mode(std::string_view child_name);
 int run_llama_reentry_child_mode(std::string_view child_name);
 
 int main(int argc, char** argv) {
     g_test_executable_path = argv[0];
-    if (argc == 3 && std::string_view(argv[1]) == "__chorus_child")
-        return run_llama_reentry_child_mode(argv[2]);
+    if (argc == 3 && std::string_view(argv[1]) == "__chorus_child") {
+        const std::string_view child_name = argv[2];
+        const int echo_result = run_echo_engine_child_mode(child_name);
+        return echo_result == 64 ? run_llama_reentry_child_mode(child_name) : echo_result;
+    }
 
     g_run_model_tests = !model_tests_disabled_by_env(std::getenv("CHORUS_SKIP_MODEL_TESTS"));
     if (argc > 1)

@@ -2,6 +2,7 @@
 #include "chorus/providers/echo/echo_engine.hpp"
 #include "collecting_log.hpp"
 #include "engine_contract_suite.hpp"
+#include "process_test.hpp"
 #include "test_utils.hpp"
 
 #include <atomic>
@@ -12,6 +13,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -567,6 +569,103 @@ void test_echo_shutdown_waits_for_queued_cancellation_callback() {
     ASSERT_TRUE(stop_returned);
 }
 
+namespace {
+
+constexpr std::string_view ECHO_REENTRANT_SHUTDOWN_CHILD = "echo_reentrant_shutdown";
+
+int run_echo_reentrant_shutdown_child() {
+    struct State {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool active_callback_blocked = false;
+        bool release_active = false;
+        bool cancellation_callback_entered = false;
+        bool shutdown_returned = false;
+        size_t cancelled_terminals = 0;
+    } state;
+
+    Chorus::EchoEngine engine;
+    Chorus::ChorusConfig config;
+    if (engine.initialize(config, {}).has_value())
+        return 10;
+
+    Chorus::ChorusRequest active;
+    active.id = 52;
+    active.prompt = "active request";
+    active.on_event = [&](Chorus::ChorusSignal& signal) {
+        if (!std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event))
+            return;
+        std::unique_lock<std::mutex> lock(state.mutex);
+        if (state.active_callback_blocked)
+            return;
+        state.active_callback_blocked = true;
+        state.cv.notify_all();
+        state.cv.wait(lock, [&] { return state.release_active; });
+    };
+    engine.submit_request(active);
+
+    {
+        std::unique_lock<std::mutex> lock(state.mutex);
+        if (!state.cv.wait_for(lock, std::chrono::seconds(2), [&] { return state.active_callback_blocked; })) {
+            state.release_active = true;
+            state.cv.notify_all();
+            lock.unlock();
+            engine.shutdown();
+            return 11;
+        }
+    }
+
+    Chorus::ChorusRequest queued;
+    queued.id = 53;
+    queued.prompt = "queued request";
+    queued.on_event = [&](Chorus::ChorusSignal& signal) {
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.cancelled_terminals +=
+                std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event) &&
+                std::get<Chorus::ChorusSignal::Error>(signal.event).code == Chorus::ChorusError::Cancelled;
+            state.cancellation_callback_entered = true;
+            state.cv.notify_all();
+        }
+        engine.shutdown();
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.shutdown_returned = true;
+        }
+    };
+    engine.submit_request(queued);
+
+    std::thread release([&] {
+        std::unique_lock<std::mutex> lock(state.mutex);
+        state.cv.wait(lock, [&] { return state.cancellation_callback_entered; });
+        state.release_active = true;
+        state.cv.notify_all();
+    });
+    engine.cancel_request(queued.id);
+    release.join();
+
+    bool passed = false;
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        passed = state.shutdown_returned && state.cancelled_terminals == 1;
+    }
+    return passed && !engine.is_initialized() ? 0 : 12;
+}
+
+} // namespace
+
+void test_echo_queued_cancellation_callback_can_reenter_shutdown() {
+    ASSERT_TRUE(
+        run_isolated_test_child(std::string(ECHO_REENTRANT_SHUTDOWN_CHILD), std::chrono::seconds(10))
+    );
+}
+
+int run_echo_engine_child_mode(std::string_view child_name) {
+    if (child_name == ECHO_REENTRANT_SHUTDOWN_CHILD)
+        return run_echo_reentrant_shutdown_child();
+    return 64;
+}
+
 // Capability conformance: Echo advertises exactly one option, max_tokens, and no
 // provider options. The matrix proves that option's deterministic behavior and pins
 // both completeness directions against the engine's own advertisement.
@@ -854,6 +953,10 @@ int run_echo_engine_tests() {
     run_test(
         "Echo_shutdown_waits_for_queued_cancellation_callback",
         test_echo_shutdown_waits_for_queued_cancellation_callback
+    );
+    run_test(
+        "Echo_queued_cancellation_callback_can_reenter_shutdown",
+        test_echo_queued_cancellation_callback_can_reenter_shutdown
     );
     run_test("Echo_conformance_matrix_covers_advertised_options", test_echo_conformance_matrix);
     run_test("Echo_terminal_invariant_one_per_request", test_echo_terminal_invariant_one_per_request);

@@ -60,6 +60,20 @@ void test_factory_creates_llama_engine_uninitialized() {
     ASSERT_TRUE(!engine->is_initialized());
 }
 
+void test_factory_shapes_initial_models_by_provider_policy() {
+    const auto llama = Chorus::make_initial_model_spec(Chorus::Provider::Llama, "hero-model", "models/hero.gguf");
+    ASSERT_EQ(llama.model_id, std::string("hero-model"));
+    ASSERT_TRUE(llama.format == Chorus::ModelFormat::Gguf);
+    ASSERT_EQ(llama.assets.size(), size_t{1});
+    ASSERT_TRUE(llama.assets[0].role == Chorus::AssetRole::Weights);
+    ASSERT_EQ(llama.assets[0].source, std::string("models/hero.gguf"));
+
+    const auto echo = Chorus::make_initial_model_spec(Chorus::Provider::Echo, "ignored", "ignored.gguf");
+    ASSERT_TRUE(echo.model_id.empty());
+    ASSERT_TRUE(echo.format == Chorus::ModelFormat::Auto);
+    ASSERT_TRUE(echo.assets.empty());
+}
+
 int run_engine_factory_tests() {
     std::cout << "\n--- ENGINE FACTORY SUITE ---\n";
 
@@ -67,6 +81,10 @@ int run_engine_factory_tests() {
         "Factory_echo_engine_round_trips_through_interface", test_factory_echo_engine_round_trips_through_interface
     );
     run_test("Factory_creates_llama_engine_uninitialized", test_factory_creates_llama_engine_uninitialized);
+    run_test(
+        "Factory_shapes_initial_models_by_provider_policy",
+        test_factory_shapes_initial_models_by_provider_policy
+    );
 
     std::cout << "\n======================================\n";
     if (g_tests_failed > 0) {
