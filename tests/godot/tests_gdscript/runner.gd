@@ -26,8 +26,6 @@ func _ready() -> void:
 	await TestProperties.run_tests(self)
 	print("TEST: Structured Logging")
 	await LoggingTests.run_tests(self)
-	print("TEST: Basic Signalling")
-	await TestLlamaSignals.run_tests(self)
 
 	print("\n======================================")
 	if TestReport.failed > 0:

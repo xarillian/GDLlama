@@ -1,6 +1,6 @@
 #include "chorus/core/log.hpp"
 #include "collecting_log.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -17,7 +17,7 @@
 // The severity threshold
 // ---------------------------------------------------------------------------
 
-void test_a_level_below_the_threshold_produces_no_record() {
+TEST(Logging, Log_level_below_the_threshold_produces_no_record) {
     CollectingLog logs;
     Chorus::Logger log = logs.logger(Chorus::log_level_default); // Warn and above
 
@@ -29,7 +29,7 @@ void test_a_level_below_the_threshold_produces_no_record() {
     ASSERT_EQ(logs.records()[0].message, "Kept");
 }
 
-void test_enabled_reports_the_threshold_it_was_built_with() {
+TEST(Logging, Log_enabled_reports_the_threshold_it_was_built_with) {
     CollectingLog logs;
     Chorus::Logger log = logs.logger(Chorus::log_level_default);
 
@@ -41,16 +41,21 @@ void test_enabled_reports_the_threshold_it_was_built_with() {
 }
 
 // A provider that was never given a logger still runs; it just says nothing.
-void test_a_default_constructed_logger_discards_everything() {
+TEST(Logging, Log_default_constructed_logger_discards_everything) {
     Chorus::Logger log;
+    ASSERT_TRUE(!log.enabled(Chorus::LogLevel::Debug));
+    ASSERT_TRUE(!log.enabled(Chorus::LogLevel::Info));
+    ASSERT_TRUE(!log.enabled(Chorus::LogLevel::Warn));
+    ASSERT_TRUE(!log.enabled(Chorus::LogLevel::Error));
     ASSERT_TRUE(!log.enabled(Chorus::LogLevel::Fatal));
+    ASSERT_TRUE(!log.enabled(Chorus::LogLevel::Off));
+
     log.fatal("Nobody hears this");
-    ASSERT_TRUE(true); // no channel, no record
 }
 
 // Off is the one threshold that admits nothing, which is how a host asks for
 // silence without the runtime having to special-case an absent logger.
-void test_the_off_threshold_admits_nothing() {
+TEST(Logging, Log_off_threshold_admits_nothing) {
     CollectingLog logs;
     Chorus::Logger log = logs.logger(Chorus::LogLevel::Off);
 
@@ -65,7 +70,7 @@ void test_the_off_threshold_admits_nothing() {
 // The record
 // ---------------------------------------------------------------------------
 
-void test_a_record_carries_its_fields_typed() {
+TEST(Logging, Log_record_carries_its_fields_typed) {
     CollectingLog logs;
     Chorus::Logger log = logs.logger();
 
@@ -85,7 +90,7 @@ void test_a_record_carries_its_fields_typed() {
 
 // Two occurrences of one failure produce the same message and differ only in
 // their fields, which is what lets a host group, filter, and count them.
-void test_the_same_failure_twice_produces_the_same_message() {
+TEST(Logging, Log_same_failure_twice_produces_the_same_message) {
     CollectingLog logs;
     Chorus::Logger log = logs.logger();
 
@@ -101,7 +106,7 @@ void test_the_same_failure_twice_produces_the_same_message() {
 // Attribution
 // ---------------------------------------------------------------------------
 
-void test_a_for_request_logger_stamps_every_record_it_produces() {
+TEST(Logging, Log_for_request_logger_stamps_every_record) {
     CollectingLog logs;
     Chorus::Logger base = logs.logger();
     Chorus::Logger scoped = base.for_request(42, std::string("npc_7/dialogue"));
@@ -117,7 +122,7 @@ void test_a_for_request_logger_stamps_every_record_it_produces() {
     }
 }
 
-void test_the_base_logger_is_unchanged_by_for_request() {
+TEST(Logging, Log_base_logger_is_unchanged_by_for_request) {
     CollectingLog logs;
     Chorus::Logger base = logs.logger();
     (void)base.for_request(42, std::string("npc_7"));
@@ -128,7 +133,7 @@ void test_the_base_logger_is_unchanged_by_for_request() {
     ASSERT_TRUE(!logs.records()[0].session_id.has_value());
 }
 
-void test_a_request_scoped_logger_may_name_no_session() {
+TEST(Logging, Log_request_scoped_logger_may_name_no_session) {
     CollectingLog logs;
     Chorus::Logger scoped = logs.logger().for_request(7);
 
@@ -152,7 +157,7 @@ Chorus::LogRecord numbered_record(int64_t n) {
 // A record is stamped where it is produced. A host collects later, on its own
 // thread at its own cadence, so a stamp taken at collection would report when
 // someone looked rather than when anything happened.
-void test_a_record_is_stamped_when_produced_not_when_drained() {
+TEST(Logging, Log_record_is_stamped_when_produced) {
     auto channel = std::make_shared<Chorus::LogChannel>(8);
     Chorus::Logger log(channel, Chorus::LogLevel::Debug);
 
@@ -170,7 +175,7 @@ void test_a_record_is_stamped_when_produced_not_when_drained() {
 
 // The report is batch metadata prefixed to the surviving records. Its timestamp
 // says when loss began, independent of the records' production ordering.
-void test_the_drop_report_is_stamped_with_the_first_loss() {
+TEST(Logging, Log_drop_report_stamped_with_first_loss) {
     Chorus::LogChannel channel(1);
     auto stamped = [](int64_t n, std::chrono::system_clock::time_point at) {
         Chorus::LogRecord record = numbered_record(n);
@@ -199,7 +204,7 @@ void test_the_drop_report_is_stamped_with_the_first_loss() {
 // The channel
 // ---------------------------------------------------------------------------
 
-void test_the_channel_drains_in_production_order_and_empties() {
+TEST(Logging, Log_channel_drains_in_order_and_empties) {
     Chorus::LogChannel channel(8);
     channel.push(numbered_record(1));
     channel.push(numbered_record(2));
@@ -213,7 +218,7 @@ void test_the_channel_drains_in_production_order_and_empties() {
 
 // A full channel drops its oldest: the failure mode is a host that stopped
 // polling, and after an hour of that you want the last second, not the first.
-void test_overflow_drops_the_oldest_and_reports_the_count() {
+TEST(Logging, Log_channel_overflow_drops_oldest_and_reports) {
     Chorus::LogChannel channel(2);
     channel.push(numbered_record(1));
     channel.push(numbered_record(2));
@@ -230,7 +235,7 @@ void test_overflow_drops_the_oldest_and_reports_the_count() {
 
 // The count is per drain, not cumulative: a host is told what it missed since
 // it last looked, not since the process started.
-void test_the_drop_count_resets_after_it_surfaces() {
+TEST(Logging, Log_channel_drop_count_resets_after_it_surfaces) {
     Chorus::LogChannel channel(1);
     channel.push(numbered_record(1));
     channel.push(numbered_record(2));
@@ -244,7 +249,7 @@ void test_the_drop_count_resets_after_it_surfaces() {
 
 // Severity does not change queue order. After a stalled host, the newest window
 // is more useful than an old warning followed by a hole in the stream.
-void test_overflow_drops_the_oldest_record_regardless_of_level() {
+TEST(Logging, Log_channel_overflow_drops_oldest_regardless_of_level) {
     Chorus::LogChannel channel(3);
     auto at_level = [](Chorus::LogLevel level, int64_t n) {
         Chorus::LogRecord record = numbered_record(n);
@@ -264,7 +269,7 @@ void test_overflow_drops_the_oldest_record_regardless_of_level() {
     ASSERT_EQ(std::get<int64_t>(*find_log_field(drained[3], "n")), int64_t{4});
 }
 
-void test_many_producer_threads_lose_nothing_within_capacity() {
+TEST(Logging, Log_channel_survives_many_producer_threads) {
     auto channel = std::make_shared<Chorus::LogChannel>(4096);
     Chorus::Logger log(channel, Chorus::LogLevel::Debug);
 
@@ -280,38 +285,4 @@ void test_many_producer_threads_lose_nothing_within_capacity() {
 
     auto drained = channel->drain();
     ASSERT_EQ(drained.size(), size_t{400});
-}
-
-int run_logging_tests() {
-    std::cout << "\n--- Structured logging ---\n";
-
-    run_test("Log_level_below_the_threshold_produces_no_record", test_a_level_below_the_threshold_produces_no_record);
-    run_test(
-        "Log_enabled_reports_the_threshold_it_was_built_with", test_enabled_reports_the_threshold_it_was_built_with
-    );
-    run_test(
-        "Log_default_constructed_logger_discards_everything", test_a_default_constructed_logger_discards_everything
-    );
-    run_test("Log_off_threshold_admits_nothing", test_the_off_threshold_admits_nothing);
-
-    run_test("Log_record_carries_its_fields_typed", test_a_record_carries_its_fields_typed);
-    run_test("Log_same_failure_twice_produces_the_same_message", test_the_same_failure_twice_produces_the_same_message);
-
-    run_test("Log_for_request_logger_stamps_every_record", test_a_for_request_logger_stamps_every_record_it_produces);
-    run_test("Log_base_logger_is_unchanged_by_for_request", test_the_base_logger_is_unchanged_by_for_request);
-    run_test("Log_request_scoped_logger_may_name_no_session", test_a_request_scoped_logger_may_name_no_session);
-
-    run_test("Log_record_is_stamped_when_produced", test_a_record_is_stamped_when_produced_not_when_drained);
-    run_test("Log_drop_report_stamped_with_first_loss", test_the_drop_report_is_stamped_with_the_first_loss);
-
-    run_test("Log_channel_drains_in_order_and_empties", test_the_channel_drains_in_production_order_and_empties);
-    run_test("Log_channel_overflow_drops_oldest_and_reports", test_overflow_drops_the_oldest_and_reports_the_count);
-    run_test("Log_channel_drop_count_resets_after_it_surfaces", test_the_drop_count_resets_after_it_surfaces);
-    run_test(
-        "Log_channel_overflow_drops_oldest_regardless_of_level",
-        test_overflow_drops_the_oldest_record_regardless_of_level
-    );
-    run_test("Log_channel_survives_many_producer_threads", test_many_producer_threads_lose_nothing_within_capacity);
-
-    return g_tests_failed;
 }

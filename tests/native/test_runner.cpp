@@ -1,88 +1,45 @@
-#include <cstdlib>
-#include <iostream>
+#include <string>
 #include <string_view>
+#include <vector>
 
-#include "test_utils.hpp"
+#include <gtest/gtest.h>
 
-int run_wlib_utf8_tests();
-int run_wlib_utf8_chunker_tests();
-int run_options_tests();
-int run_generation_config_tests();
-int run_contract_type_tests();
-int run_chat_type_tests();
-int run_core_mechanics_tests();
-int run_logging_tests();
-int run_option_schema_tests();
-int run_process_test_tests();
-int run_echo_engine_tests();
-int run_engine_factory_tests();
-int run_runtime_tests();
-int run_runtime_session_tests();
-int run_chat_history_tests();
-int run_chorus_c_tests();
-int run_llama_contract_tests();
-int run_llama_integration_tests();
-int run_llama_generation_tests();
-int run_llama_scheduler_tests();
-int run_llama_utils_tests();
-int run_llama_chat_tests();
-int run_llama_load_option_tests();
-int run_llama_log_bridge_tests();
-int run_llama_reasoning_tests();
-int run_stop_sequence_filter_tests();
-int run_prompt_fitting_tests();
+#include "gtest_filter.hpp"
+#include "process_test.hpp"
+
 int run_echo_engine_child_mode(std::string_view child_name);
 int run_llama_reentry_child_mode(std::string_view child_name);
 
 int main(int argc, char** argv) {
-    g_test_executable_path = argv[0];
     if (argc == 3 && std::string_view(argv[1]) == "__chorus_child") {
         const std::string_view child_name = argv[2];
         const int echo_result = run_echo_engine_child_mode(child_name);
         return echo_result == 64 ? run_llama_reentry_child_mode(child_name) : echo_result;
     }
 
-    g_run_model_tests = !model_tests_disabled_by_env(std::getenv("CHORUS_SKIP_MODEL_TESTS"));
-    if (argc > 1)
-        g_test_filter = argv[1];
+    set_process_test_executable_path(argv[0]);
 
-    std::cout << "======================================\n";
-    std::cout << "      CHORUS UNIFIED TEST SUITE       \n";
-    std::cout << "======================================\n";
+    std::string positional_filter;
+    std::vector<char*> gtest_args;
+    gtest_args.reserve(static_cast<std::size_t>(argc) + 1);
+    gtest_args.push_back(argv[0]);
 
-    run_wlib_utf8_tests();
-    run_wlib_utf8_chunker_tests();
-    run_options_tests();
-    run_generation_config_tests();
-    run_contract_type_tests();
-    run_chat_type_tests();
-    run_core_mechanics_tests();
-    run_logging_tests();
-    run_option_schema_tests();
-    run_process_test_tests();
-    run_echo_engine_tests();
-    run_engine_factory_tests();
-    run_runtime_tests();
-    run_runtime_session_tests();
-    run_chat_history_tests();
-    run_chorus_c_tests();
-    run_llama_contract_tests();
-    run_llama_integration_tests();
-    run_llama_generation_tests();
-    run_llama_scheduler_tests();
-    run_llama_utils_tests();
-    run_llama_chat_tests();
-    run_llama_load_option_tests();
-    run_llama_log_bridge_tests();
-    run_llama_reasoning_tests();
-    run_stop_sequence_filter_tests();
-    run_prompt_fitting_tests();
-
-    std::cout << "\n======================================\n";
-    if (g_tests_failed > 0) {
-        std::cout << "FINAL SUMMARY: " << g_tests_failed << " FAILED, " << g_tests_passed << " PASSED.\n";
-        return 1;
+    bool has_explicit_gtest_filter = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view argument = argv[i];
+        if (!argument.starts_with("-") && positional_filter.empty()) {
+            positional_filter = argument;
+            continue;
+        }
+        has_explicit_gtest_filter |= argument.starts_with("--gtest_filter");
+        gtest_args.push_back(argv[i]);
     }
-    std::cout << "FINAL SUMMARY: ALL TESTS PASSED.\n";
-    return 0;
+    gtest_args.push_back(nullptr);
+
+    int gtest_argc = static_cast<int>(gtest_args.size() - 1);
+    ::testing::InitGoogleTest(&gtest_argc, gtest_args.data());
+    if (!positional_filter.empty() && !has_explicit_gtest_filter)
+        GTEST_FLAG_SET(filter, make_gtest_substring_filter(positional_filter));
+
+    return RUN_ALL_TESTS();
 }

@@ -1,43 +1,55 @@
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 #include "wlib/utf8.hpp"
 
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
-void test_chunker_passes_ascii_through() {
+TEST(Utf8Chunker, wLib_Utf8Chunker_passes_ASCII_through) {
     wlib::Utf8Chunker chunker;
     ASSERT_EQ(chunker.push("hello"), std::string("hello"));
     ASSERT_EQ(chunker.push(""), std::string(""));
 }
 
-void test_chunker_holds_split_two_byte_sequence() {
+struct SplitScalarCase {
+    const char* name;
+    std::vector<std::string> pieces;
+    std::string scalar;
+};
+
+class Utf8ChunkerSplitScalar : public ::testing::TestWithParam<SplitScalarCase> {};
+
+TEST_P(Utf8ChunkerSplitScalar, Holds_incomplete_tail_until_scalar_is_complete) {
+    const auto& test = GetParam();
     wlib::Utf8Chunker chunker;
-    ASSERT_EQ(chunker.push("\xC2"), std::string(""));
-    ASSERT_EQ(chunker.push("\xA2"), std::string("\xC2\xA2"));
+
+    for (size_t index = 0; index + 1 < test.pieces.size(); ++index)
+        ASSERT_EQ(chunker.push(test.pieces[index]), std::string{}) << test.name << " piece " << index;
+
+    ASSERT_EQ(chunker.push(test.pieces.back()), test.scalar) << test.name;
+    ASSERT_EQ(chunker.push(""), std::string{}) << test.name << " emitted more than once";
 }
 
-void test_chunker_holds_three_byte_sequence_across_three_pushes() {
-    wlib::Utf8Chunker chunker;
-    ASSERT_EQ(chunker.push("\xE2"), std::string(""));
-    ASSERT_EQ(chunker.push("\x82"), std::string(""));
-    ASSERT_EQ(chunker.push("\xAC"), std::string("\xE2\x82\xAC"));
-}
+INSTANTIATE_TEST_SUITE_P(
+    LegalMultibyteWidths,
+    Utf8ChunkerSplitScalar,
+    ::testing::Values(
+        SplitScalarCase{"TwoByte", {"\xC2", "\xA2"}, "\xC2\xA2"},
+        SplitScalarCase{"ThreeByte", {"\xE2", "\x82", "\xAC"}, "\xE2\x82\xAC"},
+        SplitScalarCase{"FourByte", {"\xF0\x9F", "\xA6\x8B"}, "\xF0\x9F\xA6\x8B"}
+    ),
+    [](const ::testing::TestParamInfo<SplitScalarCase>& info) { return info.param.name; }
+);
 
-void test_chunker_holds_split_four_byte_sequence() {
-    wlib::Utf8Chunker chunker;
-    ASSERT_EQ(chunker.push("\xF0\x9F"), std::string(""));
-    ASSERT_EQ(chunker.push("\xA6\x8B"), std::string("\xF0\x9F\xA6\x8B"));
-}
-
-void test_chunker_releases_valid_prefix_before_held_tail() {
+TEST(Utf8Chunker, wLib_Utf8Chunker_releases_valid_prefix_before_tail) {
     wlib::Utf8Chunker chunker;
     ASSERT_EQ(chunker.push("ok\xE2\x82"), std::string("ok"));
     ASSERT_EQ(chunker.push("\xACgo"), std::string("\xE2\x82\xACgo"));
 }
 
-void test_chunker_drops_malformed_bytes_without_damming() {
+TEST(Utf8Chunker, wLib_Utf8Chunker_drops_malformed_bytes_without_damming) {
     wlib::Utf8Chunker chunker;
     // A stray continuation byte must not block what follows it.
     ASSERT_EQ(
@@ -56,7 +68,7 @@ void test_chunker_drops_malformed_bytes_without_damming() {
     ASSERT_EQ(chunker3.push("ok"), std::string("ok"));
 }
 
-void test_chunker_drops_overlong_when_disproven() {
+TEST(Utf8Chunker, wLib_Utf8Chunker_drops_overlong_when_disproven) {
     wlib::Utf8Chunker chunker;
     // E0 9F would be an overlong encoding: rejected as soon as seen together.
     ASSERT_EQ(chunker.push("\xE0"), std::string(""));
@@ -64,7 +76,7 @@ void test_chunker_drops_overlong_when_disproven() {
     ASSERT_EQ(chunker.push("ok"), std::string("ok"));
 }
 
-void test_chunker_replace_policy_keeps_corruption_visible() {
+TEST(Utf8Chunker, wLib_Utf8Chunker_replace_policy_keeps_corruption_visible) {
     // Replace substitutes one U+FFFD per rejected byte instead of silence.
     wlib::Utf8Chunker chunker{wlib::Utf8InvalidBytePolicy::Replace};
     ASSERT_EQ(
@@ -86,7 +98,7 @@ void test_chunker_replace_policy_keeps_corruption_visible() {
     ASSERT_EQ(chunker3.push("\xAC"), std::string("\xE2\x82\xAC"));
 }
 
-void test_chunker_reset_discards_held_tail() {
+TEST(Utf8Chunker, wLib_Utf8Chunker_reset_discards_held_tail) {
     wlib::Utf8Chunker chunker;
     ASSERT_EQ(chunker.push("\xE2\x82"), std::string(""));
     chunker.reset();
@@ -96,29 +108,3 @@ void test_chunker_reset_discards_held_tail() {
 }
 
 } // namespace
-
-int run_wlib_utf8_chunker_tests() {
-    std::cout << "\n=== WLIB UTF-8 CHUNKER SUITE ===\n";
-
-    run_test("wLib Utf8Chunker: passes ASCII through", test_chunker_passes_ascii_through);
-    run_test("wLib Utf8Chunker: holds split two-byte sequence", test_chunker_holds_split_two_byte_sequence);
-    run_test(
-        "wLib Utf8Chunker: holds three-byte sequence across pushes",
-        test_chunker_holds_three_byte_sequence_across_three_pushes
-    );
-    run_test("wLib Utf8Chunker: holds split four-byte sequence", test_chunker_holds_split_four_byte_sequence);
-    run_test(
-        "wLib Utf8Chunker: releases valid prefix before tail", test_chunker_releases_valid_prefix_before_held_tail
-    );
-    run_test(
-        "wLib Utf8Chunker: drops malformed bytes without damming", test_chunker_drops_malformed_bytes_without_damming
-    );
-    run_test("wLib Utf8Chunker: drops overlong when disproven", test_chunker_drops_overlong_when_disproven);
-    run_test(
-        "wLib Utf8Chunker: replace policy keeps corruption visible",
-        test_chunker_replace_policy_keeps_corruption_visible
-    );
-    run_test("wLib Utf8Chunker: reset discards held tail", test_chunker_reset_discards_held_tail);
-
-    return g_tests_failed > 0 ? 1 : 0;
-}

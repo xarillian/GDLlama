@@ -1,12 +1,13 @@
 #include "process_test.hpp"
 
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #if defined(_WIN32)
 #include <limits>
@@ -25,6 +26,11 @@ extern char** environ;
 #endif
 
 namespace {
+
+std::string& process_test_executable_path_storage() {
+    static std::string path;
+    return path;
+}
 
 #if defined(_WIN32)
 
@@ -64,20 +70,29 @@ void terminate_and_reap(pid_t child) {
 
 } // namespace
 
+void set_process_test_executable_path(std::string path) {
+    process_test_executable_path_storage() = std::move(path);
+}
+
+const std::string& process_test_executable_path() {
+    return process_test_executable_path_storage();
+}
+
 bool run_isolated_test_child(const std::string& child_name, std::chrono::milliseconds timeout) {
-    if (g_test_executable_path.empty()) {
+    const std::string& executable_path = process_test_executable_path();
+    if (executable_path.empty()) {
         std::cerr << "[process test] Cannot launch child '" << child_name << "': the test executable path is empty.\n";
         return false;
     }
 
 #if defined(_WIN32)
     std::string command_line =
-        quote_windows_argument(g_test_executable_path) + " __chorus_child " + quote_windows_argument(child_name);
+        quote_windows_argument(executable_path) + " __chorus_child " + quote_windows_argument(child_name);
     STARTUPINFOA startup_info{};
     startup_info.cb = sizeof(startup_info);
     PROCESS_INFORMATION process_info{};
     if (!CreateProcessA(
-            g_test_executable_path.c_str(),
+            executable_path.c_str(),
             command_line.data(),
             nullptr,
             nullptr,
@@ -130,8 +145,8 @@ bool run_isolated_test_child(const std::string& child_name, std::chrono::millise
 #else
     std::string child_marker = "__chorus_child";
     std::string mutable_child_name = child_name;
-    std::string executable_path = g_test_executable_path;
-    char* child_argv[] = {executable_path.data(), child_marker.data(), mutable_child_name.data(), nullptr};
+    std::string mutable_executable_path = executable_path;
+    char* child_argv[] = {mutable_executable_path.data(), child_marker.data(), mutable_child_name.data(), nullptr};
 
     pid_t child = 0;
     const int spawn_error = posix_spawnp(&child, executable_path.c_str(), nullptr, nullptr, child_argv, environ);
@@ -180,7 +195,7 @@ bool run_isolated_test_child(const std::string& child_name, std::chrono::millise
 
 namespace {
 
-void test_isolated_child_reports_nonzero_exit() {
+TEST(ProcessTest, Isolated_child_reports_nonzero_exit) {
     std::ostringstream captured_error;
     auto* original_error_buffer = std::cerr.rdbuf(captured_error.rdbuf());
     const bool succeeded = run_isolated_test_child("unknown_isolated_child", std::chrono::seconds(1));
@@ -192,9 +207,3 @@ void test_isolated_child_reports_nonzero_exit() {
 }
 
 } // namespace
-
-int run_process_test_tests() {
-    std::cout << "\n--- Isolated Process Tests ---\n";
-    run_test("Isolated child reports nonzero exit", test_isolated_child_reports_nonzero_exit);
-    return 0;
-}

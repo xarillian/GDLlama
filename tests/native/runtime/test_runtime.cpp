@@ -1,6 +1,6 @@
 #include "chorus/runtime/runtime.hpp"
 #include "sync_mock_engine.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include <iostream>
 #include <memory>
@@ -21,7 +21,15 @@ static Chorus::GenerationRequest make_request(const std::string& prompt, bool st
     return request;
 }
 
-void test_submit_before_load_returns_EngineNotReady_without_touching_engine() {
+static size_t terminal_count(const std::vector<Chorus::RuntimeEvent>& events, Chorus::RequestId id) {
+    size_t count = 0;
+    for (const auto& event : events)
+        count += event.request_id == id &&
+                 (event.kind == Chorus::RuntimeEvent::Kind::Complete || event.kind == Chorus::RuntimeEvent::Kind::Error);
+    return count;
+}
+
+TEST(Runtime, Runtime_submit_before_load_returns_EngineNotReady) {
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.is_loaded());
 
@@ -31,14 +39,14 @@ void test_submit_before_load_returns_EngineNotReady_without_touching_engine() {
     ASSERT_EQ(result.request_id, -1);
 }
 
-void test_load_engine_success_and_is_loaded() {
+TEST(Runtime, Runtime_load_engine_success_and_is_loaded) {
     Chorus::ChorusRuntime runtime;
     auto err = runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
     ASSERT_TRUE(!err.has_value());
     ASSERT_TRUE(runtime.is_loaded());
 }
 
-void test_load_engine_null_engine_is_InvalidRequest() {
+TEST(Runtime, Runtime_load_engine_null_engine_is_InvalidRequest) {
     Chorus::ChorusRuntime runtime;
     auto err = runtime.load_engine(nullptr, make_config());
     ASSERT_TRUE(err.has_value());
@@ -46,7 +54,7 @@ void test_load_engine_null_engine_is_InvalidRequest() {
     ASSERT_TRUE(!runtime.is_loaded());
 }
 
-void test_failed_load_leaves_runtime_unloaded() {
+TEST(Runtime, Runtime_failed_load_leaves_runtime_unloaded) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->fail_initialize_with = Chorus::ChorusError::ModelLoad;
@@ -57,41 +65,29 @@ void test_failed_load_leaves_runtime_unloaded() {
     ASSERT_TRUE(!runtime.is_loaded());
 }
 
-void test_ids_are_monotonic_and_unique() {
-    Chorus::ChorusRuntime runtime;
-    runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
-
-    auto a = runtime.submit(make_request("a"));
-    auto b = runtime.submit(make_request("b"));
-    auto c = runtime.submit(make_request("c"));
-    ASSERT_TRUE(a.ok());
-    ASSERT_TRUE(b.ok());
-    ASSERT_TRUE(c.ok());
-    ASSERT_TRUE(a.request_id < b.request_id);
-    ASSERT_TRUE(b.request_id < c.request_id);
-}
-
-void test_poll_on_idle_runtime_returns_empty() {
+TEST(Runtime, Runtime_poll_on_idle_runtime_returns_empty) {
     Chorus::ChorusRuntime runtime;
     ASSERT_EQ(runtime.poll().size(), 0);
     runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
     ASSERT_EQ(runtime.poll().size(), 0);
 }
 
-void test_non_streaming_request_yields_only_Complete_with_full_text() {
+TEST(Runtime, Runtime_non_streaming_yields_only_Complete) {
     Chorus::ChorusRuntime runtime;
     runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
 
     auto result = runtime.submit(make_request("hi", /*stream=*/false));
+    ASSERT_TRUE(result.ok());
     auto events = runtime.poll();
 
     ASSERT_EQ(events.size(), 1);
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Complete);
     ASSERT_EQ(events[0].request_id, result.request_id);
     ASSERT_EQ(events[0].text, "Hello world");
+    ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
 }
 
-void test_streaming_request_yields_tokens_in_order_then_Complete_with_full_text() {
+TEST(Runtime, Runtime_streaming_yields_tokens_then_Complete) {
     Chorus::ChorusRuntime runtime;
     runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
 
@@ -106,9 +102,10 @@ void test_streaming_request_yields_tokens_in_order_then_Complete_with_full_text(
     ASSERT_EQ(events[1].text, "world");
     ASSERT_TRUE(events[2].kind == Chorus::RuntimeEvent::Kind::Complete);
     ASSERT_EQ(events[2].text, "Hello world");
+    ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
 }
 
-void test_interleaved_requests_accumulate_independently() {
+TEST(Runtime, Runtime_interleaved_requests_accumulate_independently) {
     Chorus::ChorusRuntime runtime;
     runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
 
@@ -123,7 +120,7 @@ void test_interleaved_requests_accumulate_independently() {
     ASSERT_EQ(events[1].text, "Hello world");
 }
 
-void test_inline_rejection_during_submit_is_delivered_on_next_poll() {
+TEST(Runtime, Runtime_inline_rejection_delivered_on_next_poll) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->fail_submit_with = Chorus::ChorusError::Tokenize;
@@ -140,7 +137,7 @@ void test_inline_rejection_during_submit_is_delivered_on_next_poll() {
     ASSERT_EQ(runtime.poll().size(), 0); // state erased: nothing further
 }
 
-void test_error_after_tokens_discards_partial_text() {
+TEST(Runtime, Runtime_error_after_tokens_discards_partial) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->emit_error_instead_of_stop = true; // "Hello ", "world", then Error
@@ -154,64 +151,66 @@ void test_error_after_tokens_discards_partial_text() {
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Decode);
     ASSERT_EQ(events[0].text, "failed after partial output");
+    ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
     ASSERT_EQ(runtime.poll().size(), 0);
 }
 
-void test_duplicate_terminal_is_dropped() {
+enum class BrokenEventDefect { DuplicateTerminal, TokenAfterTerminal, UnknownRequestId };
+
+struct BrokenEventCase {
+    const char* name;
+    BrokenEventDefect defect;
+};
+
+class RuntimeBrokenEventDefense : public ::testing::TestWithParam<BrokenEventCase> {};
+
+TEST_P(RuntimeBrokenEventDefense, Surfaces_only_the_accepted_request_stream_and_terminal) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
-    engine->emit_duplicate_stop = true;
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    switch (GetParam().defect) {
+        case BrokenEventDefect::DuplicateTerminal:
+            engine->emit_duplicate_stop = true;
+            break;
+        case BrokenEventDefect::TokenAfterTerminal:
+            engine->emit_token_after_stop = true;
+            break;
+        case BrokenEventDefect::UnknownRequestId:
+            engine->rogue_extra_id = 999999;
+            break;
+    }
+    const auto load_error = runtime.load_engine(std::move(engine), make_config());
+    ASSERT_TRUE(!load_error.has_value());
 
-    auto result = runtime.submit(make_request("hi", /*stream=*/true));
+    const auto result = runtime.submit(make_request("hi", /*stream=*/true));
     ASSERT_TRUE(result.ok());
-    auto events = runtime.poll();
+    const auto events = runtime.poll();
 
-    // 2 tokens + 1 Complete. The duplicate Stop is dropped.
-    ASSERT_EQ(events.size(), 3);
+    ASSERT_EQ(events.size(), size_t{3});
+    ASSERT_EQ(events[0].request_id, result.request_id);
+    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::StreamedToken);
+    ASSERT_EQ(events[0].text, "Hello ");
+    ASSERT_EQ(events[1].request_id, result.request_id);
+    ASSERT_TRUE(events[1].kind == Chorus::RuntimeEvent::Kind::StreamedToken);
+    ASSERT_EQ(events[1].text, "world");
+    ASSERT_EQ(events[2].request_id, result.request_id);
     ASSERT_TRUE(events[2].kind == Chorus::RuntimeEvent::Kind::Complete);
     ASSERT_EQ(events[2].text, "Hello world");
-    ASSERT_EQ(runtime.poll().size(), 0);
+    ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
+    ASSERT_TRUE(runtime.poll().empty());
 }
 
-void test_token_after_terminal_is_dropped() {
-    Chorus::ChorusRuntime runtime;
-    auto engine = std::make_unique<SyncMockEngine>();
-    engine->emit_token_after_stop = true;
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+INSTANTIATE_TEST_SUITE_P(
+    ProviderDefects,
+    RuntimeBrokenEventDefense,
+    ::testing::Values(
+        BrokenEventCase{"DuplicateTerminal", BrokenEventDefect::DuplicateTerminal},
+        BrokenEventCase{"TokenAfterTerminal", BrokenEventDefect::TokenAfterTerminal},
+        BrokenEventCase{"UnknownRequestId", BrokenEventDefect::UnknownRequestId}
+    ),
+    [](const ::testing::TestParamInfo<BrokenEventCase>& info) { return info.param.name; }
+);
 
-    auto result = runtime.submit(make_request("hi", /*stream=*/true));
-    ASSERT_TRUE(result.ok());
-    auto events = runtime.poll();
-
-    // 2 tokens + 1 Complete. The post-Stop token is dropped.
-    ASSERT_EQ(events.size(), 3);
-    ASSERT_TRUE(events[2].kind == Chorus::RuntimeEvent::Kind::Complete);
-    ASSERT_EQ(events[2].text, "Hello world");
-    ASSERT_EQ(runtime.poll().size(), 0);
-}
-
-void test_unknown_id_events_are_dropped() {
-    Chorus::ChorusRuntime runtime;
-    auto engine = std::make_unique<SyncMockEngine>();
-    engine->rogue_extra_id = 999999;
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
-
-    auto result = runtime.submit(make_request("hi", /*stream=*/true));
-    ASSERT_TRUE(result.ok());
-    auto events = runtime.poll();
-
-    // 2 tokens + 1 Complete. The rogue-id token is dropped.
-    ASSERT_EQ(events.size(), 3);
-    ASSERT_TRUE(events[2].kind == Chorus::RuntimeEvent::Kind::Complete);
-    ASSERT_EQ(events[2].text, "Hello world");
-    ASSERT_EQ(runtime.poll().size(), 0);
-}
-
-void test_embedding_events_are_dropped_without_corrupting_accumulation() {
+TEST(Runtime, Runtime_embedding_events_are_dropped) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->emit_embedding_event = true;
@@ -227,7 +226,7 @@ void test_embedding_events_are_dropped_without_corrupting_accumulation() {
     ASSERT_EQ(events[0].text, "Hello world");
 }
 
-void test_cancel_unknown_request_returns_false_without_forwarding() {
+TEST(Runtime, Runtime_cancel_unknown_request_returns_false) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     auto* seen = engine.get();
@@ -238,7 +237,7 @@ void test_cancel_unknown_request_returns_false_without_forwarding() {
     ASSERT_TRUE(seen->cancelled_ids.empty());
 }
 
-void test_cancel_forwards_each_time_while_request_remains_live() {
+TEST(Runtime, Runtime_cancel_forwards_each_time_while_live) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     auto* seen = engine.get();
@@ -254,7 +253,7 @@ void test_cancel_forwards_each_time_while_request_remains_live() {
     ASSERT_TRUE(runtime.is_request_active(result.request_id));
 }
 
-void test_cancelled_request_stays_active_until_terminal_is_drained() {
+TEST(Runtime, Runtime_cancelled_request_active_until_terminal_drain) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     auto* seen = engine.get();
@@ -278,7 +277,7 @@ void test_cancelled_request_stays_active_until_terminal_is_drained() {
     ASSERT_EQ(seen->cancelled_ids.size(), 2);
 }
 
-void test_cancel_forwards_after_engine_terminal_enqueue_before_poll() {
+TEST(Runtime, Runtime_cancel_forwards_after_terminal_enqueue_before_poll) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     auto* seen = engine.get();
@@ -296,7 +295,7 @@ void test_cancel_forwards_after_engine_terminal_enqueue_before_poll() {
     ASSERT_TRUE(!runtime.is_request_active(result.request_id));
 }
 
-void test_cancel_one_request_does_not_affect_another() {
+TEST(Runtime, Runtime_cancel_two_request_isolation) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     auto* seen = engine.get();
@@ -317,7 +316,7 @@ void test_cancel_one_request_does_not_affect_another() {
     ASSERT_EQ(seen->cancelled_ids[0], cancelled.request_id);
 }
 
-void test_stop_all_yields_exactly_one_Cancelled_terminal_per_live_request() {
+TEST(Runtime, Runtime_stop_all_yields_one_Cancelled_per_live_request) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->hold_requests = true;
@@ -333,6 +332,8 @@ void test_stop_all_yields_exactly_one_Cancelled_terminal_per_live_request() {
 
     auto events = runtime.poll();
     ASSERT_EQ(events.size(), 2);
+    ASSERT_EQ(terminal_count(events, a.request_id), size_t{1});
+    ASSERT_EQ(terminal_count(events, b.request_id), size_t{1});
     for (const auto& ev : events) {
         ASSERT_TRUE(ev.kind == Chorus::RuntimeEvent::Kind::Error);
         ASSERT_TRUE(ev.error == Chorus::ChorusError::Cancelled);
@@ -341,7 +342,7 @@ void test_stop_all_yields_exactly_one_Cancelled_terminal_per_live_request() {
     ASSERT_EQ(runtime.poll().size(), 0);
 }
 
-void test_replacing_engine_cancels_live_requests_and_new_engine_works() {
+TEST(Runtime, Runtime_replacing_engine_cancels_and_new_engine_works) {
     Chorus::ChorusRuntime runtime;
     int first_stops = 0;
     auto first = std::make_unique<SyncMockEngine>();
@@ -367,7 +368,7 @@ void test_replacing_engine_cancels_live_requests_and_new_engine_works() {
     ASSERT_TRUE(events[1].kind == Chorus::RuntimeEvent::Kind::Complete);
 }
 
-void test_failed_replacement_cancels_live_requests_and_unloads() {
+TEST(Runtime, Runtime_failed_replacement_cancels_and_unloads) {
     Chorus::ChorusRuntime runtime;
     auto first = std::make_unique<SyncMockEngine>();
     first->hold_requests = true;
@@ -387,36 +388,29 @@ void test_failed_replacement_cancels_live_requests_and_unloads() {
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Cancelled);
 }
 
-void test_engine_death_yields_one_EngineFailed_on_next_poll() {
+TEST(Runtime, Runtime_engine_death_yields_one_EngineFailed_once) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     SyncMockEngine* mock = engine.get();
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    const auto load_error = runtime.load_engine(std::move(engine), make_config());
+    ASSERT_TRUE(!load_error.has_value());
     ASSERT_TRUE(runtime.is_loaded());
 
     mock->die();
-    auto events = runtime.poll();
-    ASSERT_EQ(events.size(), 1);
+    const auto events = runtime.poll();
+    ASSERT_EQ(events.size(), size_t{1});
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::EngineFailed);
-    ASSERT_EQ(events[0].request_id, -1);
+    ASSERT_EQ(events[0].request_id, Chorus::RequestId{-1});
+    ASSERT_EQ(events[0].text, "The engine has failed.");
+    ASSERT_TRUE(events[0].error == Chorus::ChorusError::EngineNotReady);
+    ASSERT_TRUE(events[0].reasoning.empty());
+    ASSERT_EQ(events[0].dropped, 0);
     ASSERT_TRUE(!events[0].session_id.has_value());
+    ASSERT_TRUE(runtime.poll().empty());
+    ASSERT_TRUE(runtime.poll().empty());
 }
 
-void test_engine_death_is_reported_once_across_polls() {
-    Chorus::ChorusRuntime runtime;
-    auto engine = std::make_unique<SyncMockEngine>();
-    SyncMockEngine* mock = engine.get();
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
-
-    mock->die();
-    ASSERT_EQ(runtime.poll().size(), 1);
-    ASSERT_EQ(runtime.poll().size(), 0);
-    ASSERT_EQ(runtime.poll().size(), 0);
-}
-
-void test_ordinary_unload_emits_no_EngineFailed() {
+TEST(Runtime, Runtime_ordinary_unload_emits_no_EngineFailed) {
     Chorus::ChorusRuntime runtime;
     auto load_err = runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
     ASSERT_TRUE(!load_err.has_value());
@@ -430,7 +424,7 @@ void test_ordinary_unload_emits_no_EngineFailed() {
     ASSERT_EQ(runtime.poll().size(), 0);
 }
 
-void test_dying_request_terminal_precedes_EngineFailed() {
+TEST(Runtime, Runtime_dying_terminal_precedes_EngineFailed) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->hold_requests = true;
@@ -450,7 +444,7 @@ void test_dying_request_terminal_precedes_EngineFailed() {
     ASSERT_TRUE(events[1].kind == Chorus::RuntimeEvent::Kind::EngineFailed);
 }
 
-void test_submit_after_engine_death_is_EngineNotReady_and_says_so() {
+TEST(Runtime, Runtime_submit_after_engine_death_is_EngineNotReady) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     SyncMockEngine* mock = engine.get();
@@ -468,7 +462,7 @@ void test_submit_after_engine_death_is_EngineNotReady_and_says_so() {
     ASSERT_TRUE(result.message != "No engine is loaded.");
 }
 
-void test_engine_error_during_stop_wins_over_synthesized_Cancelled() {
+TEST(Runtime, Runtime_engine_error_during_stop_wins_over_Cancelled) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->hold_requests = true;
@@ -490,7 +484,7 @@ void test_engine_error_during_stop_wins_over_synthesized_Cancelled() {
     ASSERT_EQ(runtime.poll().size(), 0);
 }
 
-void test_two_consecutive_loads_apply_each_config() {
+TEST(Runtime, Runtime_consecutive_loads_apply_each_config) {
     Chorus::ChorusRuntime runtime;
     std::string path_a, path_b;
     auto e1 = std::make_unique<SyncMockEngine>();
@@ -507,10 +501,9 @@ void test_two_consecutive_loads_apply_each_config() {
     ASSERT_EQ(path_b, "b.gguf"); // no reuse: the second load fully applies
 }
 
-// A record produced on a thread the host does not own still reaches the host,
-// and reaches it on the host's own thread, which is the whole point of the
-// channel: the provider never calls host code.
-void test_records_from_a_provider_thread_drain_on_the_host_thread() {
+// A record produced on a provider thread reaches the runtime log channel and
+// drains exactly once.
+TEST(Runtime, Runtime_provider_thread_log_drains_once) {
     Chorus::ChorusConfig config = make_config();
     config.log_level = Chorus::LogLevel::Debug;
 
@@ -530,7 +523,7 @@ void test_records_from_a_provider_thread_drain_on_the_host_thread() {
 
 // The host's declared threshold travels with the config, and the provider that
 // would emit the record is the one that declines to build it.
-void test_log_level_from_the_config_silences_a_level() {
+TEST(Runtime, Runtime_log_level_from_the_config_silences_a_level) {
     Chorus::ChorusConfig config = make_config();
     config.log_level = Chorus::log_level_default; // Warn and above, so Info is out
 
@@ -544,7 +537,7 @@ void test_log_level_from_the_config_silences_a_level() {
 
 // The shutdown fence cuts callbacks, not the record already in the channel:
 // the channel outlives every engine, so what was enqueued still drains.
-void test_records_enqueued_before_shutdown_drain_afterward() {
+TEST(Runtime, Runtime_records_enqueued_before_shutdown_drain_afterward) {
     Chorus::ChorusConfig config = make_config();
     config.log_level = Chorus::LogLevel::Debug;
 
@@ -561,7 +554,7 @@ void test_records_enqueued_before_shutdown_drain_afterward() {
 
 // Shutdown diagnostics remain ordinary records. A host that wants them stops
 // explicitly, then drains before destroying the runtime.
-void test_records_produced_during_stop_drain_afterward() {
+TEST(Runtime, Runtime_records_produced_during_stop_drain_afterward) {
     Chorus::ChorusConfig config = make_config();
     config.log_level = Chorus::LogLevel::Debug;
 
@@ -578,171 +571,19 @@ void test_records_produced_during_stop_drain_afterward() {
     ASSERT_EQ(records[1].message, "Releasing weights");
 }
 
-void test_destruction_with_active_requests_is_clean() {
+TEST(Runtime, Runtime_destruction_with_active_requests_shuts_down_engine_once) {
+    int shutdown_count = 0;
     {
         Chorus::ChorusRuntime runtime;
         auto engine = std::make_unique<SyncMockEngine>();
         engine->hold_requests = true;
-        auto load_err = runtime.load_engine(std::move(engine), make_config());
-        ASSERT_TRUE(!load_err.has_value());
-        auto held = runtime.submit(make_request("held"));
+        engine->shutdown_count_sink = &shutdown_count;
+        const auto load_error = runtime.load_engine(std::move(engine), make_config());
+        ASSERT_TRUE(!load_error.has_value());
+        const auto held = runtime.submit(make_request("held"));
         ASSERT_TRUE(held.ok());
-    } // destructor stops the engine; pending events die with the runtime
-    ASSERT_TRUE(true);
+    }
+
+    ASSERT_EQ(shutdown_count, 1);
 }
 
-// Terminal invariant at the runtime layer: for each accepted request id, poll yields
-// exactly one terminal event (Complete or Error) across success, decode failure,
-// duplicate-terminal defense, and engine stop. This is the cross-layer companion to
-// the engine-level terminal sweeps in the Echo and Llama suites.
-void test_runtime_exactly_one_terminal_per_accepted_request() {
-    const auto terminal_count = [](const std::vector<Chorus::RuntimeEvent>& events, Chorus::RequestId id) {
-        size_t count = 0;
-        for (const auto& event : events)
-            count += event.request_id == id && (event.kind == Chorus::RuntimeEvent::Kind::Complete ||
-                                                event.kind == Chorus::RuntimeEvent::Kind::Error);
-        return count;
-    };
-
-    // Success: one Complete terminal.
-    {
-        Chorus::ChorusRuntime runtime;
-        runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
-        auto result = runtime.submit(make_request("hi", /*stream=*/true));
-        ASSERT_TRUE(result.ok());
-        auto events = runtime.poll();
-        ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
-        ASSERT_TRUE(events.back().kind == Chorus::RuntimeEvent::Kind::Complete);
-    }
-
-    // Decode failure after partial output: one Error terminal, no Complete.
-    {
-        Chorus::ChorusRuntime runtime;
-        auto engine = std::make_unique<SyncMockEngine>();
-        engine->emit_error_instead_of_stop = true;
-        runtime.load_engine(std::move(engine), make_config());
-        auto result = runtime.submit(make_request("hi", /*stream=*/false));
-        ASSERT_TRUE(result.ok());
-        auto events = runtime.poll();
-        ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
-        ASSERT_TRUE(events.back().kind == Chorus::RuntimeEvent::Kind::Error);
-        ASSERT_TRUE(events.back().error == Chorus::ChorusError::Decode);
-    }
-
-    // Broken provider emitting a duplicate terminal: the runtime still surfaces one.
-    {
-        Chorus::ChorusRuntime runtime;
-        auto engine = std::make_unique<SyncMockEngine>();
-        engine->emit_duplicate_stop = true;
-        runtime.load_engine(std::move(engine), make_config());
-        auto result = runtime.submit(make_request("hi", /*stream=*/true));
-        ASSERT_TRUE(result.ok());
-        auto events = runtime.poll();
-        ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
-    }
-
-    // Engine stop: each live request gets exactly one synthesized Cancelled terminal.
-    {
-        Chorus::ChorusRuntime runtime;
-        auto engine = std::make_unique<SyncMockEngine>();
-        engine->hold_requests = true;
-        runtime.load_engine(std::move(engine), make_config());
-        auto a = runtime.submit(make_request("a"));
-        auto b = runtime.submit(make_request("b"));
-        ASSERT_TRUE(a.ok());
-        ASSERT_TRUE(b.ok());
-        runtime.stop_all();
-        auto events = runtime.poll();
-        ASSERT_EQ(terminal_count(events, a.request_id), size_t{1});
-        ASSERT_EQ(terminal_count(events, b.request_id), size_t{1});
-        for (const auto& event : events) {
-            ASSERT_TRUE(event.kind == Chorus::RuntimeEvent::Kind::Error);
-            ASSERT_TRUE(event.error == Chorus::ChorusError::Cancelled);
-        }
-    }
-}
-
-int run_runtime_tests() {
-    std::cout << "\n--- RUNTIME TEST SUITE ---\n";
-
-    run_test(
-        "Runtime_submit_before_load_returns_EngineNotReady",
-        test_submit_before_load_returns_EngineNotReady_without_touching_engine
-    );
-    run_test("Runtime_load_engine_success_and_is_loaded", test_load_engine_success_and_is_loaded);
-    run_test("Runtime_load_engine_null_engine_is_InvalidRequest", test_load_engine_null_engine_is_InvalidRequest);
-    run_test("Runtime_failed_load_leaves_runtime_unloaded", test_failed_load_leaves_runtime_unloaded);
-    run_test("Runtime_ids_are_monotonic_and_unique", test_ids_are_monotonic_and_unique);
-    run_test("Runtime_poll_on_idle_runtime_returns_empty", test_poll_on_idle_runtime_returns_empty);
-    run_test(
-        "Runtime_non_streaming_yields_only_Complete", test_non_streaming_request_yields_only_Complete_with_full_text
-    );
-    run_test(
-        "Runtime_streaming_yields_tokens_then_Complete",
-        test_streaming_request_yields_tokens_in_order_then_Complete_with_full_text
-    );
-    run_test(
-        "Runtime_interleaved_requests_accumulate_independently", test_interleaved_requests_accumulate_independently
-    );
-    run_test(
-        "Runtime_inline_rejection_delivered_on_next_poll", test_inline_rejection_during_submit_is_delivered_on_next_poll
-    );
-    run_test("Runtime_error_after_tokens_discards_partial", test_error_after_tokens_discards_partial_text);
-    run_test("Runtime_duplicate_terminal_is_dropped", test_duplicate_terminal_is_dropped);
-    run_test("Runtime_token_after_terminal_is_dropped", test_token_after_terminal_is_dropped);
-    run_test("Runtime_unknown_id_events_are_dropped", test_unknown_id_events_are_dropped);
-    run_test("Runtime_embedding_events_are_dropped", test_embedding_events_are_dropped_without_corrupting_accumulation);
-    run_test(
-        "Runtime_cancel_unknown_request_returns_false", test_cancel_unknown_request_returns_false_without_forwarding
-    );
-    run_test("Runtime_cancel_forwards_each_time_while_live", test_cancel_forwards_each_time_while_request_remains_live);
-    run_test(
-        "Runtime_cancelled_request_active_until_terminal_drain",
-        test_cancelled_request_stays_active_until_terminal_is_drained
-    );
-    run_test(
-        "Runtime_cancel_forwards_after_terminal_enqueue_before_poll",
-        test_cancel_forwards_after_engine_terminal_enqueue_before_poll
-    );
-    run_test("Runtime_cancel_two_request_isolation", test_cancel_one_request_does_not_affect_another);
-    run_test(
-        "Runtime_stop_all_yields_one_Cancelled_per_live_request",
-        test_stop_all_yields_exactly_one_Cancelled_terminal_per_live_request
-    );
-    run_test(
-        "Runtime_replacing_engine_cancels_and_new_engine_works",
-        test_replacing_engine_cancels_live_requests_and_new_engine_works
-    );
-    run_test(
-        "Runtime_failed_replacement_cancels_and_unloads", test_failed_replacement_cancels_live_requests_and_unloads
-    );
-    run_test("Runtime_engine_death_yields_one_EngineFailed", test_engine_death_yields_one_EngineFailed_on_next_poll);
-    run_test("Runtime_engine_death_reported_once", test_engine_death_is_reported_once_across_polls);
-    run_test("Runtime_ordinary_unload_emits_no_EngineFailed", test_ordinary_unload_emits_no_EngineFailed);
-    run_test("Runtime_dying_terminal_precedes_EngineFailed", test_dying_request_terminal_precedes_EngineFailed);
-    run_test(
-        "Runtime_submit_after_engine_death_is_EngineNotReady",
-        test_submit_after_engine_death_is_EngineNotReady_and_says_so
-    );
-    run_test(
-        "Runtime_engine_error_during_stop_wins_over_Cancelled",
-        test_engine_error_during_stop_wins_over_synthesized_Cancelled
-    );
-    run_test("Runtime_consecutive_loads_apply_each_config", test_two_consecutive_loads_apply_each_config);
-    run_test("Runtime_destruction_with_active_requests_is_clean", test_destruction_with_active_requests_is_clean);
-    run_test(
-        "Runtime_records_from_a_provider_thread_drain_on_the_host_thread",
-        test_records_from_a_provider_thread_drain_on_the_host_thread
-    );
-    run_test("Runtime_log_level_from_the_config_silences_a_level", test_log_level_from_the_config_silences_a_level);
-    run_test(
-        "Runtime_records_enqueued_before_shutdown_drain_afterward",
-        test_records_enqueued_before_shutdown_drain_afterward
-    );
-    run_test("Runtime_records_produced_during_stop_drain_afterward", test_records_produced_during_stop_drain_afterward);
-    run_test(
-        "Runtime_exactly_one_terminal_per_accepted_request", test_runtime_exactly_one_terminal_per_accepted_request
-    );
-
-    return g_tests_failed > 0 ? 1 : 0;
-}

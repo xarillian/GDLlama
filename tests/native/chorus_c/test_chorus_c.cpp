@@ -1,5 +1,5 @@
 #include "chorus_c/chorus_c.h"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -100,36 +100,48 @@ PolledEvents poll_until_terminal(chorus_runtime* runtime, chorus_request_id requ
     return result;
 }
 
-void test_chorus_c_header_and_error_vocabulary() {
+TEST(ChorusC, ChorusC_header_null_safety_and_abi_version) {
     ASSERT_EQ(chorus_c_header_smoke(), 0);
     ASSERT_EQ(chorus_abi_version(), uint32_t{1});
-
-    const struct {
-        chorus_error error;
-        const char* name;
-    } cases[] = {
-        {CHORUS_OK, "None"},
-        {CHORUS_ERR_MODEL_LOAD, "ModelLoad"},
-        {CHORUS_ERR_CONTEXT_INIT, "ContextInit"},
-        {CHORUS_ERR_DECODE, "Decode"},
-        {CHORUS_ERR_TOKENIZE, "Tokenize"},
-        {CHORUS_ERR_INVALID_REQUEST, "InvalidRequest"},
-        {CHORUS_ERR_ENGINE_NOT_READY, "EngineNotReady"},
-        {CHORUS_ERR_CANCELLED, "Cancelled"},
-        {CHORUS_ERR_UNSUPPORTED_MODEL_FORMAT, "UnsupportedModelFormat"},
-        {CHORUS_ERR_UNSUPPORTED_FEATURE, "UnsupportedFeature"},
-        {CHORUS_ERR_UNSUPPORTED_OPTION, "UnsupportedOption"},
-        {CHORUS_ERR_SESSION_BUSY, "SessionBusy"},
-        {CHORUS_ERR_UNKNOWN, "Unknown"},
-    };
-    for (const auto& item : cases) {
-        ASSERT_TRUE(chorus_error_name(item.error) != nullptr);
-        ASSERT_TRUE(std::strcmp(chorus_error_name(item.error), item.name) == 0);
-    }
-    ASSERT_TRUE(std::strcmp(chorus_error_name(static_cast<chorus_error>(999)), "Unknown") == 0);
 }
 
-void test_chorus_c_load_stop_and_empty_polls() {
+struct ErrorNameCase {
+    const char* case_name;
+    chorus_error error;
+    const char* expected_name;
+};
+
+class ChorusCErrorVocabulary : public ::testing::TestWithParam<ErrorNameCase> {};
+
+TEST_P(ChorusCErrorVocabulary, Public_name_is_stable) {
+    const auto& test = GetParam();
+    ASSERT_TRUE(chorus_error_name(test.error) != nullptr);
+    ASSERT_EQ(std::string(chorus_error_name(test.error)), std::string(test.expected_name));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    PublicErrors,
+    ChorusCErrorVocabulary,
+    ::testing::Values(
+        ErrorNameCase{"None", CHORUS_OK, "None"},
+        ErrorNameCase{"ModelLoad", CHORUS_ERR_MODEL_LOAD, "ModelLoad"},
+        ErrorNameCase{"ContextInit", CHORUS_ERR_CONTEXT_INIT, "ContextInit"},
+        ErrorNameCase{"Decode", CHORUS_ERR_DECODE, "Decode"},
+        ErrorNameCase{"Tokenize", CHORUS_ERR_TOKENIZE, "Tokenize"},
+        ErrorNameCase{"InvalidRequest", CHORUS_ERR_INVALID_REQUEST, "InvalidRequest"},
+        ErrorNameCase{"EngineNotReady", CHORUS_ERR_ENGINE_NOT_READY, "EngineNotReady"},
+        ErrorNameCase{"Cancelled", CHORUS_ERR_CANCELLED, "Cancelled"},
+        ErrorNameCase{"UnsupportedModelFormat", CHORUS_ERR_UNSUPPORTED_MODEL_FORMAT, "UnsupportedModelFormat"},
+        ErrorNameCase{"UnsupportedFeature", CHORUS_ERR_UNSUPPORTED_FEATURE, "UnsupportedFeature"},
+        ErrorNameCase{"UnsupportedOption", CHORUS_ERR_UNSUPPORTED_OPTION, "UnsupportedOption"},
+        ErrorNameCase{"SessionBusy", CHORUS_ERR_SESSION_BUSY, "SessionBusy"},
+        ErrorNameCase{"Unknown", CHORUS_ERR_UNKNOWN, "Unknown"},
+        ErrorNameCase{"UnrecognizedValue", static_cast<chorus_error>(999), "Unknown"}
+    ),
+    [](const ::testing::TestParamInfo<ErrorNameCase>& info) { return info.param.case_name; }
+);
+
+TEST(ChorusC, ChorusC_load_stop_and_empty_polls) {
     RuntimePtr runtime(chorus_runtime_new());
     ASSERT_TRUE(runtime != nullptr);
     ASSERT_TRUE(!chorus_is_loaded(runtime.get()));
@@ -156,7 +168,7 @@ void test_chorus_c_load_stop_and_empty_polls() {
     ASSERT_TRUE(chorus_is_loaded(runtime.get()));
 }
 
-void test_chorus_c_builder_streams_and_completes() {
+TEST(ChorusC, ChorusC_builder_streams_and_completes) {
     RuntimePtr runtime(chorus_runtime_new());
     ASSERT_TRUE(runtime != nullptr);
     ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
@@ -208,7 +220,7 @@ void test_chorus_c_builder_streams_and_completes() {
     ASSERT_EQ(idle_count, size_t{0});
 }
 
-void test_chorus_c_rejections_replace_and_success_clears_last_error() {
+TEST(ChorusC, ChorusC_last_error_is_replaced_by_failure_and_cleared_by_success) {
     RuntimePtr runtime(chorus_runtime_new());
     RequestPtr request(chorus_request_new());
     ASSERT_TRUE(runtime != nullptr);
@@ -219,51 +231,79 @@ void test_chorus_c_rejections_replace_and_success_clears_last_error() {
     ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &request_id), CHORUS_ERR_ENGINE_NOT_READY);
     ASSERT_EQ(request_id, chorus_request_id{-1});
     ASSERT_TRUE(chorus_last_error_message(runtime.get()) != nullptr);
-    ASSERT_TRUE(std::strlen(chorus_last_error_message(runtime.get())) > 0);
+    const std::string unloaded_error = chorus_last_error_message(runtime.get());
+    ASSERT_TRUE(!unloaded_error.empty());
 
     OptionsPtr options(chorus_options_new());
     ASSERT_TRUE(options != nullptr);
     ASSERT_EQ(chorus_options_set_int(options.get(), "integer", 1), CHORUS_OK);
-    ASSERT_EQ(chorus_options_set_float(options.get(), "float", 1.5), CHORUS_OK);
-    ASSERT_EQ(chorus_options_set_bool(options.get(), "bool", true), CHORUS_OK);
-    ASSERT_EQ(chorus_options_set_string(options.get(), "string", "copied"), CHORUS_OK);
     ASSERT_EQ(
         chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, options.get(), CHORUS_LOG_OFF),
         CHORUS_ERR_UNSUPPORTED_OPTION
     );
-    ASSERT_TRUE(std::strlen(chorus_last_error_message(runtime.get())) > 0);
+    const std::string unsupported_option_error = chorus_last_error_message(runtime.get());
+    ASSERT_TRUE(!unsupported_option_error.empty());
+    ASSERT_TRUE(unsupported_option_error != unloaded_error);
 
     ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
-    ASSERT_EQ(std::strlen(chorus_last_error_message(runtime.get())), size_t{0});
+    ASSERT_EQ(std::string(chorus_last_error_message(runtime.get())), std::string{});
+}
 
+TEST(ChorusC, ChorusC_empty_session_error_is_cleared_by_history_success) {
+    RuntimePtr runtime(chorus_runtime_new());
+    RequestPtr request(chorus_request_new());
+    ASSERT_TRUE(runtime != nullptr);
+    ASSERT_TRUE(request != nullptr);
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_prompt(request.get(), "hello"), CHORUS_OK);
     ASSERT_EQ(chorus_request_set_session(request.get(), ""), CHORUS_OK);
-    request_id = 42;
+
+    chorus_request_id request_id = 42;
     ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &request_id), CHORUS_ERR_INVALID_REQUEST);
     ASSERT_EQ(request_id, chorus_request_id{-1});
     ASSERT_TRUE(std::strlen(chorus_last_error_message(runtime.get())) > 0);
 
     ASSERT_EQ(chorus_history_import(runtime.get(), "known", nullptr, 0), CHORUS_OK);
-    ASSERT_EQ(std::strlen(chorus_last_error_message(runtime.get())), size_t{0});
-
-    RequestPtr provider_request(chorus_request_new());
-    ASSERT_TRUE(provider_request != nullptr);
-    ASSERT_EQ(chorus_request_set_prompt(provider_request.get(), "provider options"), CHORUS_OK);
-    ASSERT_EQ(
-        chorus_request_set_provider_option_bool(provider_request.get(), "echo", "enabled", true), CHORUS_OK
-    );
-    ASSERT_EQ(
-        chorus_request_set_provider_option_string(provider_request.get(), "echo", "mode", "strict"), CHORUS_OK
-    );
-    request_id = 42;
-    ASSERT_EQ(chorus_generate(runtime.get(), provider_request.get(), &request_id), CHORUS_ERR_UNSUPPORTED_OPTION);
-    ASSERT_EQ(request_id, chorus_request_id{-1});
-    ASSERT_TRUE(std::strlen(chorus_last_error_message(runtime.get())) > 0);
-
-    ASSERT_EQ(chorus_history_clear(runtime.get(), "known"), CHORUS_OK);
-    ASSERT_EQ(std::strlen(chorus_last_error_message(runtime.get())), size_t{0});
+    ASSERT_EQ(std::string(chorus_last_error_message(runtime.get())), std::string{});
 }
 
-void test_chorus_c_cancellation_stays_active_until_terminal_poll() {
+TEST(ChorusC, ChorusC_load_option_scalar_setters_are_accepted) {
+    OptionsPtr options(chorus_options_new());
+    ASSERT_TRUE(options != nullptr);
+
+    ASSERT_EQ(chorus_options_set_int(options.get(), "integer", 1), CHORUS_OK);
+    ASSERT_EQ(chorus_options_set_float(options.get(), "float", 1.5), CHORUS_OK);
+    ASSERT_EQ(chorus_options_set_bool(options.get(), "bool", true), CHORUS_OK);
+    ASSERT_EQ(chorus_options_set_string(options.get(), "string", "copied"), CHORUS_OK);
+}
+
+TEST(ChorusC, ChorusC_request_provider_option_setters_are_accepted) {
+    RequestPtr request(chorus_request_new());
+    ASSERT_TRUE(request != nullptr);
+
+    ASSERT_EQ(chorus_request_set_provider_option_bool(request.get(), "echo", "enabled", true), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_provider_option_string(request.get(), "echo", "mode", "strict"), CHORUS_OK);
+}
+
+TEST(ChorusC, ChorusC_request_option_rejection_is_cleared_by_history_clear) {
+    RuntimePtr runtime(chorus_runtime_new());
+    RequestPtr request(chorus_request_new());
+    ASSERT_TRUE(runtime != nullptr);
+    ASSERT_TRUE(request != nullptr);
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
+    ASSERT_EQ(chorus_history_import(runtime.get(), "known", nullptr, 0), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_prompt(request.get(), "provider options"), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_provider_option_bool(request.get(), "echo", "enabled", true), CHORUS_OK);
+
+    chorus_request_id request_id = 42;
+    ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &request_id), CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(request_id, chorus_request_id{-1});
+    ASSERT_TRUE(std::strlen(chorus_last_error_message(runtime.get())) > 0);
+    ASSERT_EQ(chorus_history_clear(runtime.get(), "known"), CHORUS_OK);
+    ASSERT_EQ(std::string(chorus_last_error_message(runtime.get())), std::string{});
+}
+
+TEST(ChorusC, ChorusC_cancellation_stays_active_until_terminal_poll) {
     RuntimePtr runtime(chorus_runtime_new());
     ASSERT_TRUE(runtime != nullptr);
     ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
@@ -319,7 +359,7 @@ void test_chorus_c_cancellation_stays_active_until_terminal_poll() {
     ASSERT_TRUE(std::strcmp(history.messages[0].content, "persona") == 0);
 }
 
-void test_chorus_c_conversation_snapshots_edits_and_outcome() {
+TEST(ChorusC, ChorusC_history_import_and_export_are_owned_snapshots) {
     RuntimePtr runtime(chorus_runtime_new());
     ASSERT_TRUE(runtime != nullptr);
     ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
@@ -328,37 +368,60 @@ void test_chorus_c_conversation_snapshots_edits_and_outcome() {
     char content[] = "persona";
     const chorus_chat_message imported[] = {{role, content}, {"user", "old question"}, {"assistant", "old answer"}};
     ASSERT_EQ(chorus_history_import(runtime.get(), "npc", imported, 3), CHORUS_OK);
+    role[0] = 'X';
     content[0] = 'X';
     ASSERT_EQ(chorus_last_turn_outcome(runtime.get(), "npc"), CHORUS_TURN_NONE);
+
+    ChatSnapshot exported;
+    ASSERT_EQ(chorus_history_export(runtime.get(), "npc", &exported.messages, &exported.count), CHORUS_OK);
+    ASSERT_EQ(exported.count, size_t{3});
+    ASSERT_TRUE(exported.messages != nullptr);
+    ASSERT_EQ(chorus_history_clear(runtime.get(), "npc"), CHORUS_OK);
+
+    ASSERT_EQ(std::string(exported.messages[0].role), std::string("system"));
+    ASSERT_EQ(std::string(exported.messages[0].content), std::string("persona"));
+    ASSERT_EQ(std::string(exported.messages[1].role), std::string("user"));
+    ASSERT_EQ(std::string(exported.messages[1].content), std::string("old question"));
+    ASSERT_EQ(std::string(exported.messages[2].role), std::string("assistant"));
+    ASSERT_EQ(std::string(exported.messages[2].content), std::string("old answer"));
+}
+
+TEST(ChorusC, ChorusC_history_edit_clear_and_list_are_reflected_in_snapshots) {
+    RuntimePtr runtime(chorus_runtime_new());
+    ASSERT_TRUE(runtime != nullptr);
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
+
+    const chorus_chat_message imported[] = {
+        {"system", "persona"}, {"user", "old question"}, {"assistant", "old answer"}
+    };
+    ASSERT_EQ(chorus_history_import(runtime.get(), "npc", imported, 3), CHORUS_OK);
 
     ConversationList conversations;
     ASSERT_EQ(chorus_list_conversations(runtime.get(), &conversations.sessions, &conversations.count), CHORUS_OK);
     ASSERT_EQ(conversations.count, size_t{1});
-    ASSERT_TRUE(std::strcmp(conversations.sessions[0], "npc") == 0);
-
-    {
-        ChatSnapshot exported;
-        ASSERT_EQ(chorus_history_export(runtime.get(), "npc", &exported.messages, &exported.count), CHORUS_OK);
-        ASSERT_EQ(exported.count, size_t{3});
-        ASSERT_TRUE(std::strcmp(exported.messages[0].content, "persona") == 0);
-    }
+    ASSERT_TRUE(conversations.sessions != nullptr);
+    ASSERT_EQ(std::string(conversations.sessions[0]), std::string("npc"));
 
     ASSERT_EQ(chorus_history_edit_message(runtime.get(), "npc", -1, "edited answer"), CHORUS_OK);
     {
         ChatSnapshot edited;
         ASSERT_EQ(chorus_history_export(runtime.get(), "npc", &edited.messages, &edited.count), CHORUS_OK);
         ASSERT_EQ(edited.count, size_t{3});
-        ASSERT_TRUE(std::strcmp(edited.messages[2].role, "assistant") == 0);
-        ASSERT_TRUE(std::strcmp(edited.messages[2].content, "edited answer") == 0);
+        ASSERT_EQ(std::string(edited.messages[2].role), std::string("assistant"));
+        ASSERT_EQ(std::string(edited.messages[2].content), std::string("edited answer"));
     }
 
     ASSERT_EQ(chorus_history_clear(runtime.get(), "npc"), CHORUS_OK);
-    {
-        ChatSnapshot cleared;
-        ASSERT_EQ(chorus_history_export(runtime.get(), "npc", &cleared.messages, &cleared.count), CHORUS_OK);
-        ASSERT_EQ(cleared.count, size_t{0});
-        ASSERT_TRUE(cleared.messages == nullptr);
-    }
+    ChatSnapshot cleared;
+    ASSERT_EQ(chorus_history_export(runtime.get(), "npc", &cleared.messages, &cleared.count), CHORUS_OK);
+    ASSERT_EQ(cleared.count, size_t{0});
+    ASSERT_TRUE(cleared.messages == nullptr);
+}
+
+TEST(ChorusC, ChorusC_completed_turn_updates_outcome_and_history) {
+    RuntimePtr runtime(chorus_runtime_new());
+    ASSERT_TRUE(runtime != nullptr);
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
 
     const chorus_chat_message baseline[] = {{"system", "persona"}};
     ASSERT_EQ(chorus_history_import(runtime.get(), "npc", baseline, 1), CHORUS_OK);
@@ -380,16 +443,25 @@ void test_chorus_c_conversation_snapshots_edits_and_outcome() {
     ChatSnapshot history;
     ASSERT_EQ(chorus_history_export(runtime.get(), "npc", &history.messages, &history.count), CHORUS_OK);
     ASSERT_EQ(history.count, size_t{3});
-    ASSERT_TRUE(std::strcmp(history.messages[1].role, "user") == 0);
-    ASSERT_TRUE(std::strcmp(history.messages[1].content, "hello history") == 0);
-    ASSERT_TRUE(std::strcmp(history.messages[2].role, "assistant") == 0);
-    ASSERT_TRUE(std::strcmp(history.messages[2].content, "hello history") == 0);
+    ASSERT_EQ(std::string(history.messages[0].role), std::string("system"));
+    ASSERT_EQ(std::string(history.messages[0].content), std::string("persona"));
+    ASSERT_EQ(std::string(history.messages[1].role), std::string("user"));
+    ASSERT_EQ(std::string(history.messages[1].content), std::string("hello history"));
+    ASSERT_EQ(std::string(history.messages[2].role), std::string("assistant"));
+    ASSERT_EQ(std::string(history.messages[2].content), std::string("hello history"));
+}
+
+TEST(ChorusC, ChorusC_echo_prompt_rendering_is_unsupported) {
+    RuntimePtr runtime(chorus_runtime_new());
+    ASSERT_TRUE(runtime != nullptr);
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
+    ASSERT_EQ(chorus_history_import(runtime.get(), "npc", nullptr, 0), CHORUS_OK);
 
     char* rendered = chorus_render_prompt(runtime.get(), "npc", nullptr);
     ASSERT_TRUE(rendered == nullptr);
 }
 
-void test_chorus_c_log_polling_exposes_owned_record_shape() {
+TEST(ChorusC, ChorusC_log_polling_preserves_exact_warning_record) {
     RuntimePtr runtime(chorus_runtime_new());
     ASSERT_TRUE(runtime != nullptr);
     ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_WARN), CHORUS_OK);
@@ -407,24 +479,21 @@ void test_chorus_c_log_polling_exposes_owned_record_shape() {
 
     const chorus_log_record* records = chorus_poll_logs(runtime.get(), &count);
     ASSERT_TRUE(records != nullptr);
-    ASSERT_TRUE(count > 0);
-    bool saw_warning = false;
-    for (size_t record_index = 0; record_index < count; ++record_index) {
-        const chorus_log_record& record = records[record_index];
-        ASSERT_TRUE(record.message != nullptr);
-        ASSERT_TRUE(record.produced_at > 0.0);
-        if (record.level == CHORUS_LOG_WARN)
-            saw_warning = true;
-        if (record.field_count == 0)
-            continue;
-        ASSERT_TRUE(record.fields != nullptr);
-        for (size_t field_index = 0; field_index < record.field_count; ++field_index) {
-            ASSERT_TRUE(record.fields[field_index].key != nullptr);
-            if (record.fields[field_index].type == CHORUS_FIELD_STRING)
-                ASSERT_TRUE(record.fields[field_index].value.string_value != nullptr);
-        }
-    }
-    ASSERT_TRUE(saw_warning);
+    ASSERT_EQ(count, size_t{1});
+    const chorus_log_record& warning = records[0];
+    ASSERT_EQ(warning.level, CHORUS_LOG_WARN);
+    ASSERT_TRUE(warning.message != nullptr);
+    ASSERT_EQ(
+        std::string(warning.message), std::string("Ignoring content controls; echoed output makes no content claims")
+    );
+    ASSERT_TRUE(warning.produced_at > 0.0);
+    ASSERT_EQ(warning.field_count, size_t{1});
+    ASSERT_TRUE(warning.fields != nullptr);
+    ASSERT_TRUE(warning.fields[0].key != nullptr);
+    ASSERT_EQ(std::string(warning.fields[0].key), std::string("controls"));
+    ASSERT_EQ(warning.fields[0].type, CHORUS_FIELD_STRING);
+    ASSERT_TRUE(warning.fields[0].value.string_value != nullptr);
+    ASSERT_EQ(std::string(warning.fields[0].value.string_value), std::string("temperature"));
 
     ASSERT_TRUE(chorus_poll_logs(runtime.get(), &count) != nullptr);
     ASSERT_EQ(count, size_t{0});
@@ -434,32 +503,3 @@ void test_chorus_c_log_polling_exposes_owned_record_shape() {
 }
 
 } // namespace
-
-int run_chorus_c_tests() {
-    std::cout << "\n--- CHORUS C ABI SUITE ---\n";
-
-    run_test("ChorusC_header_and_error_vocabulary", test_chorus_c_header_and_error_vocabulary);
-    run_test("ChorusC_load_stop_and_empty_polls", test_chorus_c_load_stop_and_empty_polls);
-    run_test("ChorusC_builder_streams_and_completes", test_chorus_c_builder_streams_and_completes);
-    run_test(
-        "ChorusC_rejections_replace_and_success_clears_last_error",
-        test_chorus_c_rejections_replace_and_success_clears_last_error
-    );
-    run_test(
-        "ChorusC_cancellation_stays_active_until_terminal_poll",
-        test_chorus_c_cancellation_stays_active_until_terminal_poll
-    );
-    run_test(
-        "ChorusC_conversation_snapshots_edits_and_outcome", test_chorus_c_conversation_snapshots_edits_and_outcome
-    );
-    run_test("ChorusC_log_polling_exposes_owned_record_shape", test_chorus_c_log_polling_exposes_owned_record_shape);
-
-    std::cout << "\n======================================\n";
-    if (g_tests_failed > 0) {
-        std::cout << RED << "SUMMARY: " << g_tests_failed << " FAILED, " << g_tests_passed << " PASSED." << RESET
-                  << "\n";
-        return 1;
-    }
-    std::cout << GREEN << "SUMMARY: ALL TESTS PASSED." << RESET << "\n";
-    return 0;
-}

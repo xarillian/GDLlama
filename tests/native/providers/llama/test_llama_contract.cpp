@@ -1,7 +1,6 @@
 #include "chorus/core/common.hpp"
 #include "chorus/providers/llama/llama_engine.hpp"
 #include "engine_contract_suite.hpp"
-#include "test_utils.hpp"
 
 #include <memory>
 
@@ -47,7 +46,9 @@ EngineUnderTest llama_under_test() {
 
 } // namespace
 
-int run_llama_contract_tests() {
-    run_engine_contract_suite(llama_under_test());
-    return g_tests_failed > 0 ? 1 : 0;
-}
+INSTANTIATE_TEST_SUITE_P(
+    Llama,
+    EngineContractTest,
+    ::testing::Values(llama_under_test()),
+    [](const ::testing::TestParamInfo<EngineUnderTest>& info) { return info.param.label; }
+);

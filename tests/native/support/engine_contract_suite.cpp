@@ -1,11 +1,8 @@
 #include "engine_contract_suite.hpp"
 
-#include "test_utils.hpp"
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <iostream>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -107,11 +104,6 @@ class TokenGate {
     bool _entered = false;
     bool _open = false;
 };
-
-/// Reports a case the subject's declared capabilities put out of scope.
-void skip(const std::string& reason) {
-    std::cout << YELLOW << "[SKIP] " << reason << RESET << std::endl;
-}
 
 std::unique_ptr<Chorus::InferenceEngine> start_engine(const EngineUnderTest& subject) {
     auto engine = subject.make_engine();
@@ -215,9 +207,8 @@ void case_cancel_is_idempotent_and_terminal_once(const EngineUnderTest& subject)
     ASSERT_TRUE(engine != nullptr);
 
     if (!engine->capabilities().cancellation) {
-        skip(subject.label + " declares no cancellation");
         engine->shutdown();
-        return;
+        GTEST_SKIP() << subject.label << " declares no cancellation";
     }
 
     SignalLog log;
@@ -272,6 +263,9 @@ void case_shutdown_terminates_in_flight_work_and_fences_callbacks(const EngineUn
     TokenGate gate;
     std::atomic<bool> stop_returned{false};
     std::atomic<int> signals_after_stop{0};
+    std::mutex stopper_mutex;
+    std::condition_variable stopper_cv;
+    bool stopper_entered = false;
 
     auto on_event = [&](ChorusSignal& signal) {
         if (stop_returned.load())
@@ -297,18 +291,28 @@ void case_shutdown_terminates_in_flight_work_and_fences_callbacks(const EngineUn
     engine->submit_request(trailing);
 
     std::thread stopper([&] {
+        {
+            std::lock_guard<std::mutex> lock(stopper_mutex);
+            stopper_entered = true;
+            stopper_cv.notify_all();
+        }
         engine->shutdown();
         stop_returned.store(true);
     });
+    bool stopper_is_waiting = false;
+    {
+        std::unique_lock<std::mutex> lock(stopper_mutex);
+        stopper_is_waiting = stopper_cv.wait_for(lock, PATIENCE, [&] { return stopper_entered; });
+    }
     // The gate must open from outside: stop is entitled to wait on the
     // callback it is fencing, so releasing it after the join would deadlock.
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     gate.open();
     stopper.join();
 
     const size_t settled = log.size();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
+    ASSERT_TRUE(stopper_is_waiting);
+    ASSERT_TRUE(stop_returned.load());
     ASSERT_EQ(signals_after_stop.load(), 0);
     ASSERT_EQ(log.size(), settled); // the door stayed shut
     ASSERT_EQ(log.terminals_for(5), size_t{1});
@@ -349,25 +353,26 @@ void case_shutdown_is_idempotent(const EngineUnderTest& subject) {
 
 } // namespace
 
-void run_engine_contract_suite(const EngineUnderTest& subject) {
-    std::cout << "\n--- ENGINE CONTRACT SUITE: " << subject.label << " ---\n";
+TEST_P(EngineContractTest, contract_submit_before_initialize_is_refused) {
+    case_submit_before_initialize_is_refused(GetParam());
+}
 
-    const auto run_case = [&subject](const std::string& name, void (*body)(const EngineUnderTest&)) {
-        run_test(subject.label + "_contract_" + name, [&subject, body] {
-            if (subject.model_gated) {
-                SKIP_IF_MODEL_TESTS_DISABLED();
-            }
-            body(subject);
-        });
-    };
+TEST_P(EngineContractTest, contract_submit_after_shutdown_is_refused) {
+    case_submit_after_shutdown_is_refused(GetParam());
+}
 
-    run_case("submit_before_initialize_is_refused", case_submit_before_initialize_is_refused);
-    run_case("submit_after_shutdown_is_refused", case_submit_after_shutdown_is_refused);
-    run_case("completed_request_reaches_one_terminal", case_completed_request_reaches_one_terminal);
-    run_case("cancel_is_idempotent_and_terminal_once", case_cancel_is_idempotent_and_terminal_once);
-    run_case(
-        "shutdown_terminates_in_flight_work_and_fences_callbacks",
-        case_shutdown_terminates_in_flight_work_and_fences_callbacks
-    );
-    run_case("shutdown_is_idempotent", case_shutdown_is_idempotent);
+TEST_P(EngineContractTest, contract_completed_request_reaches_one_terminal) {
+    case_completed_request_reaches_one_terminal(GetParam());
+}
+
+TEST_P(EngineContractTest, contract_cancel_is_idempotent_and_terminal_once) {
+    case_cancel_is_idempotent_and_terminal_once(GetParam());
+}
+
+TEST_P(EngineContractTest, contract_shutdown_terminates_in_flight_work_and_fences_callbacks) {
+    case_shutdown_terminates_in_flight_work_and_fences_callbacks(GetParam());
+}
+
+TEST_P(EngineContractTest, contract_shutdown_is_idempotent) {
+    case_shutdown_is_idempotent(GetParam());
 }

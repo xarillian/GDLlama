@@ -4,6 +4,9 @@ import sys
 import subprocess
 from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, Glob, SConscript, Value
 
+if not all(os.path.exists(f"third-party/{m}/CMakeLists.txt") for m in ("godot-cpp", "llama.cpp", "googletest")):
+    raise SystemExit(">>> [SCons] third-party submodules missing. Run: git submodule update --init --recursive")
+
 # Build variant
 use_vulkan = ARGUMENTS.pop("use_vulkan", "no") == "yes"
 use_metal = ARGUMENTS.pop("use_metal", "no") == "yes"
@@ -104,6 +107,11 @@ llama_cpppath = [
     "third-party/llama.cpp/vendor",  # nlohmann/json, vendored inside llama.cpp
 ]
 
+googletest_cpppath = [
+    "third-party/googletest/googletest/include",
+    "third-party/googletest/googletest",
+]
+
 def with_llama_includes(base_env):
     scoped = base_env.Clone()
     scoped.Append(CPPPATH=llama_cpppath)
@@ -116,6 +124,7 @@ VariantDir("bin/obj/chorus",       "src/chorus",       duplicate=0)
 VariantDir("bin/obj/godot_chorus", "src/godot_chorus", duplicate=0)
 VariantDir("bin/obj/chorus_c",     "src/chorus_c",     duplicate=0)
 VariantDir("bin/obj/tests",        "tests",            duplicate=0)
+VariantDir("bin/obj/googletest",   "third-party/googletest/googletest", duplicate=0)
 
 sources_core    = Glob("bin/obj/chorus/core/*.cpp")
 sources_factory = Glob("bin/obj/chorus/*.cpp")
@@ -138,16 +147,20 @@ sources_tests   = (
 sources_tests_c = Glob("bin/obj/tests/native/chorus_c/*.c")
 # llama tests stay separate so only they compile with vendor headers.
 sources_tests_llama = Glob("bin/obj/tests/native/providers/llama/*.cpp")
+sources_googletest = ["bin/obj/googletest/src/gtest-all.cc"]
 
 # One helper keeps the real test build and clangd flags identical.
 def make_test_env(base_env):
     test_env = base_env.Clone()
     test_env.Append(CPPDEFINES=["TEST_BUILD"])
+    if base_env.get("use_vulkan", False):
+        test_env.Append(CPPDEFINES=["CHORUS_TEST_VULKAN"])
     if base_env["platform"] == "windows":
         test_env.Append(CFLAGS=["/std:c11"])
     else:
         test_env.Append(CFLAGS=["-std=c11"])
     test_env.Append(CPPPATH=["tests/native", "tests/native/support"])
+    test_env.Append(CPPPATH=googletest_cpppath)
     return test_env
 
 def make_chorus_c_build_env(base_env):
@@ -268,6 +281,7 @@ if "compiledb" in COMMAND_LINE_TARGETS:
     compiledb_test_env = make_chorus_c_build_env(make_test_env(env))
     compiledb_test_env.Object(sources_tests + sources_tests_c)
     with_llama_includes(compiledb_test_env).Object(sources_tests_llama)
+    compiledb_test_env.Object(sources_googletest)
     Alias("compiledb", compiledb)
     Default(compiledb)
 
@@ -281,10 +295,11 @@ if "test" in COMMAND_LINE_TARGETS:
 
     llama_test_objects = with_llama_includes(test_env).Object(sources_llama + sources_tests_llama)
     chorus_c_test_objects = test_env.Object(sources_c)
+    googletest_objects = test_env.Object(sources_googletest)
 
     test_program = test_env.Program(
         target="bin/run_tests",
-        source=sources_chorus + chorus_c_test_objects + sources_tests + sources_tests_c + llama_test_objects,
+        source=sources_chorus + chorus_c_test_objects + sources_tests + sources_tests_c + llama_test_objects + googletest_objects,
     )
 
     test_env.Depends(test_program, cmake_target)

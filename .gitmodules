@@ -6,3 +6,6 @@
 	path = third-party/llama.cpp
 	url = https://github.com/ggerganov/llama.cpp.git
 	branch = master
+[submodule "third-party/googletest"]
+	path = third-party/googletest
+	url = https://github.com/google/googletest.git

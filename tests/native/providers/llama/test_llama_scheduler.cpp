@@ -2,16 +2,19 @@
 #include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
-#include <atomic>
+class LlamaSchedulerModelTest : public ChorusModelTest {};
+
 #include <chrono>
 #include <cstdint>
 #include <iostream>
-#include <limits>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 const std::string MODEL_PATH = "tests/models/gemma-3-270m-it-F16.gguf";
@@ -24,134 +27,7 @@ static Chorus::ChorusConfig make_gguf_config(const std::string& path) {
     return config;
 }
 
-static std::optional<Chorus::RequestRejection> load_rejection(const Chorus::ChorusConfig& config) {
-    auto result = Chorus::parse_llama_load_config(config);
-    if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&result))
-        return *rejection;
-    return std::nullopt;
-}
-
-void test_load_option_defaults() {
-    auto result = Chorus::parse_llama_load_config(make_gguf_config(MODEL_PATH));
-    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaLoadConfig>(result));
-    const auto& load = std::get<Chorus::LlamaLoadConfig>(result);
-    ASSERT_EQ(load.n_batch, uint32_t{2048});
-    ASSERT_EQ(load.n_ubatch, uint32_t{512});
-    ASSERT_EQ(load.main_gpu, int32_t{0});
-    ASSERT_EQ(load.gpu_layers, int32_t{-1});
-}
-
-void test_load_option_accepts_exact_int64_values() {
-    auto config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{
-        {"n_batch", int64_t{96}},
-        {"n_ubatch", int64_t{32}},
-        {"main_gpu", int64_t{2}},
-    };
-    auto result = Chorus::parse_llama_load_config(config);
-    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaLoadConfig>(result));
-    const auto& load = std::get<Chorus::LlamaLoadConfig>(result);
-    ASSERT_EQ(load.n_batch, uint32_t{96});
-    ASSERT_EQ(load.n_ubatch, uint32_t{32});
-    ASSERT_EQ(load.main_gpu, int32_t{2});
-}
-
-void test_load_option_rejects_wrong_scalar_alternatives() {
-    auto expect_rejection = [](const std::string& key, Chorus::ProviderOptionValue value) {
-        auto config = make_gguf_config(MODEL_PATH);
-        config.provider_options["llama"] = Chorus::ProviderOptionMap{{key, std::move(value)}};
-        auto result = Chorus::parse_llama_load_config(config);
-        const auto* rejection = std::get_if<Chorus::RequestRejection>(&result);
-        return rejection && rejection->error == Chorus::ChorusError::UnsupportedOption &&
-               rejection->message.find(key) != std::string::npos;
-    };
-
-    ASSERT_TRUE(expect_rejection("n_batch", true));
-    ASSERT_TRUE(expect_rejection("n_ubatch", 32.0));
-    ASSERT_TRUE(expect_rejection("main_gpu", "0"));
-}
-
-void test_load_option_rejects_invalid_batch_sizes() {
-    for (const auto& [key, value] : std::vector<std::pair<std::string, int64_t>>{
-             {"n_batch", 0}, {"n_batch", -1}, {"n_ubatch", 0}, {"n_ubatch", -1}
-         }) {
-        auto config = make_gguf_config(MODEL_PATH);
-        config.provider_options["llama"] = Chorus::ProviderOptionMap{{key, value}};
-        const auto rejection = load_rejection(config);
-        ASSERT_TRUE(rejection.has_value());
-        ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
-        ASSERT_TRUE(rejection->message.find(key) != std::string::npos);
-    }
-}
-
-void test_load_option_rejects_microbatch_larger_than_batch() {
-    auto config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"n_batch", int64_t{32}}, {"n_ubatch", int64_t{33}}};
-    const auto rejection = load_rejection(config);
-    ASSERT_TRUE(rejection.has_value());
-    ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
-    ASSERT_TRUE(rejection->message.find("n_ubatch") != std::string::npos);
-}
-
-void test_load_option_rejects_negative_main_gpu() {
-    auto config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"main_gpu", int64_t{-1}}};
-    const auto rejection = load_rejection(config);
-    ASSERT_TRUE(rejection.has_value());
-    ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
-    ASSERT_TRUE(rejection->message.find("main_gpu") != std::string::npos);
-}
-
-void test_load_option_rejects_narrowing_overflow() {
-    auto expect_rejection = [](const std::string& key, int64_t value) {
-        auto config = make_gguf_config(MODEL_PATH);
-        config.provider_options["llama"] = Chorus::ProviderOptionMap{{key, value}};
-        auto result = Chorus::parse_llama_load_config(config);
-        const auto* rejection = std::get_if<Chorus::RequestRejection>(&result);
-        return rejection && rejection->error == Chorus::ChorusError::UnsupportedOption &&
-               rejection->message.find(key) != std::string::npos;
-    };
-
-    ASSERT_TRUE(expect_rejection("n_batch", int64_t{std::numeric_limits<int32_t>::max()} + 1));
-    ASSERT_TRUE(expect_rejection("n_ubatch", int64_t{std::numeric_limits<uint32_t>::max()} + 1));
-    ASSERT_TRUE(expect_rejection("main_gpu", int64_t{std::numeric_limits<int32_t>::max()} + 1));
-}
-
-void test_load_option_still_rejects_unknown_keys() {
-    auto config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"warp_factor", int64_t{9}}};
-    const auto rejection = load_rejection(config);
-    ASSERT_TRUE(rejection.has_value());
-    ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
-    ASSERT_TRUE(rejection->message.find("warp_factor") != std::string::npos);
-}
-
-void test_load_option_rejects_cpu_with_explicit_gpu_options() {
-    auto expect_rejection = [](const std::string& key, int64_t value) {
-        auto config = make_gguf_config(MODEL_PATH);
-        config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {key, value}};
-        const auto rejection = load_rejection(config);
-        return rejection.has_value() && rejection->error == Chorus::ChorusError::UnsupportedOption &&
-               rejection->message.find(key) != std::string::npos;
-    };
-
-    ASSERT_TRUE(expect_rejection("main_gpu", 0));
-    ASSERT_TRUE(expect_rejection("gpu_layers", 17));
-    ASSERT_TRUE(expect_rejection("gpu_layers", -1));
-}
-
-void test_load_option_accepts_cpu_with_explicit_zero_gpu_layers() {
-    auto config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"gpu_layers", int64_t{0}}};
-    auto result = Chorus::parse_llama_load_config(config);
-    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaLoadConfig>(result));
-    const auto& load = std::get<Chorus::LlamaLoadConfig>(result);
-    ASSERT_TRUE(load.gpu_layers_explicit);
-    ASSERT_TRUE(!load.main_gpu_explicit);
-    ASSERT_EQ(load.gpu_layers, int32_t{0});
-}
-
-void test_load_option_cpu_placement_disables_every_offload_path() {
+TEST(LlamaScheduler, load_option_CPU_placement_disables_every_offload_path) {
     Chorus::LlamaLoadConfig load;
     load.use_gpu = false;
     Chorus::LlamaOffloadDeviceList no_offload_devices{};
@@ -166,7 +42,7 @@ void test_load_option_cpu_placement_disables_every_offload_path() {
     ASSERT_TRUE(!context.op_offload);
 }
 
-void test_load_option_gpu_placement_preserves_upstream_device_selection() {
+TEST(LlamaScheduler, load_option_GPU_placement_preserves_upstream_device_selection) {
     Chorus::LlamaLoadConfig load;
     load.use_gpu = true;
     load.gpu_layers = 17;
@@ -183,7 +59,7 @@ void test_load_option_gpu_placement_preserves_upstream_device_selection() {
     ASSERT_TRUE(context.op_offload);
 }
 
-void test_load_option_context_params_forward_exact_values() {
+TEST(LlamaScheduler, load_option_context_params_forward_exact_values) {
     Chorus::LlamaLoadConfig load;
     load.context_size = 4096;
     load.num_slots = 3;
@@ -199,41 +75,7 @@ void test_load_option_context_params_forward_exact_values() {
     ASSERT_EQ(params.n_ubatch, uint32_t{32});
 }
 
-void test_resolve_generation_unset_fields_use_upstream_defaults() {
-    Chorus::GenerationConfig config; // everything unset
-    auto result = Chorus::resolve_llama_generation(config);
-    ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(result));
-    const auto& r = std::get<Chorus::ResolvedLlamaGeneration>(result);
-    ASSERT_EQ(r.max_tokens, -1); // upstream n_predict default: unbounded
-    ASSERT_EQ(r.sampling.top_k, 40);
-    ASSERT_TRUE(r.sampling.top_p > 0.94f && r.sampling.top_p < 0.96f);
-    ASSERT_TRUE(r.sampling.temp > 0.79f && r.sampling.temp < 0.81f);
-    ASSERT_EQ(r.sampling.seed, LLAMA_DEFAULT_SEED);
-    ASSERT_TRUE(r.sampling.penalty_repeat > 0.99f && r.sampling.penalty_repeat < 1.01f);
-}
-
-void test_resolve_generation_set_fields_override() {
-    Chorus::GenerationConfig config;
-    config.max_tokens = 32;
-    config.temperature = 0.2f;
-    config.top_k = 5;
-    config.top_p = 0.5f;
-    config.seed = uint64_t{7};
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"repeat_penalty", 1.3}};
-    auto result = Chorus::resolve_llama_generation(config);
-    ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(result));
-    const auto& r = std::get<Chorus::ResolvedLlamaGeneration>(result);
-    ASSERT_EQ(r.max_tokens, 32);
-    ASSERT_TRUE(r.sampling.temp > 0.19f && r.sampling.temp < 0.21f);
-    ASSERT_EQ(r.sampling.top_k, 5);
-    ASSERT_TRUE(r.sampling.top_p > 0.49f && r.sampling.top_p < 0.51f);
-    ASSERT_EQ(r.sampling.seed, (uint32_t)7);
-    ASSERT_TRUE(r.sampling.penalty_repeat > 1.29f && r.sampling.penalty_repeat < 1.31f);
-}
-
-void test_transient_decode_failure_recovers() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
+TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
@@ -249,10 +91,13 @@ void test_transient_decode_failure_recovers() {
     for (int i = 0; i < 200; ++i)
         huge_prompt += "The quick brown fox jumps over the lazy dog. ";
 
-    std::atomic<bool> big_errored{false};
-    Chorus::ChorusError big_code = Chorus::ChorusError::None;
-    std::atomic<bool> small_done{false};
-    std::atomic<int> small_tokens{0};
+    struct State {
+        std::mutex mutex;
+        std::condition_variable cv;
+        std::vector<Chorus::ChorusSignal> oversized_terminals;
+        std::vector<Chorus::ChorusSignal> recovery_terminals;
+        size_t recovery_tokens = 0;
+    } state;
 
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
@@ -264,47 +109,70 @@ void test_transient_decode_failure_recovers() {
     big.prompt = huge_prompt;
     big.gen_config.max_tokens = 8;
     big.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
-            big_code = std::get<Chorus::ChorusSignal::Error>(sig.event).code;
-            big_errored = true;
-        }
+        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) &&
+            !std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
+            return;
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.oversized_terminals.push_back(sig);
+        state.cv.notify_all();
     };
     engine.submit_request(big);
 
-    int timeout_ms = 15000;
-    while (!big_errored && timeout_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        timeout_ms -= 50;
+    bool oversized_finished = false;
+    {
+        std::unique_lock<std::mutex> lock(state.mutex);
+        oversized_finished = state.cv.wait_for(lock, std::chrono::seconds(15), [&] {
+            return !state.oversized_terminals.empty();
+        });
     }
-    ASSERT_TRUE(big_errored);
-    ASSERT_TRUE(big_code == Chorus::ChorusError::Decode);
+    if (!oversized_finished) {
+        engine.shutdown();
+        ASSERT_TRUE(oversized_finished);
+        return;
+    }
 
-    // Engine must keep running: a fresh small request still completes.
     Chorus::ChorusRequest small;
     small.id = 2;
     small.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
     small.gen_config.max_tokens = 4;
+    small.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
     small.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
-            small_tokens++;
-        else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
-            small_done = true;
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
+            ++state.recovery_tokens;
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
+                   std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+            state.recovery_terminals.push_back(sig);
+            state.cv.notify_all();
+        }
     };
     engine.submit_request(small);
 
-    timeout_ms = 15000;
-    while (!small_done && timeout_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        timeout_ms -= 50;
+    bool recovery_finished = false;
+    {
+        std::unique_lock<std::mutex> lock(state.mutex);
+        recovery_finished = state.cv.wait_for(lock, std::chrono::seconds(15), [&] {
+            return !state.recovery_terminals.empty();
+        });
     }
-    ASSERT_TRUE(small_done);
-    ASSERT_TRUE(small_tokens > 0);
 
     engine.shutdown();
+
+    ASSERT_TRUE(oversized_finished);
+    ASSERT_EQ(state.oversized_terminals.size(), size_t{1});
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(state.oversized_terminals[0].event));
+    const auto* oversized_error = std::get_if<Chorus::ChorusSignal::Error>(&state.oversized_terminals[0].event);
+    ASSERT_TRUE(oversized_error != nullptr);
+    if (oversized_error)
+        ASSERT_EQ(oversized_error->code, Chorus::ChorusError::Decode);
+
+    ASSERT_TRUE(recovery_finished);
+    ASSERT_EQ(state.recovery_terminals.size(), size_t{1});
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.recovery_terminals[0].event));
+    ASSERT_TRUE(state.recovery_tokens > 0);
 }
 
-void test_higher_priority_request_served_first() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaSchedulerModelTest, Higher_priority_request_served_first) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
@@ -368,60 +236,75 @@ void test_higher_priority_request_served_first() {
     engine.shutdown();
 }
 
-void test_slot_reusable_after_request_completes() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
+TEST_F(LlamaSchedulerModelTest, Slot_reusable_after_request_completes) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
         {"num_slots", int64_t{1}}, // force the second request to reuse the first slot
     };
 
-    std::atomic<int> tokens{0};
-    std::atomic<bool> done{false};
+    struct Result {
+        std::mutex mutex;
+        std::condition_variable cv;
+        std::vector<Chorus::ChorusSignal> terminals;
+        size_t tokens = 0;
+    };
 
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
-    auto run_one = [&](int64_t id) -> int {
-        tokens = 0;
-        done = false;
+    auto run_one = [&](int64_t id) {
+        auto result = std::make_shared<Result>();
 
         Chorus::ChorusRequest req;
         req.id = id;
         req.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
         req.gen_config.max_tokens = 6;
-        req.on_event = [&](const Chorus::ChorusSignal& sig) {
-            if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
-                tokens++;
-            else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
-                done = true;
+        req.on_event = [result](const Chorus::ChorusSignal& sig) {
+            std::lock_guard<std::mutex> lock(result->mutex);
+            if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
+                ++result->tokens;
+            } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
+                       std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+                result->terminals.push_back(sig);
+                result->cv.notify_all();
+            }
         };
 
         engine.submit_request(req);
 
-        int timeout_ms = 15000;
-        while (!done && timeout_ms > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            timeout_ms -= 50;
+        bool finished = false;
+        {
+            std::unique_lock<std::mutex> lock(result->mutex);
+            finished = result->cv.wait_for(lock, std::chrono::seconds(15), [&] {
+                return !result->terminals.empty();
+            });
         }
-        return done ? tokens.load() : -1;
+        return std::pair{result, finished};
     };
 
-    int first = run_one(1);
-    ASSERT_TRUE(first > 0); // completed and produced tokens
+    auto [first, first_finished] = run_one(1);
+    if (!first_finished) {
+        engine.shutdown();
+        ASSERT_TRUE(first_finished);
+        return;
+    }
 
-    int second = run_one(2); // must reuse the reclaimed slot
-    ASSERT_TRUE(second > 0);
+    auto [second, second_finished] = run_one(2); // must reuse the reclaimed slot
 
     engine.shutdown();
+
+    ASSERT_TRUE(second_finished);
+    for (const auto& result : {first, second}) {
+        ASSERT_EQ(result->terminals.size(), size_t{1});
+        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(result->terminals[0].event));
+        ASSERT_TRUE(result->tokens > 0);
+    }
 }
 
-void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
+TEST_F(LlamaSchedulerModelTest, Batch_demand_beyond_capacity_is_clamped_not_overrun) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
@@ -438,9 +321,12 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
     for (int i = 0; i < 40; ++i)
         long_prompt += "The quick brown fox jumps over the lazy dog. ";
 
-    std::atomic<int> terminal_signals{0};
-    std::atomic<bool> small_done{false};
-    std::atomic<int> small_tokens{0};
+    struct State {
+        std::mutex mutex;
+        std::condition_variable cv;
+        std::map<int64_t, std::vector<Chorus::ChorusSignal>> terminals;
+        size_t recovery_tokens = 0;
+    } state;
 
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
@@ -453,91 +339,72 @@ void test_batch_demand_beyond_capacity_is_clamped_not_overrun() {
         req.prompt = long_prompt;
         req.gen_config.max_tokens = 4;
         req.on_event = [&](const Chorus::ChorusSignal& sig) {
-            if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
-                terminal_signals++;
+            if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) &&
+                !std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
+                return;
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.terminals[sig.request_id].push_back(sig);
+            state.cv.notify_all();
         };
         engine.submit_request(req);
     }
 
-    int timeout_ms = 15000;
-    while (terminal_signals < 4 && timeout_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        timeout_ms -= 50;
+    bool oversized_finished = false;
+    {
+        std::unique_lock<std::mutex> lock(state.mutex);
+        oversized_finished = state.cv.wait_for(lock, std::chrono::seconds(15), [&] {
+            for (int64_t id = 1; id <= 4; ++id)
+                if (state.terminals[id].empty())
+                    return false;
+            return true;
+        });
     }
-    // Overcommitting the batch must resolve through the defined error path
-    // (KV exhaustion -> Decode error), never a batch-buffer overrun.
-    ASSERT_EQ(terminal_signals.load(), 4);
+    if (!oversized_finished) {
+        engine.shutdown();
+        ASSERT_TRUE(oversized_finished);
+        return;
+    }
 
     // Engine must keep running: a fresh small request still completes.
     Chorus::ChorusRequest small;
     small.id = 5;
     small.prompt = "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n";
     small.gen_config.max_tokens = 4;
+    small.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
     small.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
-            small_tokens++;
-        else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
-            small_done = true;
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
+            ++state.recovery_tokens;
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
+                   std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+            state.terminals[sig.request_id].push_back(sig);
+            state.cv.notify_all();
+        }
     };
     engine.submit_request(small);
 
-    timeout_ms = 15000;
-    while (!small_done && timeout_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        timeout_ms -= 50;
+    bool recovery_finished = false;
+    {
+        std::unique_lock<std::mutex> lock(state.mutex);
+        recovery_finished = state.cv.wait_for(lock, std::chrono::seconds(15), [&] {
+            return !state.terminals[small.id].empty();
+        });
     }
-    ASSERT_TRUE(small_done);
-    ASSERT_TRUE(small_tokens > 0);
 
     engine.shutdown();
-}
 
-int run_llama_scheduler_tests() {
-    std::cout << "\n--- LLAMA SCHEDULER SUITE ---\n";
-
-    run_test("load option defaults", test_load_option_defaults);
-    run_test("load option accepts exact int64 values", test_load_option_accepts_exact_int64_values);
-    run_test("load option rejects wrong scalar alternatives", test_load_option_rejects_wrong_scalar_alternatives);
-    run_test("load option rejects invalid batch sizes", test_load_option_rejects_invalid_batch_sizes);
-    run_test("load option rejects n_ubatch above n_batch", test_load_option_rejects_microbatch_larger_than_batch);
-    run_test("load option rejects negative main_gpu", test_load_option_rejects_negative_main_gpu);
-    run_test("load option rejects narrowing overflow", test_load_option_rejects_narrowing_overflow);
-    run_test("load option still rejects unknown keys", test_load_option_still_rejects_unknown_keys);
-    run_test(
-        "load option rejects CPU with explicit GPU options", test_load_option_rejects_cpu_with_explicit_gpu_options
-    );
-    run_test(
-        "load option accepts CPU with explicit zero GPU layers",
-        test_load_option_accepts_cpu_with_explicit_zero_gpu_layers
-    );
-    run_test(
-        "load option CPU placement disables every offload path",
-        test_load_option_cpu_placement_disables_every_offload_path
-    );
-    run_test(
-        "load option GPU placement preserves upstream device selection",
-        test_load_option_gpu_placement_preserves_upstream_device_selection
-    );
-    run_test("load option context params forward exact values", test_load_option_context_params_forward_exact_values);
-    run_test(
-        "resolve generation: unset fields use upstream defaults",
-        test_resolve_generation_unset_fields_use_upstream_defaults
-    );
-    run_test("resolve generation: set fields override", test_resolve_generation_set_fields_override);
-    run_test("Transient_decode_failure_recovers", test_transient_decode_failure_recovers);
-    run_test("Higher_priority_request_served_first", test_higher_priority_request_served_first);
-    run_test("Slot_reusable_after_request_completes", test_slot_reusable_after_request_completes);
-    run_test(
-        "Batch_demand_beyond_capacity_is_clamped_not_overrun", test_batch_demand_beyond_capacity_is_clamped_not_overrun
-    );
-
-    std::cout << "\n======================================\n";
-    if (g_tests_failed > 0) {
-        std::cout << RED << "SUMMARY: " << g_tests_failed << " FAILED, " << g_tests_passed << " PASSED." << RESET
-                  << "\n";
-        return 1;
-    } else {
-        std::cout << GREEN << "SUMMARY: ALL TESTS PASSED." << RESET << "\n";
-        return 0;
+    ASSERT_TRUE(oversized_finished);
+    for (int64_t id = 1; id <= 4; ++id) {
+        const auto& terminals = state.terminals[id];
+        ASSERT_EQ(terminals.size(), size_t{1});
+        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(terminals[0].event));
+        const auto* error = std::get_if<Chorus::ChorusSignal::Error>(&terminals[0].event);
+        ASSERT_TRUE(error != nullptr);
+        if (error)
+            ASSERT_EQ(error->code, Chorus::ChorusError::Decode);
     }
+    ASSERT_TRUE(recovery_finished);
+    ASSERT_EQ(state.terminals[small.id].size(), size_t{1});
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[small.id][0].event));
+    ASSERT_TRUE(state.recovery_tokens > 0);
 }

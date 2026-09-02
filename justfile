@@ -26,6 +26,21 @@ clean:
 build-tests:
     scons test
 
+test-model:
+    ./bin/run_tests --gtest_filter='*ModelTest*:*Llama/EngineContractTest*'
+
+check-model: build-tests
+    just test-model
+
+build-gpu-tests:
+    scons test use_vulkan=yes
+
+test-gpu:
+    ./bin/run_tests --gtest_filter='*GpuModelTest*'
+
+check-gpu: build-gpu-tests
+    just test-gpu
+
 # Run the test suite.
 #
 # Skip model tests: `just test --quick`

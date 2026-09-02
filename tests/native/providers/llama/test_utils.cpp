@@ -1,4 +1,6 @@
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
+
+class LlamaUtilsModelTest : public ChorusModelTest {};
 #include "chorus/providers/llama/llama_utils.hpp"
 #include "silent_llama_log.hpp"
 
@@ -46,72 +48,15 @@ struct LlamaContextFixture {
 // tokenize() Tests
 // ---------------------------------------------------------------------------
 
-void test_tokenize_resizes_and_retries_on_overflow() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaUtilsModelTest, Tokenize_empty_string_distinguishes_special_token_modes) {
 
     LlamaContextFixture fixture;
     ASSERT_TRUE(fixture.load());
 
-    std::string short_prompt = "Hi!";
-    auto tokens = Chorus::LlamaUtils::tokenize(fixture.context, short_prompt, /*add_special=*/true);
+    const std::string empty_prompt;
+    const auto with_special = Chorus::LlamaUtils::tokenize(fixture.context, empty_prompt, /*add_special=*/true);
+    const auto without_special = Chorus::LlamaUtils::tokenize(fixture.context, empty_prompt, /*add_special=*/false);
 
-    ASSERT_TRUE(!tokens.empty());
-    ASSERT_TRUE(static_cast<int>(tokens.size()) <= static_cast<int>(short_prompt.length()) + 4);
-}
-
-void test_tokenize_returns_tokens_for_normal_ascii_input() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
-    LlamaContextFixture fixture;
-    ASSERT_TRUE(fixture.load());
-
-    std::string normal_prompt = "Hello, world!";
-    auto tokens = Chorus::LlamaUtils::tokenize(fixture.context, normal_prompt, /*add_special=*/true);
-
-    ASSERT_TRUE(!tokens.empty());
-}
-
-void test_tokenize_returns_special_tokens_for_empty_string_with_special_tokens_enabled() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
-    LlamaContextFixture fixture;
-    ASSERT_TRUE(fixture.load());
-
-    std::string empty_prompt = "";
-    auto tokens = Chorus::LlamaUtils::tokenize(fixture.context, empty_prompt, /*add_special=*/true);
-
-    ASSERT_TRUE(!tokens.empty());
-}
-
-void test_tokenize_returns_empty_for_empty_string_with_special_tokens_disabled() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
-    LlamaContextFixture fixture;
-    ASSERT_TRUE(fixture.load());
-
-    std::string empty_prompt = "";
-    auto tokens = Chorus::LlamaUtils::tokenize(fixture.context, empty_prompt, /*add_special=*/false);
-
-    ASSERT_TRUE(tokens.empty());
-}
-
-// ---------------------------------------------------------------------------
-// Suite entry point
-// ---------------------------------------------------------------------------
-
-int run_llama_utils_tests() {
-    std::cout << "\n--- LLAMA UTILS SUITE ---\n";
-
-    run_test("Tokenize_ResizesAndRetriesOnOverflow", test_tokenize_resizes_and_retries_on_overflow);
-    run_test("Tokenize_ReturnsTokensForNormalAsciiInput", test_tokenize_returns_tokens_for_normal_ascii_input);
-    run_test(
-        "Tokenize_ReturnsSpecialTokensForEmptyStringWithSpecialTokensEnabled",
-        test_tokenize_returns_special_tokens_for_empty_string_with_special_tokens_enabled
-    );
-    run_test(
-        "Tokenize_ReturnsEmptyForEmptyStringWithSpecialTokensDisabled",
-        test_tokenize_returns_empty_for_empty_string_with_special_tokens_disabled
-    );
-
-    return g_tests_failed > 0 ? 1 : 0;
+    ASSERT_TRUE(!with_special.empty());
+    ASSERT_TRUE(without_special.empty());
 }

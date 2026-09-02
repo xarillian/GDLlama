@@ -1,6 +1,6 @@
 #include "chorus/providers/llama/llama_log_bridge.hpp"
 #include "collecting_log.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include "llama.h"
 
@@ -14,7 +14,7 @@
 namespace {
 
 // llama writes a line in pieces and terminates it with its own newline.
-void test_a_single_terminated_fragment_becomes_one_record() {
+TEST(LlamaLogBridge, Llama_log_single_terminated_fragment_becomes_one_record) {
     Chorus::LlamaLogAssembler assembler;
 
     auto records = assembler.feed(GGML_LOG_LEVEL_INFO, "load: loaded 24 tensors\n");
@@ -24,7 +24,7 @@ void test_a_single_terminated_fragment_becomes_one_record() {
     ASSERT_TRUE(records[0].level == Chorus::LogLevel::Info);
 }
 
-void test_one_callback_with_two_lines_becomes_two_records() {
+TEST(LlamaLogBridge, Llama_log_callback_splits_physical_lines) {
     Chorus::LlamaLogAssembler assembler;
 
     auto records = assembler.feed(GGML_LOG_LEVEL_INFO, "first line\nsecond line\n");
@@ -34,7 +34,7 @@ void test_one_callback_with_two_lines_becomes_two_records() {
     ASSERT_EQ(records[1].message, "second line");
 }
 
-void test_cont_fragments_join_into_one_record() {
+TEST(LlamaLogBridge, Llama_log_CONT_fragments_join_into_one_record) {
     Chorus::LlamaLogAssembler assembler;
 
     ASSERT_TRUE(assembler.feed(GGML_LOG_LEVEL_WARN, "load: ").empty());
@@ -49,7 +49,7 @@ void test_cont_fragments_join_into_one_record() {
 
 // llama leaving a line unterminated must not swallow the next fragment's
 // level: an error merged into an open Info line is an error a mask can hide.
-void test_a_new_opener_closes_a_stale_line_and_keeps_its_own_level() {
+TEST(LlamaLogBridge, Llama_log_new_opener_closes_a_stale_line_and_keeps_its_level) {
     Chorus::LlamaLogAssembler assembler;
 
     ASSERT_TRUE(assembler.feed(GGML_LOG_LEVEL_INFO, "load: chatty progress").empty());
@@ -62,7 +62,7 @@ void test_a_new_opener_closes_a_stale_line_and_keeps_its_own_level() {
     ASSERT_TRUE(records[1].level == Chorus::LogLevel::Error);
 }
 
-void test_trailing_newlines_are_trimmed() {
+TEST(LlamaLogBridge, Llama_log_trailing_newlines_are_trimmed) {
     Chorus::LlamaLogAssembler assembler;
 
     auto records = assembler.feed(GGML_LOG_LEVEL_ERROR, "failed to load\r\n");
@@ -72,7 +72,7 @@ void test_trailing_newlines_are_trimmed() {
 }
 
 // Every level llama means for a reader maps across; NONE drops.
-void test_level_mapping_is_exhaustive() {
+TEST(LlamaLogBridge, Llama_log_level_mapping_is_exhaustive) {
     struct Case {
         int ggml_level;
         Chorus::LogLevel expected;
@@ -94,7 +94,7 @@ void test_level_mapping_is_exhaustive() {
     ASSERT_TRUE(none_assembler.feed(GGML_LOG_LEVEL_NONE, "line\n").empty());
 }
 
-void test_an_empty_or_null_fragment_is_ignored() {
+TEST(LlamaLogBridge, Llama_log_empty_or_null_fragment_is_ignored) {
     Chorus::LlamaLogAssembler assembler;
     ASSERT_TRUE(assembler.feed(GGML_LOG_LEVEL_INFO, nullptr).empty());
     ASSERT_TRUE(assembler.feed(GGML_LOG_LEVEL_INFO, "").empty());
@@ -102,12 +102,12 @@ void test_an_empty_or_null_fragment_is_ignored() {
 
 // A continuation with nothing open is llama's state, not ours, to be confused
 // about; the record it would open has no level, so it is dropped.
-void test_a_continuation_of_nothing_is_dropped() {
+TEST(LlamaLogBridge, Llama_log_continuation_of_nothing_is_dropped) {
     Chorus::LlamaLogAssembler assembler;
     ASSERT_TRUE(assembler.feed(GGML_LOG_LEVEL_CONT, "orphan\n").empty());
 }
 
-void test_flush_emits_an_unterminated_line() {
+TEST(LlamaLogBridge, Llama_log_flush_emits_an_unterminated_line) {
     Chorus::LlamaLogAssembler assembler;
     ASSERT_TRUE(assembler.feed(GGML_LOG_LEVEL_INFO, "no newline here").empty());
 
@@ -119,7 +119,7 @@ void test_flush_emits_an_unterminated_line() {
 
 // The end-to-end path: a registered logger sees llama's own output, and stops
 // seeing it once the handle is gone.
-void test_the_bridge_routes_llama_output_and_restores_the_hook_on_release() {
+TEST(LlamaLogBridge, Llama_log_bridge_routes_output_and_restores_the_hook) {
     ggml_log_callback previous_callback = nullptr;
     void* previous_user_data = nullptr;
     llama_log_get(&previous_callback, &previous_user_data);
@@ -148,7 +148,7 @@ void test_the_bridge_routes_llama_output_and_restores_the_hook_on_release() {
 
 // Two live engines are two registrations and one hook. Attribution is not
 // available from llama, so both hear everything, on purpose.
-void test_two_registrations_both_receive_vendor_output() {
+TEST(LlamaLogBridge, Llama_log_bridge_multiplexes_to_every_registration) {
     CollectingLog first;
     CollectingLog second;
     auto bridge_a = Chorus::LlamaLogBridge::acquire(first.logger());
@@ -170,27 +170,3 @@ void test_two_registrations_both_receive_vendor_output() {
 }
 
 } // namespace
-
-int run_llama_log_bridge_tests() {
-    std::cout << "\n--- Llama Log Bridge Tests ---\n";
-    run_test(
-        "Llama log single terminated fragment becomes one record", test_a_single_terminated_fragment_becomes_one_record
-    );
-    run_test("Llama log callback splits physical lines", test_one_callback_with_two_lines_becomes_two_records);
-    run_test("Llama log CONT fragments join into one record", test_cont_fragments_join_into_one_record);
-    run_test(
-        "Llama log new opener closes a stale line and keeps its level",
-        test_a_new_opener_closes_a_stale_line_and_keeps_its_own_level
-    );
-    run_test("Llama log trailing newlines are trimmed", test_trailing_newlines_are_trimmed);
-    run_test("Llama log level mapping is exhaustive", test_level_mapping_is_exhaustive);
-    run_test("Llama log empty or null fragment is ignored", test_an_empty_or_null_fragment_is_ignored);
-    run_test("Llama log continuation of nothing is dropped", test_a_continuation_of_nothing_is_dropped);
-    run_test("Llama log flush emits an unterminated line", test_flush_emits_an_unterminated_line);
-    run_test(
-        "Llama log bridge routes output and restores the hook",
-        test_the_bridge_routes_llama_output_and_restores_the_hook_on_release
-    );
-    run_test("Llama log bridge multiplexes to every registration", test_two_registrations_both_receive_vendor_output);
-    return g_tests_failed;
-}

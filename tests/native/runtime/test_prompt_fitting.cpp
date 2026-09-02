@@ -1,5 +1,5 @@
 #include "chorus/runtime/prompt_fitting.hpp" // adjust to "../src..." only if include fails; see step 3
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include <string>
 #include <variant>
@@ -20,14 +20,14 @@ static std::vector<ChatMessage> turns(int n) {
     return out;
 }
 
-void test_fit_noop_when_under_budget() {
+TEST(PromptFitting, Fitting_noop_under_budget) {
     auto result = Chorus::fit_messages_to_budget(turns(4), {}, 10, one_per_message);
     auto& fit = std::get<Chorus::FitResult>(result);
     ASSERT_EQ(fit.dropped, 0);
     ASSERT_EQ((int)fit.fitted.size(), 5);
 }
 
-void test_fit_drops_oldest_and_pins_system() {
+TEST(PromptFitting, Fitting_drops_oldest_pins_system) {
     auto result = Chorus::fit_messages_to_budget(turns(6), {}, 5, one_per_message);
     auto& fit = std::get<Chorus::FitResult>(result);
     ASSERT_EQ(fit.dropped, 2);
@@ -36,14 +36,14 @@ void test_fit_drops_oldest_and_pins_system() {
     ASSERT_EQ(fit.fitted.back().content, std::string("t5"));
 }
 
-void test_fit_hard_fails_when_pinned_alone_exceeds_budget() {
+TEST(PromptFitting, Fitting_hard_fail_oversized) {
     std::vector<ChatMessage> history{{"system", "persona"}, {"user", "question"}};
     auto result = Chorus::fit_messages_to_budget(history, {}, 1, one_per_message);
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusError>(result));
     ASSERT_TRUE(std::get<Chorus::ChorusError>(result) == Chorus::ChorusError::InvalidRequest);
 }
 
-void test_injections_survive_dropping_and_land_at_depth() {
+TEST(PromptFitting, Fitting_injections_survive_and_place) {
     std::vector<InjectedMessage> inject{{{"system", "it rains"}, 1}};
     auto result = Chorus::fit_messages_to_budget(turns(6), inject, 6, one_per_message);
     auto& fit = std::get<Chorus::FitResult>(result);
@@ -53,7 +53,7 @@ void test_injections_survive_dropping_and_land_at_depth() {
     ASSERT_EQ(fit.fitted.back().content, std::string("t5"));
 }
 
-void test_depth_zero_appends_at_end_and_depth_clamps_to_pin() {
+TEST(PromptFitting, Fitting_depth_zero_and_clamp) {
     std::vector<ChatMessage> history{{"system", "persona"}, {"user", "q"}};
     std::vector<InjectedMessage> inject{{{"system", "end note"}, 0}, {{"system", "deep note"}, 99}};
     auto placed = Chorus::place_injections(history, inject);
@@ -62,7 +62,7 @@ void test_depth_zero_appends_at_end_and_depth_clamps_to_pin() {
     ASSERT_EQ(placed[1].content, std::string("deep note")); // clamped after system pin
 }
 
-void test_equal_clamped_depths_preserve_order() {
+TEST(PromptFitting, Fitting_equal_clamped_depths_preserve_order) {
     // Two injections that BOTH clamp to the pin boundary must keep array
     // order. Naive clamping inserts at the same index and reverses it.
     std::vector<ChatMessage> history{{"system", "persona"}, {"user", "q"}};
@@ -74,7 +74,7 @@ void test_equal_clamped_depths_preserve_order() {
     ASSERT_EQ(placed.back().content, std::string("q"));
 }
 
-void test_drop_aligns_to_user_boundary() {
+TEST(PromptFitting, Fitting_drop_aligns_to_user_boundary) {
     // Dropping must reopen the window on a user turn: a lone drop that leaves
     // an assistant-led window (strict-alternation templates reject it) is
     // extended to the next user message.
@@ -85,23 +85,10 @@ void test_drop_aligns_to_user_boundary() {
     ASSERT_EQ(fit.fitted[1].content, std::string("t2"));
 }
 
-void test_nullopt_probe_returns_unfitted() {
+TEST(PromptFitting, Fitting_nullopt_probe_unfitted) {
     auto never = [](const std::vector<ChatMessage>&) -> std::optional<int32_t> { return std::nullopt; };
     auto result = Chorus::fit_messages_to_budget(turns(6), {}, 1, never);
     auto& fit = std::get<Chorus::FitResult>(result);
     ASSERT_EQ(fit.dropped, 0);
     ASSERT_EQ((int)fit.fitted.size(), 7);
-}
-
-int run_prompt_fitting_tests() {
-    std::cout << "\n--- Prompt Fitting Tests ---" << std::endl;
-    run_test("Fitting_noop_under_budget", test_fit_noop_when_under_budget);
-    run_test("Fitting_drops_oldest_pins_system", test_fit_drops_oldest_and_pins_system);
-    run_test("Fitting_hard_fail_oversized", test_fit_hard_fails_when_pinned_alone_exceeds_budget);
-    run_test("Fitting_injections_survive_and_place", test_injections_survive_dropping_and_land_at_depth);
-    run_test("Fitting_depth_zero_and_clamp", test_depth_zero_appends_at_end_and_depth_clamps_to_pin);
-    run_test("Fitting_equal_clamped_depths_preserve_order", test_equal_clamped_depths_preserve_order);
-    run_test("Fitting_drop_aligns_to_user_boundary", test_drop_aligns_to_user_boundary);
-    run_test("Fitting_nullopt_probe_unfitted", test_nullopt_probe_returns_unfitted);
-    return g_tests_failed > 0 ? 1 : 0;
 }

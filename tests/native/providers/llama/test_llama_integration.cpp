@@ -1,10 +1,15 @@
 #include "chorus/core/common.hpp"
 #include "chorus/engine_factory.hpp"
 #include "chorus/providers/llama/llama_engine.hpp"
+#include "chorus/providers/llama/llama_generation_options.hpp"
+#include "chorus/providers/llama/llama_load_config.hpp"
 #include "chorus/runtime/runtime.hpp"
 #include "collecting_log.hpp"
 #include "process_test.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
+
+class LlamaIntegrationModelTest : public ChorusModelTest {};
+class LlamaGpuModelTest : public ChorusGpuModelTest {};
 
 #include <llama.h>
 
@@ -17,8 +22,10 @@
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 const std::string MODEL_PATH = "tests/models/gemma-3-270m-it-F16.gguf";
 
@@ -68,7 +75,7 @@ bool contains_vulkan_compute_buffer_log(std::string_view logs) {
     return false;
 }
 
-void test_unsupported_model_format_is_rejected() {
+TEST(LlamaIntegration, Llama_unsupported_model_format_is_rejected) {
     // No model needed: the format gate fires before any file I/O.
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config("/nonexistent.safetensors");
@@ -78,7 +85,7 @@ void test_unsupported_model_format_is_rejected() {
     ASSERT_TRUE(*err == Chorus::ChorusError::UnsupportedModelFormat);
 }
 
-void test_unknown_llama_load_option_is_rejected() {
+TEST(LlamaIntegration, Llama_unknown_load_option_is_rejected) {
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH); // existing macro/constant in this file
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"warp_factor", int64_t{9}}};
@@ -87,9 +94,7 @@ void test_unknown_llama_load_option_is_rejected() {
     ASSERT_TRUE(*err == Chorus::ChorusError::UnsupportedOption);
 }
 
-void test_model_loading() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
+TEST_F(LlamaIntegrationModelTest, Llama_load_lifecycle_reports_model_facts_and_prompt_rendering) {
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
@@ -97,17 +102,28 @@ void test_model_loading() {
         {"use_gpu", false},
     };
 
-    std::cout << "  [INFO] Loading model: " << MODEL_PATH << std::endl;
-
+    ASSERT_TRUE(!engine.loaded_model_info().has_value());
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
     ASSERT_TRUE(engine.is_initialized());
+    ASSERT_TRUE(engine.capabilities().prompt_rendering);
+
+    const auto info = engine.loaded_model_info();
+    ASSERT_TRUE(info.has_value());
+    if (info) {
+        ASSERT_EQ(info->model_id, std::string("test-model"));
+        ASSERT_EQ(info->format, Chorus::ModelFormat::Gguf);
+        ASSERT_TRUE(!info->family.empty());
+        ASSERT_TRUE(info->maximum_context.has_value() && *info->maximum_context > 0);
+        ASSERT_TRUE(info->per_request_context.has_value() && *info->per_request_context > 0);
+        ASSERT_TRUE(info->model_bytes.has_value() && *info->model_bytes > 0);
+    }
 
     engine.shutdown();
     ASSERT_TRUE(!engine.is_initialized());
+    ASSERT_TRUE(!engine.loaded_model_info().has_value());
 }
 
-void test_repeated_healthy_initialization_changes_no_engine_state() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_repeated_healthy_initialization_changes_no_engine_state) {
 
     EngineLogCapture original_logs;
     EngineLogCapture replacement_logs;
@@ -139,8 +155,7 @@ void test_repeated_healthy_initialization_changes_no_engine_state() {
     ASSERT_TRUE(original_logs.text().find("Request submitted to a stopped engine") != std::string::npos);
 }
 
-void test_llama_cpu_placement_avoids_vulkan_compute_buffer() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_CPU_placement_avoids_Vulkan_compute_buffer) {
 
     EngineLogCapture log_capture;
     Chorus::LlamaEngine engine;
@@ -185,73 +200,19 @@ void test_llama_cpu_placement_avoids_vulkan_compute_buffer() {
     ASSERT_TRUE(logs.find("CPU compute buffer size") != std::string::npos);
 }
 
-void test_llama_vulkan_compute_buffer_oracle_covers_every_device_index() {
-    ASSERT_TRUE(contains_vulkan_compute_buffer_log("Vulkan0 compute buffer size = 12 MiB\n"));
-    ASSERT_TRUE(contains_vulkan_compute_buffer_log("Vulkan1 compute buffer size = 12 MiB\n"));
-    ASSERT_TRUE(contains_vulkan_compute_buffer_log("Vulkan_Host compute buffer size = 12 MiB\n"));
-    ASSERT_TRUE(!contains_vulkan_compute_buffer_log("CPU compute buffer size = 12 MiB\n"));
-    ASSERT_TRUE(!contains_vulkan_compute_buffer_log("Vulkan0 model buffer size = 12 MiB\n"));
-}
-
-void test_simple_generation() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
+TEST_F(LlamaGpuModelTest, Llama_GPU_placement_uses_Vulkan_compute_buffer) {
+    EngineLogCapture log_capture;
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", true}};
 
-    std::atomic<bool> done{false};
-    std::string full_response = "";
-
-    // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
+    ASSERT_TRUE(!engine.initialize(config, log_capture.logger()).has_value());
+    engine.shutdown();
 
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
-
-    Chorus::ChorusRequest chorus_request;
-    chorus_request.id = 1;
-    chorus_request.prompt = "<start_of_turn>user\nHello!<end_of_turn>\n<start_of_turn>model\n";
-    chorus_request.gen_config.max_tokens = 20;
-    chorus_request.gen_config.temperature = 0.7f;
-
-    chorus_request.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (const auto* token = std::get_if<Chorus::ChorusSignal::Token>(&sig.event)) {
-            std::cout << token->text << std::flush; // Print tokens as they arrive!
-            full_response += token->text;
-        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event)) {
-            done = true;
-        } else if (const auto* error = std::get_if<Chorus::ChorusSignal::Error>(&sig.event)) {
-            std::cerr << "\n[ERROR] " << error->message << "\n";
-            done = true;
-        }
-    };
-
-    std::cout << "  [INFO] Sending Prompt: 'Hello, Chorus!'\n";
-    std::cout << "  [GENERATION] > ";
-
-    engine.submit_request(chorus_request);
-
-    // Wait loop with timeout (e.g., 10 seconds)
-    int timeout_ms = 10000;
-    while (!done && timeout_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        timeout_ms -= 100;
-    }
-
-    std::cout << "\n"; // Newline after generation
-
-    if (timeout_ms <= 0) {
-        std::cerr << RED << "[FAILED] Timed out waiting for generation." << RESET << "\n";
-        g_tests_failed++;
-        return;
-    }
-
-    ASSERT_TRUE(full_response.length() > 0);
-    std::cout << "  [INFO] Received " << full_response.length() << " characters.\n";
+    ASSERT_TRUE(contains_vulkan_compute_buffer_log(log_capture.text()));
 }
 
-void test_llama_batch_controls_create_context_and_generate_four_tokens() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
+TEST_F(LlamaIntegrationModelTest, Llama_batch_controls_create_context_and_generate_four_tokens) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
@@ -260,9 +221,10 @@ void test_llama_batch_controls_create_context_and_generate_four_tokens() {
         {"tokens_per_tick", int64_t{96}},
     };
 
-    std::atomic<bool> done{false};
-    std::atomic<bool> errored{false};
-    std::atomic<int> token_chunks{0};
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::vector<Chorus::ChorusSignal> terminals;
+    size_t token_chunks = 0;
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -272,32 +234,31 @@ void test_llama_batch_controls_create_context_and_generate_four_tokens() {
     request.gen_config.max_tokens = 4;
     request.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
-        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event))
-            token_chunks++;
-        else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
-            done = true;
-        else if (std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
-            errored = true;
-            done = true;
+        std::lock_guard<std::mutex> lock(mutex);
+        if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
+            ++token_chunks;
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
+                   std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
+            terminals.push_back(signal);
+            cv.notify_all();
         }
     };
     engine.submit_request(request);
 
-    int timeout_ms = 15000;
-    while (!done && timeout_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        timeout_ms -= 50;
+    bool completed = false;
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        completed = cv.wait_for(lock, std::chrono::seconds(15), [&] { return !terminals.empty(); });
     }
-
-    ASSERT_TRUE(done);
-    ASSERT_TRUE(!errored);
-    ASSERT_EQ(token_chunks.load(), 4);
     engine.shutdown();
+
+    ASSERT_TRUE(completed);
+    ASSERT_EQ(terminals.size(), size_t{1});
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(terminals[0].event));
+    ASSERT_EQ(token_chunks, size_t{4});
 }
 
-void test_effective_batch_capacity_contains_oversized_prompt_failure() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
+TEST_F(LlamaIntegrationModelTest, Llama_effective_batch_capacity_contains_oversized_prompt_failure) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
@@ -307,8 +268,12 @@ void test_effective_batch_capacity_contains_oversized_prompt_failure() {
         {"tokens_per_tick", int64_t{512}},
     };
 
-    std::atomic<bool> done{false};
-    std::atomic<bool> errored{false};
+    struct State {
+        std::mutex mutex;
+        std::condition_variable cv;
+        std::vector<Chorus::ChorusSignal> oversized_terminals;
+        std::vector<Chorus::ChorusSignal> recovery_terminals;
+    } state;
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -318,28 +283,64 @@ void test_effective_batch_capacity_contains_oversized_prompt_failure() {
         request.prompt += "hello ";
     request.gen_config.max_tokens = 1;
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
-        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
-            done = true;
-        else if (std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
-            errored = true;
-            done = true;
-        }
+        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) &&
+            !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+            return;
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.oversized_terminals.push_back(signal);
+        state.cv.notify_all();
     };
     engine.submit_request(request);
 
-    int timeout_ms = 15000;
-    while (!done && timeout_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        timeout_ms -= 50;
+    bool oversized_finished = false;
+    {
+        std::unique_lock<std::mutex> lock(state.mutex);
+        oversized_finished = state.cv.wait_for(lock, std::chrono::seconds(15), [&] {
+            return !state.oversized_terminals.empty();
+        });
+    }
+    if (!oversized_finished) {
+        engine.shutdown();
+        ASSERT_TRUE(oversized_finished);
+        return;
     }
 
-    ASSERT_TRUE(done);
-    ASSERT_TRUE(errored);
+    Chorus::ChorusRequest recovery;
+    recovery.id = 513;
+    recovery.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
+    recovery.gen_config.max_tokens = 1;
+    recovery.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
+    recovery.on_event = [&](const Chorus::ChorusSignal& signal) {
+        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) &&
+            !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+            return;
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.recovery_terminals.push_back(signal);
+        state.cv.notify_all();
+    };
+    engine.submit_request(recovery);
+
+    bool recovery_finished = false;
+    {
+        std::unique_lock<std::mutex> lock(state.mutex);
+        recovery_finished = state.cv.wait_for(lock, std::chrono::seconds(15), [&] {
+            return !state.recovery_terminals.empty();
+        });
+    }
     engine.shutdown();
+
+    ASSERT_TRUE(oversized_finished);
+    ASSERT_EQ(state.oversized_terminals.size(), size_t{1});
+    const auto* oversized_error = std::get_if<Chorus::ChorusSignal::Error>(&state.oversized_terminals[0].event);
+    ASSERT_TRUE(oversized_error != nullptr);
+    if (oversized_error)
+        ASSERT_EQ(oversized_error->code, Chorus::ChorusError::Decode);
+    ASSERT_TRUE(recovery_finished);
+    ASSERT_EQ(state.recovery_terminals.size(), size_t{1});
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.recovery_terminals[0].event));
 }
 
-void test_concurrent_requests_complete_with_multiple_slots() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_ConcurrentRequestsCompleteWithMultipleSlots) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
@@ -379,8 +380,7 @@ void test_concurrent_requests_complete_with_multiple_slots() {
     }
 
     if (timeout_ms <= 0) {
-        std::cerr << RED << "[FAILED] Timed out waiting for concurrent generation." << RESET << "\n";
-        g_tests_failed++;
+        ADD_FAILURE() << "Timed out waiting for concurrent generation.";
         return;
     }
 
@@ -388,8 +388,7 @@ void test_concurrent_requests_complete_with_multiple_slots() {
     ASSERT_TRUE(!responses[1].empty());
 }
 
-void test_max_tokens_counts_generated_not_prompt_tokens() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Max_tokens_counts_generated_not_prompt_tokens) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
@@ -434,8 +433,7 @@ void test_max_tokens_counts_generated_not_prompt_tokens() {
     ASSERT_TRUE(token_count <= 8);
 }
 
-void test_engine_reinitializes_and_generates_after_shutdown() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Engine_reinitializes_and_generates_after_shutdown) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
@@ -477,7 +475,7 @@ void test_engine_reinitializes_and_generates_after_shutdown() {
     engine.shutdown();
 }
 
-void test_llama_declares_gguf_and_chorus_managed() {
+TEST(LlamaIntegration, Llama_constraint_capabilities) {
     Chorus::LlamaEngine engine; // pre-init envelope
     auto caps = engine.capabilities();
     ASSERT_EQ(caps.provider_id, std::string("llama"));
@@ -499,8 +497,7 @@ void test_llama_declares_gguf_and_chorus_managed() {
     ASSERT_TRUE(caps.cancellation);
 }
 
-void test_llama_cancellation_removes_queued_request_before_active_request_finishes() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_cancellation_removes_queued_request_before_active_finishes) {
 
     struct State {
         std::mutex mutex;
@@ -577,8 +574,7 @@ void test_llama_cancellation_removes_queued_request_before_active_request_finish
     ASSERT_TRUE(!state->active_terminal_when_queued_cancelled);
 }
 
-void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_cancellation_is_idempotent_and_releases_active_slot) {
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -668,8 +664,7 @@ void test_llama_cancellation_is_idempotent_and_releases_active_slot() {
     ASSERT_TRUE(reuse_completed);
 }
 
-void test_llama_cancellation_from_committed_buffered_token_does_not_replace_stop() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_cancellation_from_committed_buffered_token_does_not_replace_Stop) {
 
     struct Result {
         std::mutex mutex;
@@ -734,8 +729,7 @@ void test_llama_cancellation_from_committed_buffered_token_does_not_replace_stop
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(reentrant->terminals[0].event));
 }
 
-void test_llama_shutdown_waits_for_active_cancellation_callback_and_drains_queue() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_shutdown_waits_for_active_cancellation_callback_and_drains_queue) {
 
     struct State {
         std::mutex mutex;
@@ -860,24 +854,8 @@ void test_llama_shutdown_waits_for_active_cancellation_callback_and_drains_queue
     ASSERT_EQ(queued_cancelled, size_t{1});
 }
 
-void test_llama_loaded_model_info_populated() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-    Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.loaded_model_info().has_value()); // pre-init: empty
-    ASSERT_TRUE(!engine.initialize(make_gguf_config(MODEL_PATH), {}).has_value());
-    auto info = engine.loaded_model_info();
-    ASSERT_TRUE(info.has_value());
-    ASSERT_EQ(info->model_id, std::string("test-model"));
-    ASSERT_TRUE(info->format == Chorus::ModelFormat::Gguf); // never Auto
-    ASSERT_TRUE(!info->family.empty());
-    ASSERT_TRUE(info->maximum_context.has_value() && *info->maximum_context > 0);
-    ASSERT_TRUE(info->model_bytes.has_value() && *info->model_bytes > 0);
-    engine.shutdown();
-    ASSERT_TRUE(!engine.loaded_model_info().has_value()); // teardown clears it
-}
 
-void test_llama_rejects_unwired_controls_explicitly() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_rejects_unwired_controls_explicitly) {
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(make_gguf_config(MODEL_PATH), {}).has_value());
     Chorus::ChorusRequest req;
@@ -962,8 +940,7 @@ run_constraint_request(Chorus::LlamaEngine& engine, int64_t request_id, Chorus::
 
 } // namespace
 
-void test_llama_gbnf_constraint_enforces_output() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_GBNF_constraint_enforces_output) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
@@ -983,8 +960,7 @@ void test_llama_gbnf_constraint_enforces_output() {
     ASSERT_EQ(result.response, std::string("\"PINK_MOTH\""));
 }
 
-void test_llama_json_schema_constraint_enforces_output() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_JSON_Schema_constraint_enforces_output) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
@@ -1012,8 +988,7 @@ void test_llama_json_schema_constraint_enforces_output() {
     ASSERT_TRUE(parsed["ok"].is_boolean());
 }
 
-void test_llama_invalid_grammar_isolated_to_one_constraint_request() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_invalid_grammar_is_isolated_to_one_constraint_request) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
@@ -1046,8 +1021,7 @@ void test_llama_invalid_grammar_isolated_to_one_constraint_request() {
 // stable enough to assert on a 270M model; top_k and top_p set-field
 // forwarding is proven by the resolved generation override test in
 // test_llama_scheduler.cpp instead.
-void test_llama_conformance_seed_and_temperature() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_conformance_seed_and_temperature) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
@@ -1094,49 +1068,8 @@ void test_llama_conformance_seed_and_temperature() {
     ASSERT_EQ(text_a, text_b);
 }
 
-void test_llama_conformance_max_tokens_bounds_output() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
 
-    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
-
-    std::mutex sig_mutex;
-    std::condition_variable cv;
-    bool done = false;
-    int token_count = 0;
-
-    // declared after the state its worker callbacks capture, so the engine
-    // (and its worker thread) is destroyed first
-    Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
-
-    Chorus::ChorusRequest req;
-    req.id = 1;
-    req.prompt = "<start_of_turn>user\nTell me a long story.<end_of_turn>\n<start_of_turn>model\n";
-    req.gen_config.max_tokens = 8;
-    req.on_event = [&](const Chorus::ChorusSignal& sig) {
-        std::lock_guard<std::mutex> lock(sig_mutex);
-        if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
-            token_count++;
-        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
-            done = true;
-            cv.notify_one();
-        }
-    };
-    engine.submit_request(req);
-
-    {
-        std::unique_lock<std::mutex> lock(sig_mutex);
-        cv.wait_for(lock, std::chrono::seconds(15), [&] { return done; });
-    }
-    engine.shutdown();
-
-    ASSERT_TRUE(done);
-    ASSERT_TRUE(token_count <= 8);
-}
-
-void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_tokens_completes_and_reuses_slot) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
@@ -1196,8 +1129,7 @@ void test_llama_stop_zero_tokens_completes_and_reuses_slot() {
     engine.shutdown();
 }
 
-void test_llama_stop_marker_never_emits_and_slot_reuses() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_stop_marker_never_emits_and_slot_reuses) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
@@ -1359,13 +1291,11 @@ bool run_reentry_isolated(ReentryTrigger trigger) {
 
 } // namespace
 
-void test_llama_stop_zero_callback_can_submit_followup() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_callback_can_submit_followup) {
     ASSERT_TRUE(run_reentry_isolated(ReentryTrigger::ZeroBudget));
 }
 
-void test_llama_stop_rejection_callback_can_submit_followup() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_stop_rejection_callback_can_submit_followup) {
     ASSERT_TRUE(run_reentry_isolated(ReentryTrigger::Rejection));
 }
 
@@ -1377,8 +1307,7 @@ int run_llama_reentry_child_mode(std::string_view child_name) {
     return 64;
 }
 
-void test_llama_stop_completion_releases_callback_resources() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_stop_completion_releases_callback_resources) {
 
     struct State {
         std::atomic<bool> terminal{false};
@@ -1414,8 +1343,7 @@ void test_llama_stop_completion_releases_callback_resources() {
     engine.shutdown();
 }
 
-void test_llama_stop_zero_completes_while_slot_is_occupied() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_completes_while_slot_is_occupied) {
 
     struct State {
         std::mutex mutex;
@@ -1477,8 +1405,7 @@ void test_llama_stop_zero_completes_while_slot_is_occupied() {
 // match, cancellation, and invalid-grammar-after-acceptance in sequence; the
 // remaining scenarios (decode failure, engine stop) need their own engine
 // lifecycle and follow below.
-void test_llama_terminal_invariant_one_terminal_per_request() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_one_per_request) {
 
     struct Sweep {
         std::mutex mutex;
@@ -1619,8 +1546,7 @@ void test_llama_terminal_invariant_one_terminal_per_request() {
 }
 
 // Terminal invariant: a runtime decode failure ends the request once with an Error.
-void test_llama_terminal_invariant_decode_failure_ends_once() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_decode_failure_ends_once) {
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -1668,8 +1594,7 @@ void test_llama_terminal_invariant_decode_failure_ends_once() {
 
 // Terminal invariant: stopping the engine mid-flight drains the active request with
 // exactly one Cancelled terminal.
-void test_llama_terminal_invariant_engine_shutdown_ends_once() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_engine_shutdown_ends_once) {
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -1718,8 +1643,7 @@ void test_llama_terminal_invariant_engine_shutdown_ends_once() {
 
 // Two-slot scenario: one request is cancelled while the other completes normally,
 // each ending with exactly one terminal of its own kind.
-void test_llama_two_slot_one_cancels_one_completes() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_two_slot_one_cancels_one_completes) {
 
     struct State {
         std::mutex mutex;
@@ -1839,8 +1763,7 @@ RuntimeDrainResult drain_runtime_until_terminal(Chorus::ChorusRuntime& runtime, 
 
 } // namespace
 
-void test_chat_messages_render_and_generate() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_chat_messages_render_and_generate) {
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(make_chat_config(), {}).has_value());
 
@@ -1886,8 +1809,7 @@ void test_chat_messages_render_and_generate() {
     engine.shutdown();
 }
 
-void test_capabilities_and_model_info_report_rendering() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_chat_capabilities_report_rendering) {
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(make_chat_config(), {}).has_value());
     ASSERT_TRUE(engine.capabilities().prompt_rendering);
@@ -1897,8 +1819,7 @@ void test_capabilities_and_model_info_report_rendering() {
     engine.shutdown();
 }
 
-void test_multi_turn_conversation_stays_contextual() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_chat_multi_turn_stays_contextual) {
     // Exercise a multi-turn conversation at the runtime layer so history
     // assembly itself is under test.
     Chorus::ChorusRuntime runtime;
@@ -1923,8 +1844,7 @@ void test_multi_turn_conversation_stays_contextual() {
     ASSERT_TRUE(drained.complete_text.find("Trebor") != std::string::npos);
 }
 
-void test_model_truncation_preserves_system_message() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaIntegrationModelTest, Llama_chat_truncation_preserves_system) {
     // A tiny context (num_slots=1) forces a real truncation, then the
     // render hook proves the system message survived in the fitted window.
     Chorus::ChorusRuntime runtime;
@@ -1955,96 +1875,4 @@ void test_model_truncation_preserves_system_message() {
     auto drained = drain_runtime_until_terminal(runtime);
     ASSERT_TRUE(drained.terminal_kind == Chorus::RuntimeEvent::Kind::Complete);
     ASSERT_TRUE(drained.saw_truncation);
-}
-
-int run_llama_integration_tests() {
-    std::cout << "\n--- LLAMA INTEGRATION SUITE ---\n";
-
-    run_test("Llama: unsupported model format is rejected", test_unsupported_model_format_is_rejected);
-    run_test("Llama: unknown load option is rejected", test_unknown_llama_load_option_is_rejected);
-    run_test("Llama_Model_Load", test_model_loading);
-    run_test(
-        "Llama repeated healthy initialization changes no engine state",
-        test_repeated_healthy_initialization_changes_no_engine_state
-    );
-    run_test("Llama CPU placement avoids Vulkan compute buffer", test_llama_cpu_placement_avoids_vulkan_compute_buffer);
-    run_test(
-        "Llama Vulkan compute-buffer oracle covers every device index",
-        test_llama_vulkan_compute_buffer_oracle_covers_every_device_index
-    );
-    run_test("Llama_Generation_Stream", test_simple_generation);
-    run_test(
-        "Llama batch controls create context and generate four tokens",
-        test_llama_batch_controls_create_context_and_generate_four_tokens
-    );
-    run_test(
-        "Llama effective batch capacity contains oversized prompt failure",
-        test_effective_batch_capacity_contains_oversized_prompt_failure
-    );
-    run_test(
-        "Llama_ConcurrentRequestsCompleteWithMultipleSlots", test_concurrent_requests_complete_with_multiple_slots
-    );
-    run_test("Max_tokens_counts_generated_not_prompt_tokens", test_max_tokens_counts_generated_not_prompt_tokens);
-    run_test(
-        "Engine_reinitializes_and_generates_after_shutdown", test_engine_reinitializes_and_generates_after_shutdown
-    );
-    run_test("Llama_constraint_capabilities", test_llama_declares_gguf_and_chorus_managed);
-    run_test(
-        "Llama cancellation removes queued request before active finishes",
-        test_llama_cancellation_removes_queued_request_before_active_request_finishes
-    );
-    run_test(
-        "Llama cancellation is idempotent and releases active slot",
-        test_llama_cancellation_is_idempotent_and_releases_active_slot
-    );
-    run_test(
-        "Llama cancellation from committed buffered token does not replace Stop",
-        test_llama_cancellation_from_committed_buffered_token_does_not_replace_stop
-    );
-    run_test(
-        "Llama shutdown waits for active cancellation callback and drains queue",
-        test_llama_shutdown_waits_for_active_cancellation_callback_and_drains_queue
-    );
-    run_test("Llama loaded model info populated", test_llama_loaded_model_info_populated);
-    run_test("Llama_chat_messages_render_and_generate", test_chat_messages_render_and_generate);
-    run_test("Llama_chat_capabilities_report_rendering", test_capabilities_and_model_info_report_rendering);
-    run_test("Llama_chat_multi_turn_stays_contextual", test_multi_turn_conversation_stays_contextual);
-    run_test("Llama_chat_truncation_preserves_system", test_model_truncation_preserves_system_message);
-    run_test("Llama_rejects_unwired_controls_explicitly", test_llama_rejects_unwired_controls_explicitly);
-    run_test("Llama_conformance_seed_and_temperature", test_llama_conformance_seed_and_temperature);
-    run_test("Llama_conformance_max_tokens_bounds_output", test_llama_conformance_max_tokens_bounds_output);
-    run_test("Llama GBNF constraint enforces output", test_llama_gbnf_constraint_enforces_output);
-    run_test("Llama JSON Schema constraint enforces output", test_llama_json_schema_constraint_enforces_output);
-    run_test(
-        "Llama invalid grammar is isolated to one constraint request",
-        test_llama_invalid_grammar_isolated_to_one_constraint_request
-    );
-    run_test("Llama stop zero tokens completes and reuses slot", test_llama_stop_zero_tokens_completes_and_reuses_slot);
-    run_test("Llama stop marker never emits and slot reuses", test_llama_stop_marker_never_emits_and_slot_reuses);
-    run_test("Llama stop zero callback can submit followup", test_llama_stop_zero_callback_can_submit_followup);
-    run_test(
-        "Llama stop rejection callback can submit followup", test_llama_stop_rejection_callback_can_submit_followup
-    );
-    run_test(
-        "Llama stop completion releases callback resources", test_llama_stop_completion_releases_callback_resources
-    );
-    run_test("Llama stop zero completes while slot is occupied", test_llama_stop_zero_completes_while_slot_is_occupied);
-    run_test("Llama terminal invariant one per request", test_llama_terminal_invariant_one_terminal_per_request);
-    run_test(
-        "Llama terminal invariant decode failure ends once", test_llama_terminal_invariant_decode_failure_ends_once
-    );
-    run_test(
-        "Llama terminal invariant engine shutdown ends once", test_llama_terminal_invariant_engine_shutdown_ends_once
-    );
-    run_test("Llama two slot one cancels one completes", test_llama_two_slot_one_cancels_one_completes);
-
-    std::cout << "\n======================================\n";
-    if (g_tests_failed > 0) {
-        std::cout << RED << "SUMMARY: " << g_tests_failed << " FAILED, " << g_tests_passed << " PASSED." << RESET
-                  << "\n";
-        return 1;
-    } else {
-        std::cout << GREEN << "SUMMARY: ALL TESTS PASSED." << RESET << "\n";
-        return 0;
-    }
 }

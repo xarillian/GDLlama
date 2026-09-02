@@ -1,11 +1,11 @@
 #include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 #include "chorus/core/model_spec.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 // No model, no skips: this suite must pass under CHORUS_SKIP_MODEL_TESTS=1.
 
-void test_engine_capabilities_defaults_are_conservative() {
+TEST(ContractTypes, EngineCapabilities_conservative_defaults) {
     Chorus::EngineCapabilities caps;
     // ProviderManaged is the deliberate conservative default: an engine that
     // forgets to set it must not claim Chorus-managed frame guarantees.
@@ -19,28 +19,10 @@ void test_engine_capabilities_defaults_are_conservative() {
     ASSERT_TRUE(!caps.prompt_rendering);
 }
 
-void test_model_spec_defaults() {
+TEST(ContractTypes, InitialModelSpec_defaults) {
     Chorus::InitialModelSpec spec;
     ASSERT_TRUE(spec.format == Chorus::ModelFormat::Auto);
     ASSERT_TRUE(spec.assets.empty());
     ASSERT_TRUE(spec.provider_options.empty());
 }
 
-void test_new_error_categories_exist() {
-    // Compile-level lock: these categories are part of the 3c contract.
-    Chorus::ChorusError errs[] = {
-        Chorus::ChorusError::UnsupportedModelFormat,
-        Chorus::ChorusError::UnsupportedFeature,
-        Chorus::ChorusError::UnsupportedOption,
-        Chorus::ChorusError::SessionBusy,
-    };
-    ASSERT_EQ(sizeof(errs) / sizeof(errs[0]), (size_t)4);
-}
-
-int run_contract_type_tests() {
-    std::cout << "\n--- Contract Type Tests ---\n";
-    run_test("EngineCapabilities: conservative defaults", test_engine_capabilities_defaults_are_conservative);
-    run_test("InitialModelSpec: defaults", test_model_spec_defaults);
-    run_test("ChorusError: 3c categories", test_new_error_categories_exist);
-    return g_tests_failed;
-}

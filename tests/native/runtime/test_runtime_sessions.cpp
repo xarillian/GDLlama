@@ -1,6 +1,6 @@
 #include "chorus/runtime/runtime.hpp"
 #include "sync_mock_engine.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include <iostream>
 #include <map>
@@ -21,7 +21,7 @@ static Chorus::GenerationRequest stateless(const char* prompt, bool stream = fal
     return req;
 }
 
-void test_ids_monotonic_across_sessioned_and_stateless() {
+TEST(RuntimeSessions, Runtime_session_ids_monotonic_across_sessioned_and_stateless) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
@@ -43,7 +43,7 @@ void test_ids_monotonic_across_sessioned_and_stateless() {
     ASSERT_EQ(c.request_id, 2);
 }
 
-void test_session_id_present_on_all_event_kinds() {
+TEST(RuntimeSessions, Runtime_session_id_present_on_all_event_kinds) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
@@ -75,7 +75,7 @@ void test_session_id_present_on_all_event_kinds() {
     ASSERT_EQ(*cancelled[0].session_id, "s1");
 }
 
-void test_second_request_for_live_session_rejected_session_busy() {
+TEST(RuntimeSessions, Runtime_session_second_live_request_rejected_SessionBusy) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     auto* mock_ptr = mock.get();
@@ -92,7 +92,7 @@ void test_second_request_for_live_session_rejected_session_busy() {
     ASSERT_EQ(mock_ptr->submitted_ids.size(), 1); // engine never saw the second
 }
 
-void test_session_released_only_when_terminal_drained() {
+TEST(RuntimeSessions, Runtime_session_released_only_when_terminal_drained) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
@@ -119,7 +119,7 @@ void test_session_released_only_when_terminal_drained() {
     ASSERT_TRUE(after_drain.ok());
 }
 
-void test_session_reusable_after_complete_and_error() {
+TEST(RuntimeSessions, Runtime_session_reusable_after_complete_and_error) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     auto* mock_ptr = mock.get();
@@ -149,7 +149,7 @@ void test_session_reusable_after_complete_and_error() {
     ASSERT_TRUE(after_error.ok());
 }
 
-void test_stateless_requests_admit_concurrently() {
+TEST(RuntimeSessions, Runtime_session_stateless_requests_admit_concurrently) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
@@ -161,7 +161,7 @@ void test_stateless_requests_admit_concurrently() {
     ASSERT_TRUE(b.ok()); // no session lane, no collision
 }
 
-void test_empty_string_session_is_invalid() {
+TEST(RuntimeSessions, Runtime_session_empty_string_is_invalid) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     auto* mock_ptr = mock.get();
@@ -173,7 +173,7 @@ void test_empty_string_session_is_invalid() {
     ASSERT_TRUE(mock_ptr->submitted_ids.empty());
 }
 
-void test_validate_rejection_creates_no_state_and_carries_message() {
+TEST(RuntimeSessions, Runtime_session_validate_rejection_creates_no_state) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     auto* mock_ptr = mock.get();
@@ -193,7 +193,7 @@ void test_validate_rejection_creates_no_state_and_carries_message() {
     ASSERT_TRUE(accepted.ok());
 }
 
-void test_two_sessions_concurrently_live() {
+TEST(RuntimeSessions, Runtime_session_two_sessions_concurrently_live) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
@@ -229,7 +229,7 @@ void test_two_sessions_concurrently_live() {
     ASSERT_TRUE(s2_again.ok());
 }
 
-void test_cancel_status_preserves_session_lookup_until_terminal_drain() {
+TEST(RuntimeSessions, Runtime_cancel_status_preserves_session_until_terminal_drain) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
@@ -248,33 +248,4 @@ void test_cancel_status_preserves_session_lookup_until_terminal_drain() {
     ASSERT_TRUE(events[0].session_id.has_value());
     ASSERT_EQ(*events[0].session_id, "npc");
     ASSERT_TRUE(!runtime.active_request_for_session("npc").has_value());
-}
-
-int run_runtime_session_tests() {
-    std::cout << "\n--- RUNTIME SESSION TEST SUITE ---\n";
-
-    run_test(
-        "Runtime_session_ids_monotonic_across_sessioned_and_stateless",
-        test_ids_monotonic_across_sessioned_and_stateless
-    );
-    run_test("Runtime_session_id_present_on_all_event_kinds", test_session_id_present_on_all_event_kinds);
-    run_test(
-        "Runtime_session_second_live_request_rejected_SessionBusy",
-        test_second_request_for_live_session_rejected_session_busy
-    );
-    run_test("Runtime_session_released_only_when_terminal_drained", test_session_released_only_when_terminal_drained);
-    run_test("Runtime_session_reusable_after_complete_and_error", test_session_reusable_after_complete_and_error);
-    run_test("Runtime_session_stateless_requests_admit_concurrently", test_stateless_requests_admit_concurrently);
-    run_test("Runtime_session_empty_string_is_invalid", test_empty_string_session_is_invalid);
-    run_test(
-        "Runtime_session_validate_rejection_creates_no_state",
-        test_validate_rejection_creates_no_state_and_carries_message
-    );
-    run_test("Runtime_session_two_sessions_concurrently_live", test_two_sessions_concurrently_live);
-    run_test(
-        "Runtime_cancel_status_preserves_session_until_terminal_drain",
-        test_cancel_status_preserves_session_lookup_until_terminal_drain
-    );
-
-    return g_tests_failed > 0 ? 1 : 0;
 }

@@ -1,6 +1,6 @@
 #include "chorus/core/common.hpp"
 #include "chorus/engine_factory.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -11,7 +11,7 @@
 
 // Model-free: exercises the factory seam, not llama.cpp.
 
-void test_factory_echo_engine_round_trips_through_interface() {
+TEST(EngineFactory, Factory_echo_engine_round_trips_through_interface) {
     std::mutex sig_mutex;
     std::vector<Chorus::ChorusSignal> sigs;
 
@@ -53,14 +53,14 @@ void test_factory_echo_engine_round_trips_through_interface() {
     engine->shutdown();
 }
 
-void test_factory_creates_llama_engine_uninitialized() {
+TEST(EngineFactory, Factory_creates_llama_engine_uninitialized) {
     // No model load here: this only proves the factory constructs the real provider.
     std::unique_ptr<Chorus::InferenceEngine> engine = Chorus::make_engine(Chorus::Provider::Llama);
     ASSERT_TRUE(engine != nullptr);
     ASSERT_TRUE(!engine->is_initialized());
 }
 
-void test_factory_shapes_initial_models_by_provider_policy() {
+TEST(EngineFactory, Factory_shapes_initial_models_by_provider_policy) {
     const auto llama = Chorus::make_initial_model_spec(Chorus::Provider::Llama, "hero-model", "models/hero.gguf");
     ASSERT_EQ(llama.model_id, std::string("hero-model"));
     ASSERT_TRUE(llama.format == Chorus::ModelFormat::Gguf);
@@ -72,26 +72,4 @@ void test_factory_shapes_initial_models_by_provider_policy() {
     ASSERT_TRUE(echo.model_id.empty());
     ASSERT_TRUE(echo.format == Chorus::ModelFormat::Auto);
     ASSERT_TRUE(echo.assets.empty());
-}
-
-int run_engine_factory_tests() {
-    std::cout << "\n--- ENGINE FACTORY SUITE ---\n";
-
-    run_test(
-        "Factory_echo_engine_round_trips_through_interface", test_factory_echo_engine_round_trips_through_interface
-    );
-    run_test("Factory_creates_llama_engine_uninitialized", test_factory_creates_llama_engine_uninitialized);
-    run_test(
-        "Factory_shapes_initial_models_by_provider_policy",
-        test_factory_shapes_initial_models_by_provider_policy
-    );
-
-    std::cout << "\n======================================\n";
-    if (g_tests_failed > 0) {
-        std::cout << RED << "SUMMARY: " << g_tests_failed << " FAILED, " << g_tests_passed << " PASSED." << RESET
-                  << "\n";
-        return 1;
-    }
-    std::cout << GREEN << "SUMMARY: ALL TESTS PASSED." << RESET << "\n";
-    return 0;
 }

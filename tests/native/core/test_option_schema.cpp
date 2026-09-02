@@ -1,6 +1,6 @@
 #include "chorus/core/capabilities.hpp"
 
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include <cstdint>
 #include <iostream>
@@ -18,7 +18,7 @@ Chorus::ProviderOptionDescriptors schema() {
     };
 }
 
-void test_option_schema_finds_declared_keys() {
+TEST(OptionSchema, Option_schema_finds_declared_keys) {
     const auto descriptors = schema();
     const auto* found = Chorus::find_option_descriptor(descriptors, "threads");
     ASSERT_TRUE(found != nullptr);
@@ -26,7 +26,7 @@ void test_option_schema_finds_declared_keys() {
     ASSERT_TRUE(Chorus::find_option_descriptor(descriptors, "nope") == nullptr);
 }
 
-void test_option_schema_fills_declared_defaults() {
+TEST(OptionSchema, Option_schema_fills_declared_defaults) {
     const auto descriptors = schema();
     const auto resolved = Chorus::resolve_option_defaults(descriptors, {});
 
@@ -36,7 +36,7 @@ void test_option_schema_fills_declared_defaults() {
     ASSERT_EQ(std::get<int64_t>(resolved.at("gpu_index")), int64_t{0});
 }
 
-void test_option_schema_stored_value_beats_default() {
+TEST(OptionSchema, Option_schema_stored_value_beats_default) {
     const auto descriptors = schema();
     Chorus::ProviderOptionMap stored{{"threads", int64_t{16}}};
 
@@ -45,7 +45,7 @@ void test_option_schema_stored_value_beats_default() {
     ASSERT_EQ(std::get<int64_t>(resolved.at("gpu_index")), int64_t{0}); // untouched keys still resolve
 }
 
-void test_option_schema_drops_options_whose_prerequisite_is_off() {
+TEST(OptionSchema, Option_schema_drops_options_whose_prerequisite_is_off) {
     const auto descriptors = schema();
     Chorus::ProviderOptionMap stored{{"use_gpu", false}, {"gpu_index", int64_t{3}}};
 
@@ -56,7 +56,7 @@ void test_option_schema_drops_options_whose_prerequisite_is_off() {
     ASSERT_EQ(std::get<int64_t>(resolved.at("threads")), int64_t{4});
 }
 
-void test_option_schema_prerequisite_naming_unknown_option_disables() {
+TEST(OptionSchema, Option_schema_prerequisite_naming_unknown_option_disables) {
     const auto descriptors = schema();
     const auto resolved = Chorus::resolve_option_defaults(descriptors, {});
     // orphan names no_such_option, which the schema never declares. A prerequisite nothing
@@ -64,7 +64,7 @@ void test_option_schema_prerequisite_naming_unknown_option_disables() {
     ASSERT_TRUE(resolved.find("orphan") == resolved.end());
 }
 
-void test_option_schema_ignores_keys_outside_the_declaration() {
+TEST(OptionSchema, Option_schema_ignores_keys_outside_the_declaration) {
     const auto descriptors = schema();
     Chorus::ProviderOptionMap stored{{"threads", int64_t{8}}, {"leftover_from_another_provider", int64_t{1}}};
 
@@ -74,22 +74,3 @@ void test_option_schema_ignores_keys_outside_the_declaration() {
 }
 
 } // namespace
-
-int run_option_schema_tests() {
-    std::cout << "\n--- Option Schema Tests ---\n";
-    run_test("Option schema finds declared keys", test_option_schema_finds_declared_keys);
-    run_test("Option schema fills declared defaults", test_option_schema_fills_declared_defaults);
-    run_test("Option schema stored value beats default", test_option_schema_stored_value_beats_default);
-    run_test(
-        "Option schema drops options whose prerequisite is off",
-        test_option_schema_drops_options_whose_prerequisite_is_off
-    );
-    run_test(
-        "Option schema prerequisite naming unknown option disables",
-        test_option_schema_prerequisite_naming_unknown_option_disables
-    );
-    run_test(
-        "Option schema ignores keys outside the declaration", test_option_schema_ignores_keys_outside_the_declaration
-    );
-    return 0;
-}

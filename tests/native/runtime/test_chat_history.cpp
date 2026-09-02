@@ -1,6 +1,6 @@
 #include "chorus/runtime/runtime.hpp"
 #include "sync_mock_engine.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include <iostream>
 #include <memory>
@@ -13,7 +13,7 @@ static Chorus::ChorusConfig make_config() {
     return config;
 }
 
-void test_import_export_roundtrip_and_list() {
+TEST(ChatHistory, ChatHistory_import_export_roundtrip_and_list) {
     Chorus::ChorusRuntime runtime;
     std::vector<Chorus::ChatMessage> history{{"system", "persona"}, {"user", "hi"}};
     ASSERT_TRUE(!runtime.import_conversation_history("npc_1", history).has_value());
@@ -31,7 +31,7 @@ void test_import_export_roundtrip_and_list() {
     ASSERT_TRUE(runtime.last_turn_outcome("npc_1") == Chorus::TurnOutcome::None);
 }
 
-void test_clear_and_reset() {
+TEST(ChatHistory, ChatHistory_clear_and_reset) {
     Chorus::ChorusRuntime runtime;
     (void)runtime.import_conversation_history("a", {{"user", "1"}});
     (void)runtime.import_conversation_history("b", {{"user", "2"}});
@@ -44,7 +44,7 @@ void test_clear_and_reset() {
     ASSERT_TRUE(runtime.list_conversations().empty());
 }
 
-void test_mutation_rejected_while_session_busy() {
+TEST(ChatHistory, ChatHistory_mutation_rejected_while_busy) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->hold_requests = true; // request stays live
@@ -75,7 +75,7 @@ static Chorus::GenerationRequest chat_turn(const std::string& prompt, const std:
     return request;
 }
 
-void test_sessioned_submit_builds_messages_and_appends_on_complete() {
+TEST(ChatHistory, ChatHistory_sessioned_submit_appends_on_complete) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     auto* engine = owned.get();
@@ -100,7 +100,7 @@ void test_sessioned_submit_builds_messages_and_appends_on_complete() {
     ASSERT_TRUE(runtime.last_turn_outcome("npc_1") == Chorus::TurnOutcome::Completed);
 }
 
-void test_stateless_submit_untouched_by_chat() {
+TEST(ChatHistory, ChatHistory_stateless_submit_untouched) {
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
     Chorus::GenerationRequest request;
@@ -111,7 +111,7 @@ void test_stateless_submit_untouched_by_chat() {
     ASSERT_TRUE(runtime.list_conversations().empty()); // no session, no history
 }
 
-void test_cancelled_turn_rolls_back_user_message() {
+TEST(ChatHistory, ChatHistory_cancelled_turn_rolls_back) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     auto* engine = owned.get();
@@ -132,7 +132,7 @@ void test_cancelled_turn_rolls_back_user_message() {
     ASSERT_TRUE(runtime.last_turn_outcome("npc_1") == Chorus::TurnOutcome::Cancelled);
 }
 
-void test_errored_turn_rolls_back_and_marks_errored() {
+TEST(ChatHistory, ChatHistory_errored_turn_rolls_back) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->emit_error_instead_of_stop = true;
@@ -145,7 +145,7 @@ void test_errored_turn_rolls_back_and_marks_errored() {
     ASSERT_TRUE(runtime.last_turn_outcome("npc_1") == Chorus::TurnOutcome::Errored);
 }
 
-void test_reasoning_tokens_route_to_reasoning_channel() {
+TEST(ChatHistory, ChatHistory_reasoning_channel_routing) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->scripted_channel_tokens = {
@@ -171,7 +171,7 @@ void test_reasoning_tokens_route_to_reasoning_channel() {
     ASSERT_EQ(history.back().content, std::string("four"));
 }
 
-void test_nonstreaming_suppresses_reasoning_tokens_but_terminal_carries_reasoning() {
+TEST(ChatHistory, ChatHistory_nonstream_reasoning_on_terminal) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->scripted_channel_tokens = {{Chorus::TokenChannel::Reasoning, "hmm"}, {Chorus::TokenChannel::Content, "ok"}};
@@ -184,7 +184,7 @@ void test_nonstreaming_suppresses_reasoning_tokens_but_terminal_carries_reasonin
 }
 
 // Budget math with mock render: probe counts 1 + words per message.
-void test_truncation_drops_oldest_and_emits_event() {
+TEST(ChatHistory, ChatHistory_truncation_drops_oldest) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->tokens = {};
@@ -219,7 +219,7 @@ void test_truncation_drops_oldest_and_emits_event() {
     ASSERT_EQ((int)runtime.export_conversation_history("npc_1").size(), 9);
 }
 
-void test_oversized_single_turn_hard_fails_without_mutation() {
+TEST(ChatHistory, ChatHistory_oversized_single_turn_hard_fails) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->supports_render = true;
@@ -232,7 +232,7 @@ void test_oversized_single_turn_hard_fails_without_mutation() {
     ASSERT_TRUE(runtime.export_conversation_history("npc_1").empty()); // no trace
 }
 
-void test_zero_token_chat_reserves_no_response_space() {
+TEST(ChatHistory, ChatHistory_zero_token_chat_reserves_no_response_space) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     auto* engine = owned.get();
@@ -249,7 +249,7 @@ void test_zero_token_chat_reserves_no_response_space() {
     ASSERT_EQ(*engine->last_config.max_tokens, 0);
 }
 
-void test_fitting_skipped_when_engine_cannot_render() {
+TEST(ChatHistory, ChatHistory_fitting_skipped_without_render) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->tokens = {};
@@ -262,7 +262,7 @@ void test_fitting_skipped_when_engine_cannot_render() {
         ASSERT_TRUE(event.kind != Chorus::RuntimeEvent::Kind::HistoryTruncated);
 }
 
-void test_render_prompt_passthrough_and_injections() {
+TEST(ChatHistory, ChatHistory_render_prompt_passthrough) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->supports_render = true;
@@ -280,7 +280,7 @@ void test_render_prompt_passthrough_and_injections() {
     ASSERT_TRUE(!runtime.render_prompt("unknown_session").has_value());
 }
 
-void test_injected_messages_reach_engine_but_not_history() {
+TEST(ChatHistory, ChatHistory_injections_reach_engine_not_history) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     auto* engine = owned.get();
@@ -303,7 +303,7 @@ void test_injected_messages_reach_engine_but_not_history() {
     ASSERT_TRUE(saw_injection);
 }
 
-void test_render_reservation_matches_generation() {
+TEST(ChatHistory, ChatHistory_render_reservation_matches_generation) {
     // Same session, two different max_tokens: the fitted window must differ,
     // and render_prompt must track the config it is given.
     Chorus::ChorusRuntime runtime;
@@ -329,7 +329,7 @@ void test_render_reservation_matches_generation() {
     ASSERT_TRUE(fitted->find("<user>e") != std::string::npos); // newest protected
 }
 
-void test_inspection_equals_consumption() {
+TEST(ChatHistory, ChatHistory_inspection_equals_consumption) {
     // render_prompt(config X) must equal, byte for byte, what an X-configured
     // turn hands the engine. A turn fits history + the pending user message,
     // so inspection is performed on a STAGED copy of that same state.
@@ -365,7 +365,7 @@ void test_inspection_equals_consumption() {
     ASSERT_EQ(*inspected, consumed->text); // byte-for-byte
 }
 
-void test_two_sessions_accumulate_independent_histories() {
+TEST(ChatHistory, ChatHistory_two_sessions_independent) {
     // Exercise multi-session isolation through real turns.
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
@@ -386,7 +386,7 @@ void test_two_sessions_accumulate_independent_histories() {
     ASSERT_EQ(second[1].content, std::string("beta"));
 }
 
-void test_stateless_chat_controls_rejected() {
+TEST(ChatHistory, ChatHistory_stateless_chat_controls_rejected) {
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
     Chorus::GenerationRequest request;
@@ -402,7 +402,7 @@ void test_stateless_chat_controls_rejected() {
     ASSERT_TRUE(runtime.list_conversations().empty());
 }
 
-void test_edit_message_rewrites_by_index() {
+TEST(ChatHistory, ChatHistory_edit_message_rewrites_by_index) {
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
     (void)runtime.import_conversation_history("npc_1", {{"system", "persona"}, {"user", "a"}, {"assistant", "b"}});
@@ -417,7 +417,7 @@ void test_edit_message_rewrites_by_index() {
     ASSERT_EQ(history[1].role, std::string("user")); // role preserved
 }
 
-void test_edit_message_guards() {
+TEST(ChatHistory, ChatHistory_edit_message_guards) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     auto* engine = owned.get();
@@ -437,7 +437,7 @@ void test_edit_message_guards() {
     ASSERT_TRUE(runtime.edit_message("npc_1", 0, "x") == Chorus::ChorusError::SessionBusy);
 }
 
-void test_edit_message_preserves_the_last_turn_outcome() {
+TEST(ChatHistory, ChatHistory_edit_message_preserves_outcome) {
     // Editing what a turn said does not change how it ended. The old adapter
     // spelling routed through import and reset this to None.
     Chorus::ChorusRuntime runtime;
@@ -455,7 +455,7 @@ void test_edit_message_preserves_the_last_turn_outcome() {
 // arriving by different routes. The runtime keeps them apart so an adapter
 // never has to, which is the whole reason GenerationRequest carries a patch.
 
-void test_host_default_show_thinking_is_dropped_from_a_stateless_request() {
+TEST(ChatHistory, HostDefaults_ambient_show_thinking_dropped_when_stateless) {
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
 
@@ -468,7 +468,7 @@ void test_host_default_show_thinking_is_dropped_from_a_stateless_request() {
     ASSERT_TRUE(runtime.submit(request).ok());
 }
 
-void test_request_show_thinking_still_rejects_a_stateless_request() {
+TEST(ChatHistory, HostDefaults_request_show_thinking_still_rejects_stateless) {
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
 
@@ -482,7 +482,7 @@ void test_request_show_thinking_still_rejects_a_stateless_request() {
     ASSERT_TRUE(runtime.submit(request).error == Chorus::ChorusError::InvalidRequest);
 }
 
-void test_host_default_chat_template_applies_to_chat_turns_only() {
+TEST(ChatHistory, HostDefaults_ambient_template_chat_turns_only) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     auto* engine = owned.get();
@@ -504,7 +504,7 @@ void test_host_default_chat_template_applies_to_chat_turns_only() {
     ASSERT_EQ(engine->last_chat_template, std::string("{{ ambient }}"));
 }
 
-void test_request_chat_template_beats_the_host_default() {
+TEST(ChatHistory, HostDefaults_request_template_wins) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     auto* engine = owned.get();
@@ -520,7 +520,7 @@ void test_request_chat_template_beats_the_host_default() {
     ASSERT_EQ(engine->last_chat_template, std::string("{{ explicit }}"));
 }
 
-void test_request_overrides_layer_onto_host_defaults() {
+TEST(ChatHistory, HostDefaults_request_overrides_layer_on_top) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     auto* engine = owned.get();
@@ -547,7 +547,7 @@ void test_request_overrides_layer_onto_host_defaults() {
     ASSERT_TRUE(llama.find("repeat_penalty") == llama.end());
 }
 
-void test_rejected_chat_submit_leaves_no_session_trace() {
+TEST(ChatHistory, ChatHistory_rejected_submit_no_session_trace) {
     // A rejected sessioned submit must not create an empty lane.
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
@@ -558,7 +558,7 @@ void test_rejected_chat_submit_leaves_no_session_trace() {
     ASSERT_TRUE(runtime.export_conversation_history("npc_ghost").empty());
 }
 
-void test_regenerate_replaces_last_assistant_message() {
+TEST(ChatHistory, ChatHistory_regenerate_replaces_last_assistant) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     owned->tokens = {};
@@ -580,7 +580,7 @@ void test_regenerate_replaces_last_assistant_message() {
     ASSERT_TRUE(runtime.last_turn_outcome("npc_1") == Chorus::TurnOutcome::Completed);
 }
 
-void test_regenerate_restores_old_reply_on_cancel() {
+TEST(ChatHistory, ChatHistory_regenerate_restores_on_cancel) {
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
     auto* engine = owned.get();
@@ -604,7 +604,7 @@ void test_regenerate_restores_old_reply_on_cancel() {
     ASSERT_TRUE(runtime.last_turn_outcome("npc_1") == Chorus::TurnOutcome::Cancelled);
 }
 
-void test_regenerate_restores_old_reply_on_engine_error() {
+TEST(ChatHistory, ChatHistory_regenerate_restores_on_error) {
     // Cancelled and Errored both restore the replaced reply.
     Chorus::ChorusRuntime runtime;
     auto owned = std::make_unique<SyncMockEngine>();
@@ -625,7 +625,7 @@ void test_regenerate_restores_old_reply_on_engine_error() {
     ASSERT_TRUE(runtime.last_turn_outcome("npc_1") == Chorus::TurnOutcome::Errored);
 }
 
-void test_regenerate_guards() {
+TEST(ChatHistory, ChatHistory_regenerate_guards) {
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
 
@@ -645,55 +645,4 @@ void test_regenerate_guards() {
     Chorus::GenerationRequest no_assistant;
     no_assistant.session_id = "npc_1";
     ASSERT_TRUE(runtime.regenerate(no_assistant).error == Chorus::ChorusError::InvalidRequest);
-}
-
-int run_chat_history_tests() {
-    std::cout << "\n--- Runtime Chat History Tests ---" << std::endl;
-    run_test("ChatHistory_import_export_roundtrip_and_list", test_import_export_roundtrip_and_list);
-    run_test("ChatHistory_clear_and_reset", test_clear_and_reset);
-    run_test("ChatHistory_mutation_rejected_while_busy", test_mutation_rejected_while_session_busy);
-    run_test(
-        "ChatHistory_sessioned_submit_appends_on_complete",
-        test_sessioned_submit_builds_messages_and_appends_on_complete
-    );
-    run_test("ChatHistory_stateless_submit_untouched", test_stateless_submit_untouched_by_chat);
-    run_test("ChatHistory_cancelled_turn_rolls_back", test_cancelled_turn_rolls_back_user_message);
-    run_test("ChatHistory_errored_turn_rolls_back", test_errored_turn_rolls_back_and_marks_errored);
-    run_test("ChatHistory_reasoning_channel_routing", test_reasoning_tokens_route_to_reasoning_channel);
-    run_test(
-        "ChatHistory_nonstream_reasoning_on_terminal",
-        test_nonstreaming_suppresses_reasoning_tokens_but_terminal_carries_reasoning
-    );
-    run_test("ChatHistory_truncation_drops_oldest", test_truncation_drops_oldest_and_emits_event);
-    run_test("ChatHistory_oversized_single_turn_hard_fails", test_oversized_single_turn_hard_fails_without_mutation);
-    run_test("ChatHistory_zero_token_chat_reserves_no_response_space", test_zero_token_chat_reserves_no_response_space);
-    run_test("ChatHistory_fitting_skipped_without_render", test_fitting_skipped_when_engine_cannot_render);
-    run_test("ChatHistory_render_prompt_passthrough", test_render_prompt_passthrough_and_injections);
-    run_test("ChatHistory_injections_reach_engine_not_history", test_injected_messages_reach_engine_but_not_history);
-    run_test("ChatHistory_render_reservation_matches_generation", test_render_reservation_matches_generation);
-    run_test("ChatHistory_inspection_equals_consumption", test_inspection_equals_consumption);
-    run_test("ChatHistory_two_sessions_independent", test_two_sessions_accumulate_independent_histories);
-    run_test("ChatHistory_stateless_chat_controls_rejected", test_stateless_chat_controls_rejected);
-    run_test("ChatHistory_edit_message_rewrites_by_index", test_edit_message_rewrites_by_index);
-    run_test("ChatHistory_edit_message_guards", test_edit_message_guards);
-    run_test("ChatHistory_edit_message_preserves_outcome", test_edit_message_preserves_the_last_turn_outcome);
-    run_test(
-        "HostDefaults_ambient_show_thinking_dropped_when_stateless",
-        test_host_default_show_thinking_is_dropped_from_a_stateless_request
-    );
-    run_test(
-        "HostDefaults_request_show_thinking_still_rejects_stateless",
-        test_request_show_thinking_still_rejects_a_stateless_request
-    );
-    run_test(
-        "HostDefaults_ambient_template_chat_turns_only", test_host_default_chat_template_applies_to_chat_turns_only
-    );
-    run_test("HostDefaults_request_template_wins", test_request_chat_template_beats_the_host_default);
-    run_test("HostDefaults_request_overrides_layer_on_top", test_request_overrides_layer_onto_host_defaults);
-    run_test("ChatHistory_rejected_submit_no_session_trace", test_rejected_chat_submit_leaves_no_session_trace);
-    run_test("ChatHistory_regenerate_replaces_last_assistant", test_regenerate_replaces_last_assistant_message);
-    run_test("ChatHistory_regenerate_restores_on_cancel", test_regenerate_restores_old_reply_on_cancel);
-    run_test("ChatHistory_regenerate_restores_on_error", test_regenerate_restores_old_reply_on_engine_error);
-    run_test("ChatHistory_regenerate_guards", test_regenerate_guards);
-    return g_tests_failed > 0 ? 1 : 0;
 }

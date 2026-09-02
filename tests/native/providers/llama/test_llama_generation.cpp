@@ -1,7 +1,9 @@
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_generation_options.hpp"
 #include "silent_llama_log.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
+
+class LlamaGenerationModelTest : public ChorusModelTest {};
 
 #include <cmath>
 #include <cstdint>
@@ -59,8 +61,7 @@ Chorus::RequestRejection rejection_for(const std::string& key, Chorus::ProviderO
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{key, std::move(value)}};
     auto result = Chorus::resolve_llama_generation(config);
     if (!std::holds_alternative<Chorus::RequestRejection>(result)) {
-        std::cerr << RED << "[FAILED] expected rejection for " << key << RESET << std::endl;
-        g_tests_failed++;
+        ADD_FAILURE() << "Expected rejection for " << key << '.';
         return {};
     }
     return std::get<Chorus::RequestRejection>(result);
@@ -71,8 +72,7 @@ Chorus::RequestRejection constraint_rejection_for(Chorus::ConstraintFormat forma
     config.constraint = Chorus::OutputConstraint{format, std::move(source)};
     auto result = Chorus::resolve_llama_generation(config);
     if (!std::holds_alternative<Chorus::RequestRejection>(result)) {
-        std::cerr << RED << "[FAILED] expected constraint rejection" << RESET << std::endl;
-        g_tests_failed++;
+        ADD_FAILURE() << "Expected constraint rejection.";
         return {};
     }
     return std::get<Chorus::RequestRejection>(result);
@@ -97,98 +97,7 @@ struct ConformanceCase {
 
 } // namespace
 
-void test_llama_generation_resolves_common_scalars() {
-    check_resolution(
-        [](auto& config) { config.max_tokens = 72; }, [](const auto& value) { ASSERT_EQ(value.max_tokens, 72); }
-    );
-    check_resolution(
-        [](auto& config) { config.temperature = 0.35f; },
-        [](const auto& value) { ASSERT_TRUE(value.sampling.temp == 0.35f); }
-    );
-    check_resolution(
-        [](auto& config) { config.top_k = 17; }, [](const auto& value) { ASSERT_EQ(value.sampling.top_k, 17); }
-    );
-    check_resolution(
-        [](auto& config) { config.top_p = 0.72f; },
-        [](const auto& value) { ASSERT_TRUE(value.sampling.top_p == 0.72f); }
-    );
-    check_resolution(
-        [](auto& config) { config.seed = uint64_t{42}; },
-        [](const auto& value) { ASSERT_EQ(value.sampling.seed, uint32_t{42}); }
-    );
-}
-
-void test_llama_generation_resolves_common_penalties_and_stop() {
-    check_resolution(
-        [](auto& config) { config.frequency_penalty = 0.4f; },
-        [](const auto& value) { ASSERT_TRUE(value.sampling.penalty_freq == 0.4f); }
-    );
-    check_resolution(
-        [](auto& config) { config.presence_penalty = -0.2f; },
-        [](const auto& value) { ASSERT_TRUE(value.sampling.penalty_present == -0.2f); }
-    );
-    check_resolution(
-        [](auto& config) { config.stop = {"END", "HALT"}; },
-        [](const auto& value) { ASSERT_TRUE(value.stop == std::vector<std::string>({"END", "HALT"})); }
-    );
-}
-
-void test_llama_generation_resolves_provider_integers_and_bool() {
-    check_provider_resolution("min_keep", int64_t{3}, [](const auto& v) { ASSERT_EQ(v.sampling.min_keep, 3); });
-    check_provider_resolution("penalty_last_n", int64_t{-1}, [](const auto& v) {
-        ASSERT_EQ(v.sampling.penalty_last_n, -1);
-    });
-    check_provider_resolution("dry_allowed_length", int64_t{5}, [](const auto& v) {
-        ASSERT_EQ(v.sampling.dry_allowed_length, 5);
-    });
-    check_provider_resolution("dry_penalty_last_n", int64_t{81}, [](const auto& v) {
-        ASSERT_EQ(v.sampling.dry_penalty_last_n, 81);
-    });
-    check_provider_resolution("mirostat", int64_t{2}, [](const auto& v) { ASSERT_EQ(v.sampling.mirostat, 2); });
-    check_provider_resolution("ignore_eos", true, [](const auto& v) { ASSERT_TRUE(v.sampling.ignore_eos); });
-}
-
-void test_llama_generation_resolves_provider_floats() {
-    check_provider_resolution("min_p", 0.12, [](const auto& v) { ASSERT_TRUE(v.sampling.min_p == 0.12f); });
-    check_provider_resolution("typical_p", 0.83, [](const auto& v) { ASSERT_TRUE(v.sampling.typ_p == 0.83f); });
-    check_provider_resolution("dynamic_temperature_range", 0.4, [](const auto& v) {
-        ASSERT_TRUE(v.sampling.dynatemp_range == 0.4f);
-    });
-    check_provider_resolution("dynamic_temperature_exponent", 1.6, [](const auto& v) {
-        ASSERT_TRUE(v.sampling.dynatemp_exponent == 1.6f);
-    });
-    check_provider_resolution("repeat_penalty", 1.15, [](const auto& v) {
-        ASSERT_TRUE(v.sampling.penalty_repeat == 1.15f);
-    });
-    check_provider_resolution("mirostat_tau", 4.5, [](const auto& v) { ASSERT_TRUE(v.sampling.mirostat_tau == 4.5f); });
-    check_provider_resolution("mirostat_eta", 0.2, [](const auto& v) { ASSERT_TRUE(v.sampling.mirostat_eta == 0.2f); });
-    check_provider_resolution("xtc_probability", 0.3, [](const auto& v) {
-        ASSERT_TRUE(v.sampling.xtc_probability == 0.3f);
-    });
-    check_provider_resolution("xtc_threshold", 0.45, [](const auto& v) {
-        ASSERT_TRUE(v.sampling.xtc_threshold == 0.45f);
-    });
-    check_provider_resolution("dry_multiplier", 0.7, [](const auto& v) {
-        ASSERT_TRUE(v.sampling.dry_multiplier == 0.7f);
-    });
-    check_provider_resolution("dry_base", 2.0, [](const auto& v) { ASSERT_TRUE(v.sampling.dry_base == 2.0f); });
-    check_provider_resolution("top_n_sigma", -1.5, [](const auto& v) { ASSERT_TRUE(v.sampling.top_n_sigma == -1.5f); });
-    check_provider_resolution("adaptive_target", 0.6, [](const auto& v) {
-        ASSERT_TRUE(v.sampling.adaptive_target == 0.6f);
-    });
-    check_provider_resolution("adaptive_decay", 0.95, [](const auto& v) {
-        ASSERT_TRUE(v.sampling.adaptive_decay == 0.95f);
-    });
-}
-
-void test_llama_generation_resolves_string_list() {
-    Chorus::ProviderOptionList breakers{std::string("\n\n"), std::string("###")};
-    check_provider_resolution("dry_sequence_breakers", breakers, [](const auto& v) {
-        ASSERT_TRUE(v.sampling.dry_sequence_breakers == std::vector<std::string>({"\n\n", "###"}));
-    });
-}
-
-void test_llama_generation_preserves_upstream_defaults() {
+TEST(LlamaGeneration, Llama_generation_preserves_upstream_defaults) {
     const common_params_sampling upstream;
     check_resolution(
         [](auto&) {},
@@ -207,49 +116,7 @@ void test_llama_generation_preserves_upstream_defaults() {
     );
 }
 
-void test_llama_generation_catalogs_match_resolver_vocabulary() {
-    const std::vector<std::string> common{
-        "max_tokens",
-        "temperature",
-        "top_k",
-        "top_p",
-        "seed",
-        "frequency_penalty",
-        "presence_penalty",
-        "constraint",
-        "stop",
-        "show_thinking",
-    };
-    const std::vector<std::string> provider{
-        "min_keep",
-        "min_p",
-        "typical_p",
-        "dynamic_temperature_range",
-        "dynamic_temperature_exponent",
-        "penalty_last_n",
-        "repeat_penalty",
-        "ignore_eos",
-        "mirostat",
-        "mirostat_tau",
-        "mirostat_eta",
-        "xtc_probability",
-        "xtc_threshold",
-        "dry_multiplier",
-        "dry_base",
-        "dry_allowed_length",
-        "dry_penalty_last_n",
-        "dry_sequence_breakers",
-        "sampler_order",
-        "logit_bias",
-        "top_n_sigma",
-        "adaptive_target",
-        "adaptive_decay",
-    };
-    ASSERT_TRUE(Chorus::llama_common_generation_option_names() == common);
-    ASSERT_TRUE(Chorus::llama_provider_generation_option_names() == provider);
-}
-
-void test_llama_generation_rejects_wrong_type_and_unknown_key() {
+TEST(LlamaGeneration, Llama_generation_rejects_wrong_type_and_unknown_key) {
     auto wrong = rejection_for("min_keep", 1.0);
     ASSERT_TRUE(wrong.error == Chorus::ChorusError::UnsupportedOption);
     ASSERT_TRUE(wrong.message.find("llama") != std::string::npos);
@@ -272,7 +139,7 @@ void test_llama_generation_rejects_wrong_type_and_unknown_key() {
     ASSERT_TRUE(boolean.message.find("{false, true}") != std::string::npos);
 }
 
-void test_llama_generation_rejects_namespace_errors() {
+TEST(LlamaGeneration, Llama_generation_rejects_namespace_errors) {
     Chorus::GenerationConfig config;
     config.provider_options["alpaca"] = Chorus::ProviderOptionMap{};
     auto unknown = Chorus::resolve_llama_generation(config);
@@ -286,7 +153,7 @@ void test_llama_generation_rejects_namespace_errors() {
     ASSERT_TRUE(std::get<Chorus::RequestRejection>(wrong).message.find("map") != std::string::npos);
 }
 
-void test_llama_generation_rejects_integer_and_probability_ranges() {
+TEST(LlamaGeneration, Llama_generation_rejects_integer_and_probability_ranges) {
     Chorus::GenerationConfig config;
     config.max_tokens = -2;
     ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(Chorus::resolve_llama_generation(config)));
@@ -309,7 +176,7 @@ void test_llama_generation_rejects_integer_and_probability_ranges() {
     ASSERT_TRUE(rejection_for("adaptive_decay", 1.0).error == Chorus::ChorusError::UnsupportedOption);
 }
 
-void test_llama_generation_rejects_nonfinite_scalars() {
+TEST(LlamaGeneration, Llama_generation_rejects_nonfinite_scalars) {
     Chorus::GenerationConfig config;
     config.temperature = std::numeric_limits<float>::quiet_NaN();
     ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(Chorus::resolve_llama_generation(config)));
@@ -327,7 +194,7 @@ void test_llama_generation_rejects_nonfinite_scalars() {
     );
 }
 
-void test_llama_generation_resolves_canonical_sampler_order() {
+TEST(LlamaGeneration, Llama_sampler_order_resolves_canonical_stages) {
     Chorus::ProviderOptionList order{
         "penalties",
         "dry",
@@ -357,7 +224,7 @@ void test_llama_generation_resolves_canonical_sampler_order() {
     });
 }
 
-void test_llama_generation_preserves_default_sampler_order_when_absent_or_empty() {
+TEST(LlamaGeneration, Llama_sampler_order_preserves_defaults_when_absent_or_empty) {
     const common_params_sampling defaults;
     check_resolution(
         [](auto&) {}, [&](const auto& value) { ASSERT_TRUE(value.sampling.samplers == defaults.samplers); }
@@ -367,7 +234,7 @@ void test_llama_generation_preserves_default_sampler_order_when_absent_or_empty(
     });
 }
 
-void test_llama_generation_rejects_invalid_sampler_order() {
+TEST(LlamaGeneration, Llama_sampler_order_rejects_invalid_configurations) {
     for (const std::string& name : {"top-k", "topk", "nucleus", "temp", "infill", "TOP_K", "warp"}) {
         auto rejection = rejection_for("sampler_order", Chorus::ProviderOptionList{name});
         ASSERT_TRUE(rejection.message.find(name) != std::string::npos);
@@ -394,7 +261,7 @@ void test_llama_generation_rejects_invalid_sampler_order() {
     ASSERT_TRUE(std::get<Chorus::RequestRejection>(mirostat).message.find("Mirostat") != std::string::npos);
 }
 
-void test_llama_generation_resolves_decimal_logit_bias() {
+TEST(LlamaGeneration, Llama_logit_bias_resolves_decimal_token_ids) {
     Chorus::ProviderOptionMap biases{{"0", 1.25}, {"17", -2.5}, {"2147483647", 0.0}};
     check_provider_resolution("logit_bias", biases, [](const auto& value) {
         ASSERT_EQ(value.sampling.logit_bias.size(), size_t{3});
@@ -410,7 +277,7 @@ void test_llama_generation_resolves_decimal_logit_bias() {
     });
 }
 
-void test_llama_generation_rejects_invalid_logit_bias() {
+TEST(LlamaGeneration, Llama_logit_bias_rejects_invalid_entries) {
     for (const std::string& key : {"-1", "2147483648", "1.0", "1x", "+1", " 1", "0x10", ""}) {
         auto rejection = rejection_for("logit_bias", Chorus::ProviderOptionMap{{key, 0.5}});
         ASSERT_TRUE(rejection.message.find(key) != std::string::npos);
@@ -424,49 +291,49 @@ void test_llama_generation_rejects_invalid_logit_bias() {
     ASSERT_TRUE(nonfinite.message.find("finite") != std::string::npos);
 }
 
-void test_llama_generation_rejects_logit_bias_outside_model_vocabulary() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
+TEST_F(LlamaGenerationModelTest, Llama_sampler_constructs_for_vocabulary_and_rejects_out_of_bounds_logit_bias) {
     LlamaModelFixture fixture;
     ASSERT_TRUE(fixture.load());
-    const auto* vocab = llama_model_get_vocab(fixture.model);
-    const auto outside = llama_vocab_n_tokens(vocab);
 
-    Chorus::GenerationConfig config;
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{
-        {"logit_bias", Chorus::ProviderOptionMap{{std::to_string(outside), 1.0}}},
-    };
-    auto resolved = Chorus::resolve_llama_generation(config);
-    ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(resolved));
-    auto sampler =
-        Chorus::make_llama_sampler(fixture.model, std::get<Chorus::ResolvedLlamaGeneration>(std::move(resolved)));
-    ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(sampler));
-    const auto& rejection = std::get<Chorus::RequestRejection>(sampler);
-    ASSERT_TRUE(rejection.error == Chorus::ChorusError::UnsupportedOption);
-    ASSERT_TRUE(rejection.message.find(std::to_string(outside)) != std::string::npos);
-    ASSERT_TRUE(rejection.message.find("vocabulary") != std::string::npos);
-}
-
-void test_llama_generation_constructs_common_sampler() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
-
-    LlamaModelFixture fixture;
-    ASSERT_TRUE(fixture.load());
-    Chorus::GenerationConfig config;
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{
+    Chorus::GenerationConfig valid_config;
+    valid_config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"ignore_eos", true},
         {"logit_bias", Chorus::ProviderOptionMap{{"0", 1.0}}},
         {"sampler_order", Chorus::ProviderOptionList{std::string("temperature")}},
     };
-    auto resolved = Chorus::resolve_llama_generation(config);
-    ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(resolved));
-    auto sampler =
-        Chorus::make_llama_sampler(fixture.model, std::get<Chorus::ResolvedLlamaGeneration>(std::move(resolved)));
-    ASSERT_TRUE(std::holds_alternative<common_sampler_ptr>(sampler));
-    ASSERT_TRUE(std::get<common_sampler_ptr>(sampler) != nullptr);
+    auto valid_resolution = Chorus::resolve_llama_generation(valid_config);
+    const auto* valid_generation = std::get_if<Chorus::ResolvedLlamaGeneration>(&valid_resolution);
+    ASSERT_TRUE(valid_generation != nullptr);
+    if (!valid_generation)
+        return;
+    auto valid_sampler = Chorus::make_llama_sampler(fixture.model, std::move(*valid_generation));
+    const auto* sampler = std::get_if<common_sampler_ptr>(&valid_sampler);
+    ASSERT_TRUE(sampler != nullptr);
+    if (sampler)
+        ASSERT_TRUE(*sampler != nullptr);
+
+    const auto* vocab = llama_model_get_vocab(fixture.model);
+    const auto outside = llama_vocab_n_tokens(vocab);
+    Chorus::GenerationConfig invalid_config;
+    invalid_config.provider_options["llama"] = Chorus::ProviderOptionMap{
+        {"logit_bias", Chorus::ProviderOptionMap{{std::to_string(outside), 1.0}}},
+    };
+    auto invalid_resolution = Chorus::resolve_llama_generation(invalid_config);
+    const auto* invalid_generation = std::get_if<Chorus::ResolvedLlamaGeneration>(&invalid_resolution);
+    ASSERT_TRUE(invalid_generation != nullptr);
+    if (!invalid_generation)
+        return;
+    auto invalid_sampler = Chorus::make_llama_sampler(fixture.model, std::move(*invalid_generation));
+    const auto* rejection = std::get_if<Chorus::RequestRejection>(&invalid_sampler);
+    ASSERT_TRUE(rejection != nullptr);
+    if (rejection) {
+        ASSERT_EQ(rejection->error, Chorus::ChorusError::UnsupportedOption);
+        ASSERT_TRUE(rejection->message.find(std::to_string(outside)) != std::string::npos);
+        ASSERT_TRUE(rejection->message.find("vocabulary") != std::string::npos);
+    }
 }
 
-void test_llama_generation_rejects_empty_constraint_sources() {
+TEST(LlamaGeneration, Llama_rejects_empty_constraint_sources) {
     const auto gbnf = constraint_rejection_for(Chorus::ConstraintFormat::Gbnf, "");
     ASSERT_TRUE(gbnf.error == Chorus::ChorusError::InvalidRequest);
     ASSERT_EQ(gbnf.message, std::string("GBNF constraint source must not be empty."));
@@ -476,14 +343,14 @@ void test_llama_generation_rejects_empty_constraint_sources() {
     ASSERT_EQ(schema.message, std::string("JSON Schema constraint source must not be empty."));
 }
 
-void test_llama_generation_rejects_malformed_json_schema_constraint() {
+TEST(LlamaGeneration, Llama_rejects_malformed_JSON_Schema_constraint) {
     const auto rejection = constraint_rejection_for(Chorus::ConstraintFormat::JsonSchema, R"({"type":})");
     ASSERT_TRUE(rejection.error == Chorus::ChorusError::InvalidRequest);
     ASSERT_TRUE(rejection.message.find("Invalid JSON Schema constraint: ") == 0);
     ASSERT_TRUE(rejection.message.find("parse error") != std::string::npos);
 }
 
-void test_llama_generation_resolves_gbnf_constraint() {
+TEST(LlamaGeneration, Llama_resolves_GBNF_constraint) {
     Chorus::GenerationConfig config;
     config.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, R"(root ::= "PINK_MOTH")"};
     auto result = Chorus::resolve_llama_generation(config);
@@ -493,7 +360,7 @@ void test_llama_generation_resolves_gbnf_constraint() {
     ASSERT_EQ(grammar.grammar, std::string(R"(root ::= "PINK_MOTH")"));
 }
 
-void test_llama_generation_converts_json_schema_constraint() {
+TEST(LlamaGeneration, Llama_converts_JSON_Schema_constraint) {
     Chorus::GenerationConfig config;
     config.constraint = Chorus::OutputConstraint{
         Chorus::ConstraintFormat::JsonSchema,
@@ -506,7 +373,7 @@ void test_llama_generation_converts_json_schema_constraint() {
     ASSERT_TRUE(!grammar.grammar.empty());
 }
 
-void test_llama_generation_rejects_unsupported_constraint_formats() {
+TEST(LlamaGeneration, Llama_rejects_unsupported_constraint_formats) {
     const auto regex = constraint_rejection_for(Chorus::ConstraintFormat::Regex, "PINK_MOTH");
     ASSERT_TRUE(regex.error == Chorus::ChorusError::UnsupportedFeature);
     ASSERT_EQ(regex.message, std::string("Regex output constraints are not supported by Llama."));
@@ -522,7 +389,7 @@ void test_llama_generation_rejects_unsupported_constraint_formats() {
 // proves it resolves a distinct upstream field, and two completeness assertions pin
 // the matrix to the catalog: (a) every advertised entry has a case, and (b) no case
 // names an option the catalog does not advertise.
-void test_llama_generation_conformance_matrix() {
+TEST(LlamaGeneration, Llama_generation_conformance_matrix_covers_the_catalog) {
     std::vector<ConformanceCase> cases;
 
     // Common options: each maps to a distinct resolved field.
@@ -764,9 +631,7 @@ void test_llama_generation_conformance_matrix() {
         conformance_case.configure(config);
         auto result = Chorus::resolve_llama_generation(config);
         if (!std::holds_alternative<Chorus::ResolvedLlamaGeneration>(result)) {
-            std::cerr << RED << "[FAILED] conformance case '" << conformance_case.name << "' did not resolve" << RESET
-                      << std::endl;
-            g_tests_failed++;
+            ADD_FAILURE() << "Conformance case '" << conformance_case.name << "' did not resolve.";
             return;
         }
         conformance_case.verify(std::get<Chorus::ResolvedLlamaGeneration>(result));
@@ -780,22 +645,15 @@ void test_llama_generation_conformance_matrix() {
         advertised.insert(name);
 
     // (a) Every advertised catalog entry has a conformance case.
-    for (const auto& name : advertised) {
-        if (covered.count(name) != 1)
-            std::cerr << RED << "[FAILED] advertised option lacks a conformance case: " << name << RESET << std::endl;
-        ASSERT_TRUE(covered.count(name) == 1);
-    }
+    for (const auto& name : advertised)
+        ASSERT_EQ(covered.count(name), 1) << "advertised option lacks a conformance case: " << name;
     // (b) No conformance case names an option the catalog does not advertise.
-    for (const auto& name : covered) {
-        if (advertised.count(name) != 1)
-            std::cerr << RED << "[FAILED] conformance case names an unadvertised option: " << name << RESET
-                      << std::endl;
-        ASSERT_TRUE(advertised.count(name) == 1);
-    }
+    for (const auto& name : covered)
+        ASSERT_EQ(advertised.count(name), 1) << "conformance case names an unadvertised option: " << name;
     ASSERT_EQ(covered.size(), advertised.size());
 }
 
-void test_llama_request_rejects_chat_controls_without_messages() {
+TEST(LlamaGeneration, Llama_request_rejects_chat_controls_without_messages) {
     Chorus::ChorusRequest with_template;
     with_template.prompt = "raw";
     with_template.chat_template = "{{ messages }}";
@@ -813,66 +671,10 @@ void test_llama_request_rejects_chat_controls_without_messages() {
     ASSERT_TRUE(rejection->message.find("show_thinking") != std::string::npos);
 }
 
-void test_llama_request_accepts_chat_controls_with_messages() {
+TEST(LlamaGeneration, Llama_request_accepts_chat_controls_with_messages) {
     Chorus::ChorusRequest request;
     request.messages = {{"user", "hello"}};
     request.chat_template = "{{ messages }}";
     request.gen_config.show_thinking = false;
     ASSERT_TRUE(!Chorus::validate_llama_request(request).has_value());
-}
-
-int run_llama_generation_tests() {
-    run_test(
-        "Llama request rejects chat controls without messages",
-        test_llama_request_rejects_chat_controls_without_messages
-    );
-    run_test(
-        "Llama request accepts chat controls with messages", test_llama_request_accepts_chat_controls_with_messages
-    );
-    run_test("Llama generation resolves common scalars", test_llama_generation_resolves_common_scalars);
-    run_test(
-        "Llama generation resolves common penalties and stop", test_llama_generation_resolves_common_penalties_and_stop
-    );
-    run_test(
-        "Llama generation resolves provider integers and bool",
-        test_llama_generation_resolves_provider_integers_and_bool
-    );
-    run_test("Llama generation resolves provider floats", test_llama_generation_resolves_provider_floats);
-    run_test("Llama generation resolves string list", test_llama_generation_resolves_string_list);
-    run_test("Llama generation preserves upstream defaults", test_llama_generation_preserves_upstream_defaults);
-    run_test(
-        "Llama generation catalogs match resolver vocabulary", test_llama_generation_catalogs_match_resolver_vocabulary
-    );
-    run_test("Llama generation conformance matrix covers the catalog", test_llama_generation_conformance_matrix);
-    run_test(
-        "Llama generation rejects wrong type and unknown key", test_llama_generation_rejects_wrong_type_and_unknown_key
-    );
-    run_test("Llama generation rejects namespace errors", test_llama_generation_rejects_namespace_errors);
-    run_test(
-        "Llama generation rejects integer and probability ranges",
-        test_llama_generation_rejects_integer_and_probability_ranges
-    );
-    run_test("Llama generation rejects nonfinite scalars", test_llama_generation_rejects_nonfinite_scalars);
-    run_test("Llama sampler order resolves canonical stages", test_llama_generation_resolves_canonical_sampler_order);
-    run_test(
-        "Llama sampler order preserves defaults when absent or empty",
-        test_llama_generation_preserves_default_sampler_order_when_absent_or_empty
-    );
-    run_test("Llama sampler order rejects invalid configurations", test_llama_generation_rejects_invalid_sampler_order);
-    run_test("Llama logit bias resolves decimal token ids", test_llama_generation_resolves_decimal_logit_bias);
-    run_test("Llama logit bias rejects invalid entries", test_llama_generation_rejects_invalid_logit_bias);
-    run_test(
-        "Llama logit bias model bounds are enforced", test_llama_generation_rejects_logit_bias_outside_model_vocabulary
-    );
-    run_test("Llama common sampler is constructed", test_llama_generation_constructs_common_sampler);
-    run_test("Llama rejects empty constraint sources", test_llama_generation_rejects_empty_constraint_sources);
-    run_test(
-        "Llama rejects malformed JSON Schema constraint", test_llama_generation_rejects_malformed_json_schema_constraint
-    );
-    run_test("Llama resolves GBNF constraint", test_llama_generation_resolves_gbnf_constraint);
-    run_test("Llama converts JSON Schema constraint", test_llama_generation_converts_json_schema_constraint);
-    run_test(
-        "Llama rejects unsupported constraint formats", test_llama_generation_rejects_unsupported_constraint_formats
-    );
-    return g_tests_failed;
 }

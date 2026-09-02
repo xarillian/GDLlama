@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gtest_utils.hpp"
+
 #include "chorus/core/common.hpp"
 #include "chorus/core/inference_engine.hpp"
 
@@ -16,7 +18,7 @@
  * while or finish promptly.
  */
 struct EngineUnderTest {
-    std::string label;        // prefixes every case name in the runner output
+    std::string label;
     bool model_gated = false; // subjects needing a model skip under CHORUS_SKIP_MODEL_TESTS=1
 
     std::function<std::unique_ptr<Chorus::InferenceEngine>()> make_engine;
@@ -29,12 +31,10 @@ struct EngineUnderTest {
     std::function<void(Chorus::ChorusRequest&)> shape_short_request;
 };
 
-/*
- * The obligations InferenceEngine states in prose, executed.
- *
- * Every provider runs this battery, so an obligation stays a shared property
- * instead of a paragraph each implementation reads for itself. A failure here
- * is a contract violation in the provider, or a contract that moved without
- * its header.
- */
-void run_engine_contract_suite(const EngineUnderTest& subject);
+class EngineContractTest : public ChorusModelTest, public ::testing::WithParamInterface<EngineUnderTest> {
+  protected:
+    void SetUp() override {
+        if (GetParam().model_gated)
+            skip_if_model_tests_disabled();
+    }
+};

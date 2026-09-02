@@ -1,6 +1,8 @@
 #include "chorus/core/common.hpp"
 #include "chorus/providers/llama/llama_engine.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
+
+class LlamaReasoningModelTest : public ChorusModelTest {};
 
 #include <atomic>
 #include <chrono>
@@ -21,8 +23,7 @@ static Chorus::ChorusConfig make_reasoning_config() {
     return config;
 }
 
-void test_reasoning_model_splits_channels() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaReasoningModelTest, LlamaReasoning_channels_split) {
     // Loud failure when the prerequisite model is absent (never a silent skip).
     if (FILE* f = std::fopen(kReasoningModelPath, "rb")) {
         std::fclose(f);
@@ -70,8 +71,7 @@ void test_reasoning_model_splits_channels() {
     ASSERT_TRUE(content.find("</think>") == std::string::npos);
 }
 
-void test_show_thinking_disabled_yields_no_reasoning() {
-    SKIP_IF_MODEL_TESTS_DISABLED();
+TEST_F(LlamaReasoningModelTest, LlamaReasoning_show_thinking_off_no_reasoning) {
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(make_reasoning_config(), {}).has_value());
 
@@ -109,11 +109,4 @@ void test_show_thinking_disabled_yields_no_reasoning() {
     // content even though reasoning-aware templates retain their parser.
     ASSERT_TRUE(content.find("<think>") == std::string::npos);
     ASSERT_TRUE(content.find("</think>") == std::string::npos);
-}
-
-int run_llama_reasoning_tests() {
-    std::cout << "\n--- Llama Reasoning (Qwen3, model-gated) Tests ---" << std::endl;
-    run_test("LlamaReasoning_channels_split", test_reasoning_model_splits_channels);
-    run_test("LlamaReasoning_show_thinking_off_no_reasoning", test_show_thinking_disabled_yields_no_reasoning);
-    return g_tests_failed > 0 ? 1 : 0;
 }

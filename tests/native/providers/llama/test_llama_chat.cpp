@@ -1,5 +1,5 @@
 #include "chorus/providers/llama/llama_chat.hpp"
-#include "test_utils.hpp"
+#include "gtest_utils.hpp"
 
 #include <chat.h> // match the include style llama_chat.hpp settles on
 
@@ -53,7 +53,7 @@ static common_chat_parser_params think_parser_params() {
     return parser_params;
 }
 
-void test_render_produces_role_scaffolding() {
+TEST(LlamaChat, LlamaChat_render_produces_role_scaffolding) {
     auto tmpls = make_templates();
     std::vector<Chorus::ChatMessage> messages{{"system", "You are Brunn."}, {"user", "Hello there!"}};
     auto result = Chorus::render_llama_chat(nullptr, tmpls.get(), "", messages, /*enable_thinking=*/true);
@@ -66,7 +66,7 @@ void test_render_produces_role_scaffolding() {
     ASSERT_TRUE(render.prompt.rfind("<|im_start|>assistant") != std::string::npos);
 }
 
-void test_explicit_override_works_without_model_defaults() {
+TEST(LlamaChat, LlamaChat_explicit_override_without_defaults) {
     auto result = Chorus::render_llama_chat(
         nullptr, nullptr, kThinkTemplate, {{"user", "Hello there!"}}, /*enable_thinking=*/true
     );
@@ -75,7 +75,7 @@ void test_explicit_override_works_without_model_defaults() {
     ASSERT_TRUE(render.prompt.find("<|im_start|>user") != std::string::npos);
 }
 
-void test_missing_template_is_rejected() {
+TEST(LlamaChat, LlamaChat_missing_template_rejected) {
     auto result = Chorus::render_llama_chat(nullptr, nullptr, "", {{"user", "Hello there!"}}, /*enable_thinking=*/true);
     ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(result));
     const auto& rejection = std::get<Chorus::RequestRejection>(result);
@@ -83,7 +83,7 @@ void test_missing_template_is_rejected() {
     ASSERT_TRUE(rejection.message.find("No chat template") != std::string::npos);
 }
 
-void test_invalid_override_is_rejected() {
+TEST(LlamaChat, LlamaChat_invalid_override_rejected) {
     auto result =
         Chorus::render_llama_chat(nullptr, nullptr, "{% if", {{"user", "Hello there!"}}, /*enable_thinking=*/true);
     ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(result));
@@ -91,7 +91,7 @@ void test_invalid_override_is_rejected() {
     ASSERT_TRUE(rejection.error == Chorus::ChorusError::InvalidRequest);
 }
 
-void test_parse_stream_splits_think_from_content_incrementally() {
+TEST(LlamaChat, LlamaChat_parse_stream_splits_reasoning) {
     Chorus::LlamaChatParseStream stream(think_parser_params());
 
     std::string reasoning, content;
@@ -111,7 +111,7 @@ void test_parse_stream_splits_think_from_content_incrementally() {
     ASSERT_TRUE(content.find("</think>") == std::string::npos);
 }
 
-void test_parse_stream_passthrough_without_think_markers() {
+TEST(LlamaChat, LlamaChat_parse_stream_plain_passthrough) {
     Chorus::LlamaChatParseStream stream(think_parser_params());
 
     std::string content;
@@ -121,7 +121,7 @@ void test_parse_stream_passthrough_without_think_markers() {
     ASSERT_EQ(content, std::string("plain text reply"));
 }
 
-void test_parse_stream_never_duplicates_after_empty_partial() {
+TEST(LlamaChat, LlamaChat_parse_stream_no_dup_after_empty_partial) {
     // A lone "<" can partial-parse to an EMPTY message; upstream only replaces
     // its previous state when the new parse is non-empty (server-task.cpp:158).
     // Regression guard: total surfaced content must never repeat earlier text.
@@ -136,7 +136,7 @@ void test_parse_stream_never_duplicates_after_empty_partial() {
     ASSERT_TRUE(content.find("hello ") == 0);
 }
 
-void test_parse_stream_throttles_pre_content_parses() {
+TEST(LlamaChat, LlamaChat_parse_stream_throttles_pre_content) {
     // While the think block is open, partial parses amortize (about 1/16th
     // of parsed size must accumulate between parses) so the full-buffer
     // reparse cost stays linear per request. Skipped pushes return empty
@@ -166,7 +166,7 @@ void test_parse_stream_throttles_pre_content_parses() {
     ASSERT_EQ(content, std::string("done"));
 }
 
-void test_parse_stream_keeps_streaming_after_content_starts() {
+TEST(LlamaChat, LlamaChat_parse_stream_keeps_streaming_after_content_starts) {
     // Once the think block closes, subsequent content must surface exactly
     // once. Pieces mirror the splits test: this template's partial parse only
     // moves to content when the close tag straddles pieces, which is also the
@@ -186,7 +186,7 @@ void test_parse_stream_keeps_streaming_after_content_starts() {
     ASSERT_EQ(content, std::string("the answer is 4 tail"));
 }
 
-void test_deepseek_thinking_off_still_separates_reasoning() {
+TEST(LlamaChat, LlamaChat_deepseek_thinking_off_separates_reasoning) {
     std::ifstream file("third-party/llama.cpp/models/templates/deepseek-ai-DeepSeek-R1-Distill-Llama-8B.jinja");
     ASSERT_TRUE(file.good());
     const std::string source{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
@@ -212,26 +212,4 @@ void test_deepseek_thinking_off_still_separates_reasoning() {
 
     ASSERT_TRUE(reasoning.find("reasoning here") != std::string::npos);
     ASSERT_EQ(content, std::string("answer"));
-}
-
-int run_llama_chat_tests() {
-    std::cout << "\n--- Llama Chat (template + parse, no model) Tests ---" << std::endl;
-    run_test("LlamaChat_render_produces_role_scaffolding", test_render_produces_role_scaffolding);
-    run_test("LlamaChat_explicit_override_without_defaults", test_explicit_override_works_without_model_defaults);
-    run_test("LlamaChat_missing_template_rejected", test_missing_template_is_rejected);
-    run_test("LlamaChat_invalid_override_rejected", test_invalid_override_is_rejected);
-    run_test("LlamaChat_parse_stream_splits_reasoning", test_parse_stream_splits_think_from_content_incrementally);
-    run_test("LlamaChat_parse_stream_plain_passthrough", test_parse_stream_passthrough_without_think_markers);
-    run_test(
-        "LlamaChat_parse_stream_no_dup_after_empty_partial", test_parse_stream_never_duplicates_after_empty_partial
-    );
-    run_test("LlamaChat_parse_stream_throttles_pre_content", test_parse_stream_throttles_pre_content_parses);
-    run_test(
-        "LlamaChat_parse_stream_keeps_streaming_after_content_starts",
-        test_parse_stream_keeps_streaming_after_content_starts
-    );
-    run_test(
-        "LlamaChat_deepseek_thinking_off_separates_reasoning", test_deepseek_thinking_off_still_separates_reasoning
-    );
-    return g_tests_failed > 0 ? 1 : 0;
 }
