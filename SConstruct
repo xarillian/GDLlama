@@ -4,8 +4,21 @@ import sys
 import subprocess
 from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, Glob, SConscript, Value
 
-if not all(os.path.exists(f"third-party/{m}/CMakeLists.txt") for m in ("godot-cpp", "llama.cpp", "googletest")):
-    raise SystemExit(">>> [SCons] third-party submodules missing. Run: git submodule update --init --recursive")
+needs_googletest = any(target in COMMAND_LINE_TARGETS for target in ("test", "compiledb"))
+required_submodules = ["godot-cpp", "llama.cpp"]
+if needs_googletest:
+    required_submodules.append("googletest")
+
+missing_submodules = [
+    module
+    for module in required_submodules
+    if not os.path.exists(f"third-party/{module}/CMakeLists.txt")
+]
+if missing_submodules:
+    raise SystemExit(
+        f">>> [SCons] third-party submodules missing: {', '.join(missing_submodules)}. "
+        "Run: git submodule update --init --recursive"
+    )
 
 # Build variant
 use_vulkan = ARGUMENTS.pop("use_vulkan", "no") == "yes"
@@ -124,7 +137,8 @@ VariantDir("bin/obj/chorus",       "src/chorus",       duplicate=0)
 VariantDir("bin/obj/godot_chorus", "src/godot_chorus", duplicate=0)
 VariantDir("bin/obj/chorus_c",     "src/chorus_c",     duplicate=0)
 VariantDir("bin/obj/tests",        "tests",            duplicate=0)
-VariantDir("bin/obj/googletest",   "third-party/googletest/googletest", duplicate=0)
+if needs_googletest:
+    VariantDir("bin/obj/googletest", "third-party/googletest/googletest", duplicate=0)
 
 sources_core    = Glob("bin/obj/chorus/core/*.cpp")
 sources_factory = Glob("bin/obj/chorus/*.cpp")
