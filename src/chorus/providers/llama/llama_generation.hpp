@@ -59,8 +59,8 @@ std::optional<RequestRejection> validate_llama_generation(const GenerationConfig
  * Resolves common and Llama-specific generation options into provider-ready state.
  *
  * Unset values retain llama.cpp defaults. Constraint conversion happens here, while
- * checks requiring a loaded model are deferred to `Chorus::make_llama_sampler`.
- * Rejections are returned directly.
+ * checks requiring a loaded model are deferred to `Chorus::make_llama_sampler`. Rejections
+ * are returned directly.
  *
  * Returns:
  *  - `Chorus::ResolvedLlamaGeneration`: The resolved generation state.
