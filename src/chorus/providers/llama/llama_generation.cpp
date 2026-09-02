@@ -7,7 +7,6 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -109,89 +108,96 @@ make_llama_sampler(const llama_model* model, ResolvedLlamaGeneration resolved) {
             if (llama_vocab_is_eog(vocab, token))
                 biases.push_back({token, -INFINITY});
         }
-    }
+        std::variant<ResolvedLlamaGeneration, RequestRejection> resolve_llama_generation(
+            const GenerationConfig& config
+        ) {}
 
-    try {
-        return common_sampler_ptr(common_sampler_init(model, resolved.sampling));
-    } catch (const std::runtime_error& error) {
-        std::string constraint_name = "sampler configuration";
-        if (resolved.sampling.grammar.type == COMMON_GRAMMAR_TYPE_USER)
-            constraint_name = "GBNF constraint";
-        else if (resolved.sampling.grammar.type == COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT)
-            constraint_name = "JSON Schema constraint";
-        return RequestRejection{
-            ChorusError::InvalidRequest, "Invalid " + constraint_name + ": " + std::string(error.what())
-        };
-    }
-}
-
-namespace {
-
-RequestRejection common_option_rejection(
-    const std::string& key, const std::string& expected, const std::string& received, const std::string& range
-) {
-    return {
-        ChorusError::UnsupportedOption,
-        "Option namespace 'common', key '" + key + "' expected " + expected + ", received " + received +
-            ", allowed range " + range + ".",
-    };
-}
-
-std::optional<RequestRejection> validate_common(const GenerationConfig& config) {
-    if (config.max_tokens && *config.max_tokens < -1)
-        return common_option_rejection("max_tokens", "int32", "int32", "[-1, 2147483647]");
-    if (config.temperature && (!std::isfinite(*config.temperature) || *config.temperature < 0.0f))
-        return common_option_rejection("temperature", "float", "float", "[0.0, finite float maximum]");
-    if (config.top_k && *config.top_k < 0)
-        return common_option_rejection("top_k", "int32", "int32", "[0, 2147483647]");
-    if (config.top_p && (!std::isfinite(*config.top_p) || *config.top_p < 0.0f || *config.top_p > 1.0f))
-        return common_option_rejection("top_p", "float", "float", "[0.0, 1.0]");
-    if (config.seed && *config.seed > std::numeric_limits<uint32_t>::max())
-        return common_option_rejection("seed", "uint64", "uint64", "[0, 4294967295]");
-    if (config.frequency_penalty && !std::isfinite(*config.frequency_penalty))
-        return common_option_rejection("frequency_penalty", "float", "float", "finite float range");
-    if (config.presence_penalty && !std::isfinite(*config.presence_penalty))
-        return common_option_rejection("presence_penalty", "float", "float", "finite float range");
-    if (auto rejection = validate_stop_sequences(config.stop))
-        return rejection;
-    return std::nullopt;
-}
-
-std::optional<RequestRejection>
-resolve_constraint(common_params_sampling& sampling, const std::optional<OutputConstraint>& constraint) {
-    if (!constraint)
-        return std::nullopt;
-
-    switch (constraint->format) {
-    case ConstraintFormat::Gbnf:
-        if (constraint->source.empty()) {
-            return RequestRejection{ChorusError::InvalidRequest, "GBNF constraint source must not be empty."};
-        }
-        sampling.grammar = common_grammar{COMMON_GRAMMAR_TYPE_USER, constraint->source};
-        return std::nullopt;
-    case ConstraintFormat::JsonSchema:
-        if (constraint->source.empty()) {
-            return RequestRejection{ChorusError::InvalidRequest, "JSON Schema constraint source must not be empty."};
-        }
         try {
-            const auto schema = nlohmann::ordered_json::parse(constraint->source);
-            sampling.grammar = common_grammar{COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT, json_schema_to_grammar(schema, true)};
-        } catch (const std::exception& error) {
+            return common_sampler_ptr(common_sampler_init(model, resolved.sampling));
+        } catch (const std::runtime_error& error) {
+            std::string constraint_name = "sampler configuration";
+            if (resolved.sampling.grammar.type == COMMON_GRAMMAR_TYPE_USER)
+                constraint_name = "GBNF constraint";
+            else if (resolved.sampling.grammar.type == COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT)
+                constraint_name = "JSON Schema constraint";
             return RequestRejection{
-                ChorusError::InvalidRequest, "Invalid JSON Schema constraint: " + std::string(error.what())
+                ChorusError::InvalidRequest, "Invalid " + constraint_name + ": " + std::string(error.what())
             };
         }
-        return std::nullopt;
-    case ConstraintFormat::Regex:
-        return RequestRejection{
-            ChorusError::UnsupportedFeature, "Regex output constraints are not supported by Llama."
-        };
-    case ConstraintFormat::Lark:
-        return RequestRejection{ChorusError::UnsupportedFeature, "Lark output constraints are not supported by Llama."};
     }
-    return RequestRejection{ChorusError::UnsupportedFeature, "Unknown output constraint format."};
-}
 
-} // namespace
+    namespace {
+
+    RequestRejection common_option_rejection(
+        const std::string& key, const std::string& expected, const std::string& received, const std::string& range
+    ) {
+        return {
+            ChorusError::UnsupportedOption,
+            "Option namespace 'common', key '" + key + "' expected " + expected + ", received " + received +
+                ", allowed range " + range + ".",
+        };
+    }
+
+    std::optional<RequestRejection> validate_common(const GenerationConfig& config) {
+        if (config.max_tokens && *config.max_tokens < -1)
+            return common_option_rejection("max_tokens", "int32", "int32", "[-1, 2147483647]");
+        if (config.temperature && (!std::isfinite(*config.temperature) || *config.temperature < 0.0f))
+            return common_option_rejection("temperature", "float", "float", "[0.0, finite float maximum]");
+        if (config.top_k && *config.top_k < 0)
+            return common_option_rejection("top_k", "int32", "int32", "[0, 2147483647]");
+        if (config.top_p && (!std::isfinite(*config.top_p) || *config.top_p < 0.0f || *config.top_p > 1.0f))
+            return common_option_rejection("top_p", "float", "float", "[0.0, 1.0]");
+        if (config.seed && *config.seed > std::numeric_limits<uint32_t>::max())
+            return common_option_rejection("seed", "uint64", "uint64", "[0, 4294967295]");
+        if (config.frequency_penalty && !std::isfinite(*config.frequency_penalty))
+            return common_option_rejection("frequency_penalty", "float", "float", "finite float range");
+        if (config.presence_penalty && !std::isfinite(*config.presence_penalty))
+            return common_option_rejection("presence_penalty", "float", "float", "finite float range");
+        if (auto rejection = validate_stop_sequences(config.stop))
+            return rejection;
+        return std::nullopt;
+    }
+
+    std::optional<RequestRejection>
+    resolve_constraint(common_params_sampling& sampling, const std::optional<OutputConstraint>& constraint) {
+        if (!constraint)
+            return std::nullopt;
+
+        switch (constraint->format) {
+        case ConstraintFormat::Gbnf:
+            if (constraint->source.empty()) {
+                return RequestRejection{ChorusError::InvalidRequest, "GBNF constraint source must not be empty."};
+            }
+            sampling.grammar = common_grammar{COMMON_GRAMMAR_TYPE_USER, constraint->source};
+            return std::nullopt;
+        case ConstraintFormat::JsonSchema:
+            if (constraint->source.empty()) {
+                return RequestRejection{
+                    ChorusError::InvalidRequest, "JSON Schema constraint source must not be empty."
+                };
+            }
+            try {
+                const auto schema = common_json::parse(constraint->source);
+                sampling.grammar =
+                    common_grammar{COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT, json_schema_to_grammar(schema, true)};
+            } catch (const std::exception& error) {
+                return RequestRejection{
+                    ChorusError::InvalidRequest, "Invalid JSON Schema constraint: " + std::string(error.what())
+                };
+            }
+            return std::nullopt;
+        case ConstraintFormat::Regex:
+            return RequestRejection{
+                ChorusError::UnsupportedFeature, "Regex output constraints are not supported by Llama."
+            };
+        case ConstraintFormat::Lark:
+            return RequestRejection{
+                ChorusError::UnsupportedFeature, "Lark output constraints are not supported by Llama."
+            };
+        }
+        return RequestRejection{ChorusError::UnsupportedFeature, "Unknown output constraint format."};
+    }
+
+    } // namespace
 
 } // namespace Chorus
