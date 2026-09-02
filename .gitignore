@@ -6,6 +6,7 @@
 /.omp/
 /.docs/
 /_project/
+/tmp/
 /CLAUDE.md
 /compile_commands.json
 /TODO.md

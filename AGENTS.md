@@ -1,50 +1,31 @@
-# CLAUDE.md
+# AGENTS
 
-## What This Is
-A Godot 4.4+ GDExtension that wraps `llama.cpp` to provide local LLM inference in games. Built with SCons, targeting Windows/Linux/macOS. The project's thesis is "Real-time inference at scale on one local GPU". We should be able to run 40+ NPC conversations at one time on consumer hardware.
+**Chorus** is a local LLM inference runtime for games initially delivered as a Godot 4.4+ GDExtension backed by `llama.cpp`. This document contains instructions an Agent or AI must follow.
 
-Ongoing work currently lives in `_project`
+## Structure
+
+Start at `include/chorus/runtime/runtime.hpp` for the public C++ API and
+`docs/ARCHITECTURE.md` for the dependency rules. The repository follows those
+layers:
+
+- `include/chorus/core/`, `src/chorus/core/`: provider-independent domain contracts and their implementations.
+- `include/chorus/runtime/`, `src/chorus/runtime/`: host-independent orchestration built only on core contracts.
+- `src/chorus/providers/`: concrete inference providers. `echo/` is the dependency-free reference provider; `llama/` owns the `llama.cpp` integration.
+- `include/chorus/engine_factory.hpp`, `src/chorus/engine_factory.cpp`: the sole catalog and construction boundary for concrete providers.
+- `src/godot_chorus/`, `plugin/`: the Godot host adapter and distributable addon; `include/chorus_c/`, `src/chorus_c/` provide the C host adapter.
+- `src/wlib/`: standard-library-only generic utilities.
+- `tests/native/`, `tests/godot/`: native layer tests and Godot integration tests. Real-model fixtures live in `tests/models/`.
+- `SConstruct`, `justfile`, `tools/`: build graph, common commands, and build helpers. Generated outputs belong in `bin/`; vendored dependencies in `third-party/` are not project source.
 
 ## Architecture
+
 @docs/ARCHITECTURE.md
 
-## Tests
-Custom lightweight test framework in `tests/native/support/test_utils.hpp` (macros: `ASSERT_TRUE`, `ASSERT_EQ`, color output), plus the shared fake `tests/native/support/sync_mock_engine.hpp` (`SyncMockEngine`: deterministic, inline-emitting, contract-conforming).
+## Comments
 
-The native tree mirrors the layers:
+Comments should be rare (mythic rare, even). Ensure comments are powerful and describe _why_ rather than _what_. Do not re-produce content from chat context. Do not restate what code is doing. Do not state what can be inferred from domain. Comments must provide new knowledge.
 
-- `tests/native/core/` — contract/value-type unit tests (no engine, no model)
-- `tests/native/runtime/` — request-lifecycle, sessions, chat history, prompt fitting
-- `tests/native/factory/` — provider factory tests
-- `tests/native/wlib/` — utility tests (UTF-8 handling)
-- `tests/native/providers/echo/` — reference provider unit tests
-- `tests/native/providers/llama/` — suites hitting real llama.cpp (require the model)
-- `tests/native/test_runner.cpp` — `main()` entry point
-
-GDScript integration tests live in `tests/godot` (staged by `just godot`).
-
-## Workflow Docs
-Specs, plans, progress ledgers, and any other agent-workflow files go into a gitignored location. One of: `.docs/` or or `_project` or `.superpowers/`. NEVER in tracked `docs/` and NEVER committed. This overrides any skill or tool default (e.g. `docs/superpowers/...`). 
-
-Do NOT include "Authored by..." in commit messages.
-
-### Feature Set
-
-@_project/FEATURE.md
-
-### Decisions
-
-Provide decision updates to the ADR-like doc a DECISIONS.md, stored at `_project/DECISIONS.md`. This is currently only stored locally and is NOT pushed.
-
-The default is no entry. One is earned only when the decision binds work that
-has not happened yet: a contract another layer must program against, a direction
-that closes off alternatives, an argument that would otherwise be had again. If
-the code and `git log` already carry it, they are the record. Deleting dead
-code, renaming, fixing a bug, and reversing an entry whose subject no longer
-exists are not decisions. The entries already in the file are the calibration.
-When in doubt, propose the entry to me in chat instead of writing it.
-
-### Comments
+banlist("—", "–", "--"). The ban on "--" is listed if required, such as an argument for a command.
 
 Docstrings should follow the format:
 
@@ -56,11 +37,13 @@ Docstrings should follow the format:
  */
 ```
 
+or
+
 ```
 /// brief
 ```
 
-is also completely acceptable. Not all logs need to be verbose; use judgment.
+Concise logs are preferred.
 
 Inline comments get `//`, double slash, regular-comment.
 
@@ -79,29 +62,37 @@ Google-style Python sections come last, after the descriptive body, e.g.:
  */
 ```
 
-- One line per bullet. Type, value, or symbol first, colon, then the condition.
-  Anything needing a sentence belongs in the body.
-- Backtick and fully qualify every symbol: `ChorusError::Cancelled`,
-  `ChorusRequest::on_event`, `EventType::Stop`. Never the bare leaf name.
-- `Returns:` names what comes back, one bullet per case.
-- `Errors:` names the error vocabulary. `Raises:` is for code that throws.
-- Body prose says how failure travels: returned, or signalled on
-  `ChorusRequest::on_event` from an engine thread.
-- Sections are earned. Write one when the return has cases or the failure has a
-  vocabulary. Never write a section to say "none".
+Ensure every symbol is backticked and fully qualified, e.g. `ChorusError::Cancelled`, `ChorusRequest::on_event`, `EventType::Stop`. Ensure `Returns:` names what comes back, one bullet per case. `Errors:` should name error vocabulary, and `Raises:` is for code that throws.
 
-## Key Build Notes
+## Decisions
 
-- C++20 required
-- Commands (via `just`):
-  - `just build [--cpu]` — shared library; Vulkan by default, `--cpu` for a plain CPU build
-  - `just release [--cpu]` — same, `target=template_release`
-  - `just check [--quick] [filter]` — build the test binary, then run the suite; the full run is the gate and requires the model at `tests/models/gemma-3-270m-it-F16.gguf`
-  - `just test [--quick] [filter]` — run the suite without rebuilding
-  - `--quick` on either skips model suites (`CHORUS_SKIP_MODEL_TESTS=1`); `filter` is a test-name substring, e.g. `just check --quick Echo`
-  - `just godot` — build, then stage the plugin into `plugin/addons/chorus` and symlink it into `tests/godot`
-  - `just compiledb` — regenerate `compile_commands.json` for clangd
-- Links against llama.cpp static libs: `llama-common`, `llama-common-base`, `llama`, `ggml`, `ggml-cpu`, `ggml-base`
-- macOS needs Metal/MetalKit/Foundation/Accelerate frameworks
-- Linux links OpenMP
-- Output: `bin/libgodot_chorus` (shared lib) + `bin/run_tests` (test binary)
+Ensure architectural decisions are logged to `docs/ADRs`. This document is tracked and it is _vitally_ important that only high-level decisions are tracked. ADRs can be human or agent written, but they explicitly follow Amazon's ADR style.
+
+The default is no entry. An entry is only earned when a decision binds work that has not happened yet. There are three questions that must be answered "yes" before an ADR is written:
+
+1. Does it constrain future work across a boundary?                
+2. Would a reasonable maintainer revisit the decision without its original rationale?                                             
+3. Does the decision retain value after the implementation and roadmap entry are gone?    
+
+If the code or a `git log` already store a decision, let the code and `git log` be authoritative. This rule is absolute, the code and `git log` are absolute.
+
+## Git Pratice
+
+Do not include "Authored by <model> ..." in commit messages.
+
+## Testing
+
+This project uses `GoogleTest`.
+
+Tests should not be tautologies. Ensure tests are written where the effect immediately follows the causes; tests should mimic how we speak in natural language.
+
+## Workflow Docs
+
+Specs, plans, process ledgers, and any other agent-workflow files go into a `.gitignored` location. One of:
+
+- `.docs/`
+- `_project/`
+- `.superpowers/`
+- `tmp/`
+
+These documents NEVER enter the tracked `docs/` and are never committed. This rule overrides any skill or tool default: always ensure workflow items are in one of `.docs/`, `_project/`, `.superpowers/`, or `tmp/`.
