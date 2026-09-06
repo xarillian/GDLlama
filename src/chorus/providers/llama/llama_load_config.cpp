@@ -147,6 +147,23 @@ std::optional<RequestRejection> apply_n_ubatch(LlamaLoadConfig& config, const Pr
     );
 }
 
+std::optional<RequestRejection> apply_pooling(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    const auto& value = std::get<std::string>(option);
+    if (value == "model")
+        config.pooling = LLAMA_POOLING_TYPE_UNSPECIFIED;
+    else if (value == "none")
+        config.pooling = LLAMA_POOLING_TYPE_NONE;
+    else if (value == "mean")
+        config.pooling = LLAMA_POOLING_TYPE_MEAN;
+    else if (value == "cls")
+        config.pooling = LLAMA_POOLING_TYPE_CLS;
+    else if (value == "last")
+        config.pooling = LLAMA_POOLING_TYPE_LAST;
+    else
+        return unsupported("Llama load option 'pooling' must be model, none, mean, cls, or last.");
+    return std::nullopt;
+}
+
 std::optional<RequestRejection> apply_main_gpu(LlamaLoadConfig& config, const ProviderOptionValue& option) {
     auto rejection = assign_bounded_integer(
         config.main_gpu,
@@ -178,6 +195,7 @@ constexpr std::array load_option_bindings{
     LoadOptionBinding{"n_batch", apply_n_batch},
     LoadOptionBinding{"n_ubatch", apply_n_ubatch},
     LoadOptionBinding{"main_gpu", apply_main_gpu},
+    LoadOptionBinding{"pooling", apply_pooling},
 };
 
 std::optional<RequestRejection> apply_load_option(
@@ -267,6 +285,15 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
              1,
              std::nullopt},
             {"main_gpu", "Main GPU", "Zero-based index of the primary GPU.", int64_t{d.main_gpu}, 0, 15, 1, "use_gpu"},
+            {"pooling",
+             "Pooling",
+             "Embedding pooling strategy. Model uses the GGUF metadata.",
+             std::string{"model"},
+             std::nullopt,
+             std::nullopt,
+             std::nullopt,
+             std::nullopt,
+             {"model", "none", "mean", "cls", "last"}},
         };
     }();
     return descriptors;
@@ -325,6 +352,7 @@ llama_context_params make_llama_context_params(const LlamaLoadConfig& config) {
     params.n_threads_batch = config.thread_count;
     params.n_batch = config.n_batch;
     params.n_ubatch = config.n_ubatch;
+    params.pooling_type = config.pooling;
     params.offload_kqv = config.use_gpu;
     params.op_offload = config.use_gpu;
     return params;

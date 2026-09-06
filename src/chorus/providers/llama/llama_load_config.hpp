@@ -25,6 +25,7 @@ struct LlamaLoadConfig {
     uint32_t n_ubatch = 512;        // Maximum physical sub-batch size. Must not exceed n_batch.
     int32_t main_gpu = 0;           // Requested zero-based primary GPU index.
     bool main_gpu_explicit = false; // Whether main_gpu is a requested value rather than a default.
+    enum llama_pooling_type pooling = LLAMA_POOLING_TYPE_UNSPECIFIED;
 };
 
 /*

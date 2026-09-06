@@ -40,15 +40,10 @@ struct GenerationConfig {
     // Cap on generated tokens, reasoning included. -1 removes the cap;
     // 0 completes immediately with empty output.
     std::optional<int32_t> max_tokens;
-    // Sampling randomness. 0 disables sampling, making the provider greedy.
     std::optional<float> temperature;
-    // Sample only from the k most probable tokens. 0 disables the filter.
     std::optional<int32_t> top_k;
-    // Nucleus sampling: sample from the smallest token set whose cumulative
-    // probability reaches this value, in [0.0, 1.0]. 1.0 disables the filter.
     std::optional<float> top_p;
-    // Sampler RNG seed.
-    // A provider with a narrower seed range rejects values it cannot honor rather than truncating them.
+    // Providers reject seeds outside their supported range rather than truncating them.
     std::optional<uint64_t> seed;
     // Token-score adjustment proportional to prior occurrence count. Positive values discourage
     // repetition; negative values encourage it. 0 disables the adjustment.
@@ -61,17 +56,12 @@ struct GenerationConfig {
     // reasoning output never meets them, so a think block is bounded by
     // `Chorus::GenerationConfig::max_tokens` alone.
     std::vector<std::string> stop;
-    // Optional constraint applied while sampling generated tokens.
     std::optional<OutputConstraint> constraint;
-    // Whether chat rendering shows model thinking when the template supports it.
     std::optional<bool> show_thinking;
     // Provider-specific extensions, grouped under the provider's namespace.
     ProviderOptionMap provider_options;
 };
 
-/*
- * Describes how one configuration layer changes the value beneath it.
- */
 enum class PatchAction { Inherit, Set, Clear };
 
 /*

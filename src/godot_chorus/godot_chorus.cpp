@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <limits>
 #include <variant>
 #include <utility>
 
@@ -249,6 +250,14 @@ void GodotChorus::_process(double /*delta*/) {
                 to_godot_string(event.reasoning)
             );
             break;
+        case Chorus::RuntimeEvent::Kind::Embedding: {
+            PackedFloat32Array values;
+            values.resize(static_cast<int64_t>(event.embedding.size()));
+            for (int64_t i = 0; i < values.size(); ++i)
+                values.set(i, event.embedding[static_cast<size_t>(i)]);
+            emit_signal("embedding_complete", event.request_id, values);
+            break;
+        }
         case Chorus::RuntimeEvent::Kind::Error:
             emit_signal(
                 "generation_error", event.request_id, session, to_godot(event.error), to_godot_string(event.text)
@@ -302,6 +311,22 @@ void GodotChorus::stop_all() {
 
 bool GodotChorus::is_loaded() const {
     return _runtime.is_loaded();
+}
+
+bool GodotChorus::supports_embeddings() const {
+    const auto capabilities = _runtime.capabilities();
+    return capabilities && capabilities->embeddings;
+}
+
+int64_t GodotChorus::embed(const String& prompt, int64_t priority) {
+    if (priority < std::numeric_limits<int>::min() || priority > std::numeric_limits<int>::max()) {
+        UtilityFunctions::push_error("[Chorus] embed rejected: priority is outside the supported int range.");
+        return -1;
+    }
+    return report_submit_result(
+        "embed",
+        _runtime.submit(Chorus::EmbeddingRequest{{std::string(prompt.utf8().get_data()), static_cast<int>(priority)}})
+    );
 }
 
 int64_t GodotChorus::generate(const Dictionary& request) {
@@ -660,6 +685,11 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::STRING, "full_text"),
         PropertyInfo(Variant::STRING, "reasoning")
     ));
+    ADD_SIGNAL(MethodInfo(
+        "embedding_complete",
+        PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "embedding")
+    ));
     ADD_SIGNAL(
         MethodInfo("history_truncated", PropertyInfo(Variant::STRING, "session"), PropertyInfo(Variant::INT, "dropped"))
     );
@@ -723,7 +753,9 @@ void GodotChorus::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_model"), &GodotChorus::load_model);
     ClassDB::bind_method(D_METHOD("stop_all"), &GodotChorus::stop_all);
     ClassDB::bind_method(D_METHOD("is_loaded"), &GodotChorus::is_loaded);
+    ClassDB::bind_method(D_METHOD("supports_embeddings"), &GodotChorus::supports_embeddings);
     ClassDB::bind_method(D_METHOD("generate", "request"), &GodotChorus::generate);
+    ClassDB::bind_method(D_METHOD("embed", "prompt", "priority"), &GodotChorus::embed, DEFVAL(0));
     ClassDB::bind_method(D_METHOD("cancel_request", "request_id"), &GodotChorus::cancel_request);
     ClassDB::bind_method(D_METHOD("is_request_active", "request_id"), &GodotChorus::is_request_active);
     ClassDB::bind_method(D_METHOD("active_request_for_session", "session"), &GodotChorus::active_request_for_session);

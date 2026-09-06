@@ -7,9 +7,26 @@
 #include <mutex>
 #include <optional>
 
+#ifdef TEST_BUILD
+#include <functional>
+#include <vector>
+#endif
+
 class LlamaScheduler;
 
 namespace Chorus {
+
+EngineCapabilities llama_provider_capabilities();
+
+#ifdef TEST_BUILD
+struct LlamaBatchRecord {
+    RequestType type;
+    int32_t token_count;
+    std::vector<RequestId> request_ids;
+    std::vector<int32_t> embedding_output_indices;
+};
+#endif
+
 /*
  * llama.cpp-backed implementation of `Chorus::InferenceEngine`.
  *
@@ -34,6 +51,10 @@ class LlamaEngine : public InferenceEngine {
     void submit_request(const Chorus::ChorusRequest& chorus_request) override;
     void cancel_request(RequestId id) override;
     void shutdown() override;
+
+#ifdef TEST_BUILD
+    void set_batch_observer(std::function<void(const LlamaBatchRecord&)> observer);
+#endif
 
   private:
     std::shared_ptr<LlamaScheduler> scheduler_snapshot() const;

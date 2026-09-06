@@ -1,5 +1,10 @@
 #include "chorus/providers/echo/echo_engine.hpp"
 
+#include <cmath>
+#include <cstdint>
+#include <string_view>
+#include <vector>
+
 namespace Chorus {
 namespace {
 struct QueuedCancelCallbackFrame {
@@ -8,6 +13,85 @@ struct QueuedCancelCallbackFrame {
 };
 
 thread_local QueuedCancelCallbackFrame* current_queued_cancel_callback = nullptr;
+
+uint32_t murmur3_32(std::string_view value, uint32_t seed = 0x9747b28cU) {
+    uint32_t hash = seed;
+    size_t offset = 0;
+    while (offset + 4 <= value.size()) {
+        uint32_t block = static_cast<uint8_t>(value[offset]) |
+                         (static_cast<uint32_t>(static_cast<uint8_t>(value[offset + 1])) << 8) |
+                         (static_cast<uint32_t>(static_cast<uint8_t>(value[offset + 2])) << 16) |
+                         (static_cast<uint32_t>(static_cast<uint8_t>(value[offset + 3])) << 24);
+        block *= 0xcc9e2d51U;
+        block = (block << 15) | (block >> 17);
+        block *= 0x1b873593U;
+        hash ^= block;
+        hash = ((hash << 13) | (hash >> 19)) * 5U + 0xe6546b64U;
+        offset += 4;
+    }
+
+    uint32_t tail = 0;
+    switch (value.size() - offset) {
+    case 3:
+        tail ^= static_cast<uint32_t>(static_cast<uint8_t>(value[offset + 2])) << 16;
+        [[fallthrough]];
+    case 2:
+        tail ^= static_cast<uint32_t>(static_cast<uint8_t>(value[offset + 1])) << 8;
+        [[fallthrough]];
+    case 1:
+        tail ^= static_cast<uint8_t>(value[offset]);
+        tail *= 0xcc9e2d51U;
+        tail = (tail << 15) | (tail >> 17);
+        tail *= 0x1b873593U;
+        hash ^= tail;
+    }
+    hash ^= static_cast<uint32_t>(value.size());
+    hash ^= hash >> 16;
+    hash *= 0x85ebca6bU;
+    hash ^= hash >> 13;
+    hash *= 0xc2b2ae35U;
+    hash ^= hash >> 16;
+    return hash;
+}
+
+bool is_ascii_word(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+std::vector<float> make_echo_embedding(const std::string& prompt) {
+    std::vector<std::string> words;
+    for (size_t i = 0; i < prompt.size();) {
+        while (i < prompt.size() && !is_ascii_word(static_cast<unsigned char>(prompt[i])))
+            ++i;
+        std::string word;
+        while (i < prompt.size() && is_ascii_word(static_cast<unsigned char>(prompt[i]))) {
+            unsigned char c = static_cast<unsigned char>(prompt[i++]);
+            word.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : static_cast<char>(c));
+        }
+        if (!word.empty())
+            words.push_back(std::move(word));
+    }
+
+    std::vector<float> values(128, 0.0F);
+    const auto add_feature = [&values](std::string_view feature) {
+        const uint32_t hash = murmur3_32(feature);
+        values[hash & 127U] += (hash & 0x80000000U) ? -1.0F : 1.0F;
+    };
+    for (const auto& word : words)
+        add_feature("u:" + word);
+    for (size_t i = 1; i < words.size(); ++i)
+        add_feature("b:" + words[i - 1] + "\x1f" + words[i]);
+    if (words.empty())
+        add_feature(std::string("r:") + prompt);
+
+    double squared_norm = 0.0;
+    for (float value : values)
+        squared_norm += static_cast<double>(value) * value;
+    const double norm = std::sqrt(squared_norm);
+    for (float& value : values)
+        value = static_cast<float>(value / norm);
+    return values;
+}
 } // namespace
 
 EchoEngine::~EchoEngine() {
@@ -46,6 +130,7 @@ EngineCapabilities EchoEngine::capabilities() const {
     caps.scheduling = SchedulingAuthority::ProviderManaged;
     caps.streaming = true;
     caps.cancellation = true;
+    caps.embeddings = true;
     caps.common_generation_options = {"max_tokens"};
     return caps;
 }
@@ -57,8 +142,11 @@ std::optional<LoadedModelInfo> EchoEngine::loaded_model_info() const {
 std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest& request) const {
     if (!_initialized)
         return RequestRejection{ChorusError::EngineNotReady, "EchoEngine is not initialized."};
-    if (request.type == RequestType::Embedding)
-        return RequestRejection{ChorusError::UnsupportedFeature, "EchoEngine does not produce embeddings."};
+    if (request.type == RequestType::Embedding) {
+        if (request.prompt.empty())
+            return RequestRejection{ChorusError::InvalidRequest, "Embedding prompts must not be empty."};
+        return std::nullopt;
+    }
     const auto& c = request.gen_config;
     if (c.max_tokens && *c.max_tokens < -1)
         return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine max_tokens must be -1 or greater."};
@@ -245,8 +333,20 @@ void EchoEngine::worker_loop() {
             continue;
         }
 
-        const std::string& text = select_echo_text(req);
-        emit_echo_tokens(req, text);
+        if (req.type == RequestType::Embedding) {
+            bool cancelled = false;
+            {
+                std::lock_guard<std::mutex> lock(_queue_mutex);
+                cancelled = _cancelled_ids.count(req.id) > 0 || !_running;
+            }
+            if (!cancelled) {
+                ChorusSignal embedding{req.id, ChorusSignal::Embedding{make_echo_embedding(req.prompt)}};
+                req.on_event(embedding);
+            }
+        } else {
+            const std::string& text = select_echo_text(req);
+            emit_echo_tokens(req, text);
+        }
 
         bool cancelled = false;
         {

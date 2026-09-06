@@ -24,7 +24,8 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     bool emit_duplicate_stop = false;   // broken: second Stop after the first
     bool emit_token_after_stop = false; // broken: trailing Token after Stop
     int64_t rogue_extra_id = -1;        // broken: if >= 0, emit a Token for this unknown id
-    bool emit_embedding_event = false;  // event kind the runtime currently drops
+    bool emit_embedding_event = false;
+    std::vector<float> embedding_values{1.0F, 2.0F};
     Chorus::ChorusError fail_submit_with = Chorus::ChorusError::None; // inline Error instead of tokens
     bool emit_error_instead_of_stop = false;                 // tokens flow, then Error terminal (partial-output shape)
     std::optional<Chorus::ChorusError> fail_initialize_with; // make initialize() fail
@@ -70,6 +71,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         Chorus::EngineCapabilities caps;
         caps.provider_id = "mock";
         caps.streaming = true;
+        caps.embeddings = true;
         return caps;
     }();
     std::optional<Chorus::RequestRejection> reject_with; // validate_request returns this
@@ -128,6 +130,18 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         }
         if (hold_requests) {
             _held.push_back(req);
+            return;
+        }
+
+        if (req.type == Chorus::RequestType::Embedding) {
+            if (emit_embedding_event)
+                send(req.on_event, req.id, Chorus::ChorusSignal::Embedding{embedding_values});
+            if (emit_error_instead_of_stop) {
+                send(req.on_event, req.id, Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "embedding failed"});
+                return;
+            }
+            if (emit_stop)
+                send(req.on_event, req.id, Chorus::ChorusSignal::Stop{});
             return;
         }
 

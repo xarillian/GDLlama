@@ -61,6 +61,7 @@ typedef enum chorus_event_kind {
     CHORUS_EVENT_ERROR = 3,
     CHORUS_EVENT_HISTORY_TRUNCATED = 4,
     CHORUS_EVENT_ENGINE_FAILED = 5,
+    CHORUS_EVENT_EMBEDDING = 6,
 } chorus_event_kind;
 
 typedef enum chorus_turn_outcome {
@@ -109,7 +110,16 @@ typedef struct chorus_event {
     chorus_error error;
     const char* reasoning;
     int32_t dropped;
+    const float* embedding;
+    size_t embedding_count;
 } chorus_event;
+
+typedef struct chorus_capabilities {
+    bool streaming;
+    bool cancellation;
+    bool embeddings;
+    bool prompt_rendering;
+} chorus_capabilities;
 
 typedef struct chorus_log_field {
     const char* key;
@@ -157,6 +167,7 @@ CHORUS_API chorus_error chorus_load(
     chorus_log_level min_log_level
 );
 CHORUS_API bool chorus_is_loaded(const chorus_runtime* rt);
+CHORUS_API bool chorus_get_capabilities(const chorus_runtime* rt, chorus_capabilities* out_capabilities);
 CHORUS_API void chorus_stop_all(chorus_runtime* rt);
 
 CHORUS_API chorus_request* chorus_request_new(void);
@@ -196,6 +207,9 @@ CHORUS_API chorus_error chorus_request_set_chat_template(chorus_request* req, co
 
 CHORUS_API chorus_error
 chorus_generate(chorus_runtime* rt, const chorus_request* req, chorus_request_id* out_request_id);
+CHORUS_API chorus_error chorus_embed(
+    chorus_runtime* rt, const char* prompt, int32_t priority, chorus_request_id* out_request_id
+);
 CHORUS_API chorus_error
 chorus_regenerate(chorus_runtime* rt, const chorus_request* req, chorus_request_id* out_request_id);
 CHORUS_API bool chorus_cancel(chorus_runtime* rt, chorus_request_id request_id);

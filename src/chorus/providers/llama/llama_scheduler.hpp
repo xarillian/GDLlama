@@ -1,5 +1,6 @@
 #pragma once
 
+#include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 #include "chorus/providers/llama/llama_chat.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
@@ -22,8 +23,24 @@
 #include <variant>
 #include <vector>
 
+#ifdef TEST_BUILD
+#include <functional>
+#endif
+
 struct llama_model;
 struct llama_context;
+
+namespace Chorus {
+
+constexpr bool llama_embedding_architecture_supported(bool has_encoder, bool has_decoder) {
+    return has_encoder != has_decoder;
+}
+
+#ifdef TEST_BUILD
+struct LlamaBatchRecord;
+#endif
+
+} // namespace Chorus
 
 /*
  * Schedules concurrent llama.cpp generation requests.
@@ -53,6 +70,12 @@ class LlamaScheduler {
     bool is_healthy() const;
 
     const std::optional<Chorus::LoadedModelInfo>& model_info() const { return _model_info; }
+    Chorus::EngineCapabilities capabilities() const;
+    std::optional<Chorus::RequestRejection> validate_embedding(const Chorus::ChorusRequest& request) const;
+
+#ifdef TEST_BUILD
+    void set_batch_observer(std::function<void(const Chorus::LlamaBatchRecord&)> observer);
+#endif
 
     /*
      * Renders the exact templated prompt and token count for the provided messages.
@@ -74,6 +97,9 @@ class LlamaScheduler {
     struct Slot {
         int id = -1;
         bool is_busy = false;
+        uint64_t submission_sequence = 0;
+        bool included_in_batch = false;
+        int32_t embedding_output_index = -1;
 
         Chorus::ChorusRequest current_request;
         int32_t n_past = 0;      // KV cache position; advanced only in `LlamaScheduler::prepare_next_batch`
@@ -96,6 +122,7 @@ class LlamaScheduler {
 
     struct PendingRequest {
         Chorus::ChorusRequest request;
+        uint64_t submission_sequence = 0;
         std::optional<Chorus::ResolvedLlamaGeneration> resolved;
     };
 
@@ -103,7 +130,9 @@ class LlamaScheduler {
 
     struct PendingRequestCompare {
         bool operator()(const PendingRequestPtr& left, const PendingRequestPtr& right) const {
-            return left->request.priority < right->request.priority;
+            if (left->request.priority != right->request.priority)
+                return left->request.priority < right->request.priority;
+            return left->submission_sequence > right->submission_sequence;
         }
     };
 
@@ -121,6 +150,7 @@ class LlamaScheduler {
         std::vector<std::string> stop_sequences;
         std::optional<Chorus::LlamaChatParseStream> parse_stream;
         int32_t max_tokens = -1;
+        uint64_t submission_sequence = 0;
     };
 
     using PreparedRequestResult = std::variant<PreparedRequest, Chorus::RequestRejection>;
@@ -141,6 +171,7 @@ class LlamaScheduler {
     bool prepare_next_batch(int32_t tokens_per_tick);
     int run_inference();
     void sample_batch();
+    void extract_embedding_batch();
 
     void emit_signal(PendingSignal pending);
     void emit_signals(std::vector<PendingSignal> pending);
@@ -170,6 +201,13 @@ class LlamaScheduler {
     // Capacity of `LlamaScheduler::batch`; batching must never exceed
     // `LlamaScheduler::_batch_capacity`.
     int32_t _batch_capacity = 0;
+    int32_t _micro_batch_capacity = 0;
+    Chorus::RequestType _batch_type = Chorus::RequestType::Generate;
+    enum llama_pooling_type _pooling = LLAMA_POOLING_TYPE_UNSPECIFIED;
+    int32_t _embedding_dimensions = 0;
+    bool _has_encoder = false;
+    bool _has_decoder = false;
+    uint64_t _next_submission_sequence = 0;
 
     Chorus::Logger _log;
     // Routes llama.cpp's process-global log into `LlamaScheduler::_log` and
@@ -177,6 +215,11 @@ class LlamaScheduler {
     // llama.cpp resource.
     std::shared_ptr<Chorus::LlamaLogBridge> _llama_log_bridge;
     std::optional<Chorus::LoadedModelInfo> _model_info;
+
+#ifdef TEST_BUILD
+    std::mutex _batch_observer_mutex;
+    std::function<void(const Chorus::LlamaBatchRecord&)> _batch_observer;
+#endif
 
     common_chat_templates_ptr _model_default_chat_templates;
     mutable std::mutex _template_mutex;

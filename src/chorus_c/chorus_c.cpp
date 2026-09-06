@@ -39,7 +39,7 @@ struct chorus_runtime {
 
 namespace {
 
-constexpr uint32_t kAbiVersion = 1;
+constexpr uint32_t kAbiVersion = 2;
 const chorus_event kEmptyEvent{};
 const chorus_log_field kEmptyLogField{};
 const chorus_log_record kEmptyLogRecord{};
@@ -190,6 +190,8 @@ chorus_event_kind to_c_event_kind(Chorus::RuntimeEvent::Kind kind) noexcept {
         return CHORUS_EVENT_REASONING_TOKEN;
     case Chorus::RuntimeEvent::Kind::Complete:
         return CHORUS_EVENT_COMPLETE;
+    case Chorus::RuntimeEvent::Kind::Embedding:
+        return CHORUS_EVENT_EMBEDDING;
     case Chorus::RuntimeEvent::Kind::Error:
         return CHORUS_EVENT_ERROR;
     case Chorus::RuntimeEvent::Kind::HistoryTruncated:
@@ -429,6 +431,24 @@ bool chorus_is_loaded(const chorus_runtime* rt) {
     }
 }
 
+bool chorus_get_capabilities(const chorus_runtime* rt, chorus_capabilities* out_capabilities) {
+    if (!rt || !out_capabilities)
+        return false;
+    *out_capabilities = {};
+    try {
+        const auto capabilities = rt->value.capabilities();
+        if (!capabilities)
+            return false;
+        out_capabilities->streaming = capabilities->streaming;
+        out_capabilities->cancellation = capabilities->cancellation;
+        out_capabilities->embeddings = capabilities->embeddings;
+        out_capabilities->prompt_rendering = capabilities->prompt_rendering;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 void chorus_stop_all(chorus_runtime* rt) {
     if (!rt)
         return;
@@ -619,6 +639,31 @@ chorus_error chorus_request_set_chat_template(chorus_request* req, const char* c
     return guard_builder([&] { req->value.chat_template = chat_template; });
 }
 
+chorus_error chorus_embed(
+    chorus_runtime* rt, const char* prompt, int32_t priority, chorus_request_id* out_request_id
+) {
+    if (out_request_id)
+        *out_request_id = -1;
+    if (!rt)
+        return CHORUS_ERR_INVALID_REQUEST;
+    if (!prompt || !out_request_id)
+        return invalid_request(rt, "prompt and out_request_id are required.");
+    try {
+        const Chorus::SubmitResult result = rt->value.submit(Chorus::EmbeddingRequest{{prompt, priority}});
+        if (!result.ok()) {
+            replace_last_error(rt, result.message);
+            return to_c_error(result.error);
+        }
+        *out_request_id = result.request_id;
+        clear_last_error(rt);
+        return CHORUS_OK;
+    } catch (const std::exception& error) {
+        return unknown_exception(rt, error.what());
+    } catch (...) {
+        return unknown_exception(rt, "Unknown exception while submitting an embedding request.");
+    }
+}
+
 chorus_error chorus_generate(
     chorus_runtime* rt, const chorus_request* req, chorus_request_id* out_request_id
 ) {
@@ -735,6 +780,10 @@ const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count) {
             event.error = to_c_error(source.error);
             event.reasoning = source.kind == Chorus::RuntimeEvent::Kind::Complete ? source.reasoning.c_str() : nullptr;
             event.dropped = source.dropped;
+            event.embedding = source.kind == Chorus::RuntimeEvent::Kind::Embedding && !source.embedding.empty()
+                                  ? source.embedding.data()
+                                  : nullptr;
+            event.embedding_count = source.kind == Chorus::RuntimeEvent::Kind::Embedding ? source.embedding.size() : 0;
         }
         *out_count = rt->events.size();
         clear_last_error(rt);

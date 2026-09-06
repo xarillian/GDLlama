@@ -58,12 +58,10 @@ class GodotChorus : public godot::Node {
     };
 
     enum ProviderChoice {
-        PROVIDER_LLAMA, // Mirrors `Chorus::Provider::Llama`.
-        PROVIDER_ECHO,  // Mirrors `Chorus::Provider::Echo`.
+        PROVIDER_LLAMA,
+        PROVIDER_ECHO,
     };
 
-    // Mirrors `Chorus::TurnOutcome`, the terminal state of a session's most
-    // recent chat turn.
     enum TurnOutcomeCode {
         TURN_NONE,
         TURN_COMPLETED,
@@ -71,8 +69,6 @@ class GodotChorus : public godot::Node {
         TURN_ERRORED,
     };
 
-    // Mirrors `Chorus::LogLevel`, both for the severity carried by the
-    // `GodotChorus::log_record` signal and for the requested verbosity.
     // `GodotChorus::LOG_OFF` is a threshold only and is never emitted.
     enum LogLevelCode {
         LOG_DEBUG,
@@ -96,8 +92,6 @@ class GodotChorus : public godot::Node {
      */
     static void register_project_settings();
 
-    // Core API
-
     /*
      * Constructs the selected provider and loads it into the runtime.
      *
@@ -108,6 +102,7 @@ class GodotChorus : public godot::Node {
     bool load_model();
     void stop_all();
     bool is_loaded() const;
+    bool supports_embeddings() const;
 
     /*
      * Submits one stateless generation or sessioned chat turn.
@@ -149,6 +144,7 @@ class GodotChorus : public godot::Node {
      *  - `-1`: normalization or submission failed.
      */
     int64_t generate(const godot::Dictionary& request);
+    int64_t embed(const godot::String& prompt, int64_t priority = 0);
 
     /*
      * Rerolls the last assistant message in a session.
@@ -165,8 +161,6 @@ class GodotChorus : public godot::Node {
      */
     int64_t regenerate(const godot::String& session, const godot::Dictionary& overrides);
 
-    // Runtime controls
-
     /// Requests remain active until `GodotChorus::_process` drains their terminal event.
     bool cancel_request(int64_t request_id);
     /// Returns true until `GodotChorus::_process` drains the terminal event.
@@ -177,8 +171,6 @@ class GodotChorus : public godot::Node {
      *  - `-1`: the session is unknown or has no active request.
      */
     int64_t active_request_for_session(const godot::String& session) const;
-
-    // Conversation history
 
     /*
      * Replaces one session's durable history.
@@ -244,8 +236,6 @@ class GodotChorus : public godot::Node {
 
     void _process(double delta) override;
 
-    // Properties
-
     void set_model_path(const godot::String& path);
     godot::String get_model_path() const;
     void set_provider(ProviderChoice provider);
@@ -274,7 +264,6 @@ class GodotChorus : public godot::Node {
     void set_log_level(int64_t level);
     int64_t get_log_level() const;
 
-    // Utility
     /*
      * Computes cosine similarity between two Godot arrays.
      *
@@ -298,12 +287,7 @@ class GodotChorus : public godot::Node {
     // applies.
     bool push_host_defaults();
 
-    // Drains the synchronized runtime log channel onto the Godot thread. Every
-    // record emits `GodotChorus::log_record` for the project to present or
-    // store.
     void drain_logs();
-    // Returns the node override when enabled, otherwise the Project Settings
-    // threshold.
     Chorus::LogLevel effective_log_level() const;
 
     // Caches the selected provider's self-description because Godot requests
@@ -327,7 +311,6 @@ class GodotChorus : public godot::Node {
     mutable Chorus::EngineCapabilities _cached_capabilities;
     mutable std::optional<ProviderChoice> _cached_capabilities_provider;
 
-    // Empty selects the model's embedded Jinja chat template.
     godot::String _chat_template;
 
     bool _override_log_level = false;

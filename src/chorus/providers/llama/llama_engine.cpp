@@ -6,6 +6,24 @@
 
 namespace Chorus {
 
+EngineCapabilities llama_provider_capabilities() {
+    EngineCapabilities capabilities;
+    capabilities.provider_id = "llama";
+    capabilities.model_formats = {ModelFormat::Gguf};
+    capabilities.input_modalities = {Modality::Text};
+    capabilities.output_modalities = {Modality::Text};
+    capabilities.constraint_formats = {ConstraintFormat::Gbnf, ConstraintFormat::JsonSchema};
+    capabilities.scheduling = SchedulingAuthority::ChorusManaged;
+    capabilities.streaming = true;
+    capabilities.cancellation = true;
+    capabilities.embeddings = true;
+    capabilities.prompt_rendering = true;
+    capabilities.common_generation_options = llama_common_generation_option_names();
+    capabilities.provider_generation_options = llama_provider_generation_option_names();
+    capabilities.load_options = llama_load_option_descriptors();
+    return capabilities;
+}
+
 LlamaEngine::~LlamaEngine() {
     shutdown();
 }
@@ -56,20 +74,10 @@ bool LlamaEngine::is_initialized() const {
 }
 
 EngineCapabilities LlamaEngine::capabilities() const {
-    EngineCapabilities caps;
-    caps.provider_id = "llama";
-    caps.model_formats = {ModelFormat::Gguf};
-    caps.input_modalities = {Modality::Text};
-    caps.output_modalities = {Modality::Text};
-    caps.constraint_formats = {ConstraintFormat::Gbnf, ConstraintFormat::JsonSchema};
-    caps.scheduling = SchedulingAuthority::ChorusManaged;
-    caps.streaming = true;
-    caps.cancellation = true;
-    caps.prompt_rendering = true;
-    caps.common_generation_options = llama_common_generation_option_names();
-    caps.provider_generation_options = llama_provider_generation_option_names();
-    caps.load_options = llama_load_option_descriptors();
-    return caps;
+    if (auto current_scheduler = scheduler_snapshot(); current_scheduler && current_scheduler->is_healthy())
+        return current_scheduler->capabilities();
+
+    return llama_provider_capabilities();
 }
 
 std::optional<LoadedModelInfo> LlamaEngine::loaded_model_info() const {
@@ -93,7 +101,9 @@ std::optional<RequestRejection> LlamaEngine::validate_request(const ChorusReques
     if (!current_scheduler || !current_scheduler->is_healthy())
         return RequestRejection{ChorusError::EngineNotReady, "LlamaEngine is not initialized."};
     if (request.type == RequestType::Embedding)
-        return RequestRejection{ChorusError::UnsupportedFeature, "LlamaEngine does not produce embeddings."};
+        return current_scheduler->validate_embedding(request);
+    if (!current_scheduler->capabilities().streaming)
+        return RequestRejection{ChorusError::UnsupportedFeature, "The loaded model cannot generate text."};
     return validate_llama_request(request);
 }
 
@@ -122,6 +132,13 @@ void LlamaEngine::cancel_request(RequestId id) {
     if (_scheduler)
         _scheduler->cancel_request(id);
 }
+
+#ifdef TEST_BUILD
+void LlamaEngine::set_batch_observer(std::function<void(const LlamaBatchRecord&)> observer) {
+    if (auto current_scheduler = scheduler_snapshot())
+        current_scheduler->set_batch_observer(std::move(observer));
+}
+#endif
 
 void LlamaEngine::shutdown() {
     std::shared_ptr<LlamaScheduler> stopped_scheduler;

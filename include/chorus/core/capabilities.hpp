@@ -42,6 +42,9 @@ struct ProviderOptionDescriptor {
      * count rather than sending a number the provider would reject.
      */
     std::optional<std::string> prerequisite_option;
+
+    /// Allowed values for a string option. Empty means any string is accepted.
+    std::vector<std::string> choices;
 };
 
 using ProviderOptionDescriptors = std::vector<ProviderOptionDescriptor>;

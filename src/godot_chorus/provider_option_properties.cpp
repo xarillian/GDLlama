@@ -1,5 +1,6 @@
 #include "godot_chorus/provider_option_properties.hpp"
 
+#include <algorithm>
 #include <string>
 #include <variant>
 
@@ -41,14 +42,23 @@ Variant::Type variant_type_for(const Chorus::ProviderOptionValue& value) {
 
 PropertyInfo property_info_for(const Chorus::ProviderOptionDescriptor& descriptor, bool enabled) {
     const Variant::Type type = variant_type_for(descriptor.default_value);
-    const String hint_string = (type == Variant::INT || type == Variant::FLOAT) ? range_hint(descriptor) : String();
+    String hint_string = (type == Variant::INT || type == Variant::FLOAT) ? range_hint(descriptor) : String();
+    PropertyHint hint = hint_string.is_empty() ? PROPERTY_HINT_NONE : PROPERTY_HINT_RANGE;
+    if (type == Variant::STRING && !descriptor.choices.empty()) {
+        hint = PROPERTY_HINT_ENUM;
+        for (size_t i = 0; i < descriptor.choices.size(); ++i) {
+            if (i)
+                hint_string += ",";
+            hint_string += godot_chorus::to_godot_string(descriptor.choices[i]);
+        }
+    }
     uint32_t usage = PROPERTY_USAGE_DEFAULT;
     if (!enabled)
         usage |= PROPERTY_USAGE_READ_ONLY;
     return PropertyInfo(
         type,
         godot_chorus::to_godot_string(descriptor.key),
-        hint_string.is_empty() ? PROPERTY_HINT_NONE : PROPERTY_HINT_RANGE,
+        hint,
         hint_string,
         usage
     );
@@ -86,10 +96,15 @@ coerce_to_descriptor(const Chorus::ProviderOptionDescriptor& descriptor, const V
         if (value.get_type() != Variant::INT && value.get_type() != Variant::FLOAT)
             return std::nullopt;
         return Chorus::ProviderOptionValue{(double)value};
-    case Variant::STRING:
+    case Variant::STRING: {
         if (value.get_type() != Variant::STRING)
             return std::nullopt;
-        return Chorus::ProviderOptionValue{std::string(((String)value).utf8().get_data())};
+        std::string converted(((String)value).utf8().get_data());
+        if (!descriptor.choices.empty() &&
+            std::ranges::find(descriptor.choices, converted) == descriptor.choices.end())
+            return std::nullopt;
+        return Chorus::ProviderOptionValue{std::move(converted)};
+    }
     default:
         return std::nullopt;
     }

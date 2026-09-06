@@ -1,9 +1,11 @@
 #include "chorus/providers/llama/llama_scheduler.hpp"
 #include "chorus/core/common.hpp"
+#include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/providers/llama/llama_utils.hpp"
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 
 LlamaScheduler::~LlamaScheduler() {
     shutdown();
@@ -62,6 +64,15 @@ LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger lo
     init_slots(load_config.num_slots);
     _tokens_per_tick = load_config.tokens_per_tick;
     _batch_capacity = static_cast<int32_t>(llama_n_batch(context));
+    _micro_batch_capacity = static_cast<int32_t>(llama_n_ubatch(context));
+    _pooling = llama_pooling_type(context);
+    _embedding_dimensions = llama_model_n_embd_out(model);
+    _has_encoder = llama_model_has_encoder(model);
+    _has_decoder = llama_model_has_decoder(model);
+    if (_pooling == LLAMA_POOLING_TYPE_RANK) {
+        _log.error("Rank pooling is not an embedding output");
+        return Chorus::ChorusError::UnsupportedFeature;
+    }
 
     if (static_cast<int64_t>(load_config.num_slots) * load_config.tokens_per_tick > _batch_capacity) {
         _log.warn(
@@ -162,6 +173,29 @@ bool LlamaScheduler::is_healthy() const {
     return is_running.load();
 }
 
+Chorus::EngineCapabilities LlamaScheduler::capabilities() const {
+    Chorus::EngineCapabilities capabilities = Chorus::llama_provider_capabilities();
+    capabilities.streaming = _has_decoder;
+    capabilities.embeddings = Chorus::llama_embedding_architecture_supported(_has_encoder, _has_decoder) &&
+                              _embedding_dimensions > 0 && _pooling != LLAMA_POOLING_TYPE_RANK;
+    capabilities.prompt_rendering = _has_decoder;
+    return capabilities;
+}
+
+std::optional<Chorus::RequestRejection>
+LlamaScheduler::validate_embedding(const Chorus::ChorusRequest& request) const {
+    if (!capabilities().embeddings)
+        return Chorus::RequestRejection{Chorus::ChorusError::UnsupportedFeature, "The loaded model cannot produce embeddings."};
+    if (request.prompt.empty())
+        return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "Embedding prompts must not be empty."};
+    auto tokens = Chorus::LlamaUtils::tokenize(context, request.prompt, true);
+    if (tokens.empty())
+        return Chorus::RequestRejection{Chorus::ChorusError::Tokenize, "Tokenization failed (empty result)."};
+    if (tokens.size() > static_cast<size_t>(_micro_batch_capacity))
+        return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "Embedding prompt exceeds the physical micro-batch capacity."};
+    return std::nullopt;
+}
+
 bool LlamaScheduler::push_request(const Chorus::ChorusRequest& req) {
     auto pending = std::make_shared<PendingRequest>();
     pending->request = req;
@@ -169,6 +203,7 @@ bool LlamaScheduler::push_request(const Chorus::ChorusRequest& req) {
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
         if (is_running) {
+            pending->submission_sequence = _next_submission_sequence++;
             request_queue.push(std::move(pending));
             accepted = true;
         }
@@ -226,7 +261,10 @@ void LlamaScheduler::worker_loop() {
             continue;
         }
 
-        sample_batch();
+        if (_batch_type == Chorus::RequestType::Embedding)
+            extract_embedding_batch();
+        else
+            sample_batch();
     }
 }
 
@@ -292,6 +330,8 @@ LlamaScheduler::take_cancellation_terminal_locked(const Chorus::ChorusRequest& r
 
 std::optional<LlamaScheduler::PendingSignal> LlamaScheduler::resolve_pending_request(PendingRequest& pending) {
     Chorus::ChorusRequest& request = pending.request;
+    if (request.type == Chorus::RequestType::Embedding)
+        return std::nullopt;
     if (!pending.resolved) {
         auto resolution = Chorus::resolve_llama_generation(request.gen_config);
         if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&resolution)) {
@@ -314,6 +354,16 @@ std::optional<LlamaScheduler::PendingSignal> LlamaScheduler::resolve_pending_req
 
 LlamaScheduler::PreparedRequestResult LlamaScheduler::prepare_request(PendingRequest& pending) {
     PreparedRequest prepared;
+    prepared.submission_sequence = pending.submission_sequence;
+    if (pending.request.type == Chorus::RequestType::Embedding) {
+        prepared.tokens = Chorus::LlamaUtils::tokenize(context, pending.request.prompt, true);
+        if (prepared.tokens.empty())
+            return Chorus::RequestRejection{Chorus::ChorusError::Tokenize, "Tokenization failed (empty result)."};
+        if (prepared.tokens.size() > static_cast<size_t>(_micro_batch_capacity))
+            return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "Embedding prompt exceeds the physical micro-batch capacity."};
+        return prepared;
+    }
+
     prepared.max_tokens = pending.resolved->max_tokens;
     prepared.stop_sequences = std::move(pending.resolved->stop);
 
@@ -388,6 +438,7 @@ LlamaScheduler::admit_request(const Chorus::ChorusRequest& request, PreparedRequ
     PreparedRequest& admitted = std::get<PreparedRequest>(prepared);
     Slot& slot = slots[slot_idx];
     slot.is_busy = true;
+    slot.submission_sequence = admitted.submission_sequence;
     slot.current_request = request;
     slot.n_past = 0;
     slot.n_decoded = 0;
@@ -461,47 +512,143 @@ void LlamaScheduler::ingest_new_requests() {
 bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
     llama_batch& curr_batch = batch.get();
     curr_batch.n_tokens = 0;
-
+    std::vector<Slot*> runnable;
     for (auto& slot : slots) {
-        if (!slot.is_busy)
-            continue;
+        slot.included_in_batch = false;
+        slot.embedding_output_index = -1;
+        if (slot.is_busy && slot.input_cursor < slot.current_input_tokens.size())
+            runnable.push_back(&slot);
+    }
+    if (runnable.empty())
+        return false;
 
-        // `LlamaScheduler::batch` has `_batch_capacity` entries; an overrun
-        // corrupts the heap.
-        size_t capacity_left = (size_t)_batch_capacity - curr_batch.n_tokens;
+    std::ranges::sort(runnable, [](const Slot* left, const Slot* right) {
+        if (left->current_request.priority != right->current_request.priority)
+            return left->current_request.priority > right->current_request.priority;
+        return left->submission_sequence < right->submission_sequence;
+    });
+    _batch_type = runnable.front()->current_request.type;
+    const size_t capacity = _batch_type == Chorus::RequestType::Embedding
+                                ? static_cast<size_t>(_micro_batch_capacity)
+                                : static_cast<size_t>(_batch_capacity);
+
+    for (Slot* slot : runnable) {
+        if (slot->current_request.type != _batch_type)
+            continue;
+        const size_t remaining = slot->current_input_tokens.size() - slot->input_cursor;
+        const size_t capacity_left = capacity - static_cast<size_t>(curr_batch.n_tokens);
         if (capacity_left == 0)
             break;
+        if (_batch_type == Chorus::RequestType::Embedding && remaining > capacity_left)
+            break;
 
-        if (slot.input_cursor < slot.current_input_tokens.size()) {
-
-            size_t n_remaining = slot.current_input_tokens.size() - slot.input_cursor;
-            size_t n_chunk = std::min({n_remaining, (size_t)tokens_per_tick, capacity_left});
-
-            const int32_t chunk_size = static_cast<int32_t>(n_chunk);
-            for (int32_t offset = 0; offset < chunk_size; ++offset) {
-                const size_t token_index = slot.input_cursor + static_cast<size_t>(offset);
-                const int32_t pos = slot.n_past + offset;
-                const bool is_last_in_sequence = token_index == slot.current_input_tokens.size() - 1;
-
-                Chorus::LlamaUtils::batch_add_seq(
-                    curr_batch, slot.current_input_tokens[token_index], slot.id, pos, is_last_in_sequence
-                );
-            }
-
-            slot.n_past += chunk_size;
-            slot.input_cursor += n_chunk;
+        const size_t count = _batch_type == Chorus::RequestType::Embedding
+                                 ? remaining
+                                 : std::min({remaining, static_cast<size_t>(tokens_per_tick), capacity_left});
+        for (size_t offset = 0; offset < count; ++offset) {
+            const size_t token_index = slot->input_cursor + offset;
+            const bool last = token_index == slot->current_input_tokens.size() - 1;
+            const bool output = _batch_type == Chorus::RequestType::Embedding
+                                    ? (_pooling == LLAMA_POOLING_TYPE_NONE ? last : true)
+                                    : last;
+            Chorus::LlamaUtils::batch_add_seq(
+                curr_batch,
+                slot->current_input_tokens[token_index],
+                slot->id,
+                slot->n_past + static_cast<int32_t>(offset),
+                output
+            );
+            if (_batch_type == Chorus::RequestType::Embedding && _pooling == LLAMA_POOLING_TYPE_NONE && output)
+                slot->embedding_output_index = curr_batch.n_tokens - 1;
         }
+        slot->n_past += static_cast<int32_t>(count);
+        slot->input_cursor += count;
+        slot->included_in_batch = true;
     }
-
     return curr_batch.n_tokens > 0;
 }
 
 int LlamaScheduler::run_inference() {
+#ifdef TEST_BUILD
+    std::function<void(const Chorus::LlamaBatchRecord&)> observer;
+    {
+        std::lock_guard<std::mutex> lock(_batch_observer_mutex);
+        observer = _batch_observer;
+    }
+    if (observer) {
+        const llama_batch& curr_batch = batch.get();
+        Chorus::LlamaBatchRecord record{_batch_type, curr_batch.n_tokens, {}, {}};
+        std::vector<bool> seen(slots.size());
+        for (int32_t index = 0; index < curr_batch.n_tokens; ++index) {
+            const int slot_id = curr_batch.seq_id[index][0];
+            if (seen[slot_id])
+                continue;
+            seen[slot_id] = true;
+            record.request_ids.push_back(slots[slot_id].current_request.id);
+            if (_batch_type == Chorus::RequestType::Embedding)
+                record.embedding_output_indices.push_back(slots[slot_id].embedding_output_index);
+        }
+        observer(record);
+    }
+#endif
+    llama_set_embeddings(context, _batch_type == Chorus::RequestType::Embedding);
     int rc = llama_decode(context, batch.get());
     if (rc != 0) {
         _log.error("Decode failed", {{"code", (int64_t)rc}});
     }
     return rc;
+}
+
+#ifdef TEST_BUILD
+void LlamaScheduler::set_batch_observer(std::function<void(const Chorus::LlamaBatchRecord&)> observer) {
+    std::lock_guard<std::mutex> lock(_batch_observer_mutex);
+    _batch_observer = std::move(observer);
+}
+#endif
+
+void LlamaScheduler::extract_embedding_batch() {
+    std::vector<PendingSignal> signals;
+    for (auto& slot : slots) {
+        if (!slot.is_busy || !slot.included_in_batch)
+            continue;
+
+        const float* source = _pooling == LLAMA_POOLING_TYPE_NONE
+                                  ? llama_get_embeddings_ith(context, slot.embedding_output_index)
+                                  : llama_get_embeddings_seq(context, slot.id);
+        std::vector<float> values;
+        bool valid = source && _embedding_dimensions > 0;
+        double squared_norm = 0.0;
+        if (valid) {
+            values.assign(source, source + _embedding_dimensions);
+            for (float value : values) {
+                if (!std::isfinite(value)) {
+                    valid = false;
+                    break;
+                }
+                squared_norm += static_cast<double>(value) * value;
+            }
+            valid = valid && std::isfinite(squared_norm) && squared_norm > 0.0;
+        }
+        if (valid) {
+            const double norm = std::sqrt(squared_norm);
+            for (float& value : values)
+                value = static_cast<float>(value / norm);
+        }
+
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        const bool cancelled = !is_running || _cancel_requested.erase(slot.current_request.id) > 0;
+        Chorus::ChorusRequest request = slot.current_request;
+        release_slot(slot.id);
+        if (cancelled) {
+            signals.emplace_back(std::move(request), Chorus::ChorusSignal::Error{Chorus::ChorusError::Cancelled, "Request cancelled."});
+        } else if (!valid) {
+            signals.emplace_back(std::move(request), Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "Embedding output was missing or invalid."});
+        } else {
+            signals.emplace_back(request, Chorus::ChorusSignal::Embedding{std::move(values)});
+            signals.emplace_back(std::move(request), Chorus::ChorusSignal::Stop{});
+        }
+    }
+    emit_signals(std::move(signals));
 }
 
 void LlamaScheduler::sample_batch() {

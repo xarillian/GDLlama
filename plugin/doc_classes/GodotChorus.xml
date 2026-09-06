@@ -39,6 +39,14 @@
 			<description>
 			</description>
 		</method>
+		<method name="embed">
+			<return type="int" />
+			<param index="0" name="prompt" type="String" />
+			<param index="1" name="priority" type="int" default="0" />
+			<description>
+				Asynchronously computes a normalized embedding for [param prompt]. Success emits [signal embedding_complete].
+			</description>
+		</method>
 		<method name="generate">
 			<return type="int" />
 			<param index="0" name="request" type="Dictionary" />
@@ -106,6 +114,12 @@
 			<description>
 			</description>
 		</method>
+		<method name="supports_embeddings" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns whether the loaded engine accepts embedding requests.
+			</description>
+		</method>
 		<method name="stop_all">
 			<return type="void" />
 			<description>
@@ -127,6 +141,13 @@
 		</member>
 	</members>
 	<signals>
+		<signal name="embedding_complete">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="embedding" type="PackedFloat32Array" />
+			<description>
+				Emitted when an embedding request completes successfully.
+			</description>
+		</signal>
 		<signal name="engine_failed">
 			<param index="0" name="error_code" type="int" />
 			<param index="1" name="message" type="String" />

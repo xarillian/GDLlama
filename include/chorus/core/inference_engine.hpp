@@ -100,11 +100,6 @@ class InferenceEngine {
      * inline before this method returns or later from an engine thread. The
      * request may outlive this call, so failures are signalled on
      * `ChorusRequest::on_event` and not returned.
-     *
-     * Errors:
-     *  - `ChorusError::EngineNotReady`: the engine is not ready to serve work.
-     *  - `ChorusError::Decode`: the model failed a decode step mid-generation.
-     *  - `ChorusError::Tokenize`: the prompt or a stop marker failed to tokenize.
      */
     virtual void submit_request(const Chorus::ChorusRequest& chorus_request) = 0;
 
@@ -115,9 +110,6 @@ class InferenceEngine {
      * this method returns, and repeated cancellation requests for one `id` are
      * safe. The request still terminates exactly once. Cancellation is
      * signalled on `ChorusRequest::on_event` and not returned.
-     *
-     * Errors:
-     *  - `ChorusError::Cancelled`: the cancel reached the request before it finished.
      */
     virtual void cancel_request(RequestId id) = 0;
 
@@ -130,10 +122,6 @@ class InferenceEngine {
      * destroy callback state. Calling this on an idle or stopped engine changes
      * nothing. Cancellation is signalled on `ChorusRequest::on_event` and not
      * returned.
-     *
-     * Errors:
-     *  - `ChorusError::Cancelled`: the engine still held the request, queued or
-     *    running, when the teardown began.
      */
     virtual void shutdown() = 0;
 };

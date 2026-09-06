@@ -18,33 +18,29 @@ namespace Chorus {
 
 enum class TurnOutcome { None, Completed, Cancelled, Errored };
 
-/*
- * Describes one stateless generation or sessioned chat turn.
- *
- * `Chorus::GenerationRequest::prompt` is the raw prompt when
- * `Chorus::GenerationRequest::session_id` is absent and the new user message
- * when it is present. Chat-only controls are invalid for stateless requests.
- */
-struct GenerationRequest {
+struct InferenceRequest {
     std::string prompt;
+    int priority = 0; // Higher values indicate higher scheduling priority.
+};
 
-    /// `std::nullopt` selects stateless generation. An empty `Chorus::SessionId` is invalid.
+struct EmbeddingRequest : InferenceRequest {};
+
+/// Describes one stateless generation or sessioned chat turn.
+struct GenerationRequest : InferenceRequest {
+    // `std::nullopt` selects stateless generation. An empty `Chorus::SessionId` is invalid.
     std::optional<SessionId> session_id;
 
-    /// Higher values indicate higher scheduling priority.
-    int priority = 0;
-
-    /// Whether to emit `Chorus::RuntimeEvent::Kind::StreamedToken` and
-    /// `Chorus::RuntimeEvent::Kind::StreamedReasoningToken` events.
+    // Whether to emit `Chorus::RuntimeEvent::Kind::StreamedToken` and
+    // `Chorus::RuntimeEvent::Kind::StreamedReasoningToken` events.
     bool stream = false;
 
-    /// Per-request changes layered over `Chorus::HostDefaults::config`.
+    // Per-request changes layered over `Chorus::HostDefaults::config`.
     GenerationConfigPatch overrides;
 
-    /// Ephemeral messages inserted into this turn without changing stored history.
+    // Ephemeral messages inserted into this turn without changing stored history.
     std::vector<InjectedMessage> inject;
 
-    /// Per-request chat template. An empty value inherits `Chorus::HostDefaults::chat_template`.
+    // Per-request chat template. An empty value inherits `Chorus::HostDefaults::chat_template`.
     std::string chat_template;
 };
 
@@ -57,7 +53,7 @@ struct GenerationRequest {
 struct HostDefaults {
     GenerationConfigPatch config;
 
-    /// Host chat template. An empty value delegates template selection to the engine.
+    // Host chat template. An empty value delegates template selection to the engine.
     std::string chat_template;
 };
 
@@ -67,30 +63,34 @@ struct RuntimeEvent {
         StreamedToken,          // Incremental visible text, emitted only for streaming requests.
         StreamedReasoningToken, // Incremental reasoning text, emitted only for streaming requests.
         Complete,               // Terminal success with complete visible and reasoning output.
+        Embedding,              // Terminal success carrying a normalized embedding vector.
         Error,                  // Terminal request failure.
         HistoryTruncated,       // Prompt fitting omitted stored history messages; stored history is unchanged.
         EngineFailed            // Engine-wide failure that does not terminate a request.
     };
 
-    /// Accepted request ID, or `-1` for `Chorus::RuntimeEvent::Kind::EngineFailed`.
+    // Accepted request ID, or `-1` for `Chorus::RuntimeEvent::Kind::EngineFailed`.
     RequestId request_id;
 
-    /// Absent for stateless requests and `Chorus::RuntimeEvent::Kind::EngineFailed`.
+    // Absent for stateless requests and `Chorus::RuntimeEvent::Kind::EngineFailed`.
     std::optional<SessionId> session_id;
 
     Kind kind;
 
-    /// Streamed chunk on token events, full visible output on completion, or failure diagnostic.
+    // Streamed chunk on token events, full visible output on completion, or failure diagnostic.
     std::string text;
 
-    /// `Chorus::ChorusError::None` except on failure events.
-    /// Engine-wide failure always carries `Chorus::ChorusError::EngineNotReady`.
+    // `Chorus::ChorusError::None` except on failure events.
+    // Engine-wide failure always carries `Chorus::ChorusError::EngineNotReady`.
     ChorusError error = ChorusError::None;
 
-    /// Complete reasoning output on `Chorus::RuntimeEvent::Kind::Complete`.
+    // Complete reasoning output on `Chorus::RuntimeEvent::Kind::Complete`.
     std::string reasoning;
 
-    /// History messages omitted from the fitted prompt by a truncation event.
+    // Normalized vector on `Chorus::RuntimeEvent::Kind::Embedding`.
+    std::vector<float> embedding;
+
+    // History messages omitted from the fitted prompt by a truncation event.
     int32_t dropped = 0;
 };
 
@@ -100,13 +100,13 @@ struct RuntimeEvent {
  * A rejection creates no request and emits no events.
  */
 struct SubmitResult {
-    /// Nonnegative for an accepted request; `-1` for rejection.
+    // Nonnegative for an accepted request; `-1` for rejection.
     RequestId request_id = -1;
 
-    /// `Chorus::ChorusError::None` on acceptance; the rejection reason otherwise.
+    // `Chorus::ChorusError::None` on acceptance; the rejection reason otherwise.
     ChorusError error = ChorusError::None;
 
-    /// Empty on acceptance; supplied by the rejecting layer otherwise.
+    // Empty on acceptance; supplied by the rejecting layer otherwise.
     std::string message;
 
     bool ok() const { return error == ChorusError::None; }
@@ -146,10 +146,13 @@ class ChorusRuntime {
      */
     std::optional<ChorusError> load_engine(std::unique_ptr<InferenceEngine> engine, const ChorusConfig& config);
 
-    /// Whether an initialized engine is ready to accept work.
+    // Whether an initialized engine is ready to accept work.
     bool is_loaded() const;
 
-    /// Replaces the ambient settings layered beneath future requests.
+    // Copies the effective capabilities of the initialized engine.
+    std::optional<EngineCapabilities> capabilities() const;
+
+    // Replaces the ambient settings layered beneath future requests.
     void set_host_defaults(HostDefaults defaults);
 
     /*
@@ -166,6 +169,9 @@ class ChorusRuntime {
      *  - `Chorus::ChorusError::UnsupportedOption`: the provider rejects a requested option.
      */
     [[nodiscard]] SubmitResult submit(const GenerationRequest& request);
+
+    /// Submits a stateless embedding request.
+    [[nodiscard]] SubmitResult submit(const EmbeddingRequest& request);
 
     /*
      * Regenerates the latest assistant reply in a session.
@@ -342,10 +348,12 @@ class ChorusRuntime {
     fit_turn_messages(const ResolvedRequest& resolved, std::vector<ChatMessage> prospective) const;
 
     struct LiveRequest {
+        RequestType type = RequestType::Generate;
         bool streaming = false;
         std::string accumulated_text;
         std::optional<SessionId> session_id;
         std::string accumulated_reasoning;
+        std::optional<std::vector<float>> embedding;
         std::optional<ChatMessage> replaced_reply;
     };
 

@@ -21,6 +21,7 @@ static func run_tests(parent: Node) -> void:
 		"n_batch": 2048,
 		"n_ubatch": 512,
 		"main_gpu": 0,
+		"pooling": "model",
 	}
 
 	await TestReport.run("declared provider options expose their defaults", func():
@@ -58,6 +59,9 @@ static func run_tests(parent: Node) -> void:
 		chorus.main_gpu = 1
 		TestReport.check(chorus.main_gpu == 1, "expected main_gpu to round-trip")
 
+		chorus.pooling = "last"
+		TestReport.check(chorus.pooling == "last", "expected pooling to round-trip")
+
 		chorus.use_gpu = false
 		TestReport.check(chorus.use_gpu == false, "expected use_gpu to round-trip")
 	)
@@ -69,6 +73,10 @@ static func run_tests(parent: Node) -> void:
 			listed[entry["name"]] = entry
 		for name in LLAMA_OPTIONS:
 			TestReport.check(listed.has(name), "expected %s in the property list" % name)
+		TestReport.check(
+			listed["pooling"]["hint"] == PROPERTY_HINT_ENUM,
+			"expected pooling to be rendered as a provider-owned enum"
+		)
 	)
 
 	await TestReport.run("provider options revert to the declared default", func():

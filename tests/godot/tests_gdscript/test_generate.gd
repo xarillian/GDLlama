@@ -40,6 +40,22 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(session_by_request_id.get(second_id, "") == expected_session_2, "expected the second request's signal to report session" + expected_session_2)
 	)
 
+	await TestReport.run("embed() fires embedding_complete with a matching id", func():
+		TestReport.check(chorus.supports_embeddings(), "expected Echo to report effective embedding support")
+		var request_id := chorus.embed("cat sleeps on mat")
+		TestReport.check(request_id >= 0, "expected embed() to return a request id >= 0")
+
+		var event: Array = await chorus.embedding_complete
+		TestReport.check(event[0] == request_id, "expected embedding_complete's request_id to match embed()'s return value")
+		var embedding: PackedFloat32Array = event[1]
+		TestReport.check(embedding.size() == 128, "expected Echo embedding dimension to be 128")
+	)
+
+	await TestReport.run("empty embed() rejects before submission", func():
+		var request_id := chorus.embed("")
+		TestReport.check(request_id == -1, "expected empty embedding prompt to reject before submission")
+	)
+
 	await TestReport.run("invalid provider options in generation defaults reject submission", func():
 		var defaults := ChorusGenerationDefaults.new()
 		defaults.provider_options = {"llama": {"repeat_penalty": Vector2.ONE}}

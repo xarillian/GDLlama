@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <iostream>
 #include <memory>
@@ -78,6 +79,70 @@ TEST(EchoEngine, Echo_streams_prompt_word_by_word_then_stops) {
     });
     ASSERT_EQ(terminals, size_t{1});
 
+    engine.shutdown();
+}
+
+TEST(EchoEngine, Echo_embedding_is_deterministic_normalized_and_lexical) {
+    const auto embed = [](const std::string& prompt) {
+        Chorus::EchoEngine engine;
+        EXPECT_TRUE(!engine.initialize(Chorus::ChorusConfig{}, {}).has_value());
+        Chorus::ChorusRequest request;
+        request.id = 1;
+        request.type = Chorus::RequestType::Embedding;
+        request.prompt = prompt;
+        EXPECT_TRUE(!engine.validate_request(request).has_value());
+
+        std::mutex mutex;
+        std::condition_variable cv;
+        std::vector<Chorus::ChorusSignal> signals;
+        request.on_event = [&](Chorus::ChorusSignal& signal) {
+            std::lock_guard<std::mutex> lock(mutex);
+            signals.push_back(signal);
+            cv.notify_all();
+        };
+        engine.submit_request(request);
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(2), [&] {
+                return !signals.empty() && std::holds_alternative<Chorus::ChorusSignal::Stop>(signals.back().event);
+            }));
+        }
+        engine.shutdown();
+        EXPECT_EQ(signals.size(), size_t{2});
+        if (signals.empty() || !std::holds_alternative<Chorus::ChorusSignal::Embedding>(signals[0].event)) {
+            ADD_FAILURE() << "Echo did not emit an embedding before Stop.";
+            return std::vector<float>{};
+        }
+        return std::get<Chorus::ChorusSignal::Embedding>(signals[0].event).values;
+    };
+    const auto anchor = embed("A cat sleeps on the warm mat");
+    const auto same_case_folded = embed("a CAT sleeps on the warm mat");
+    const auto related = embed("cat sleeps on a mat");
+    const auto unrelated = embed("volcanic eruptions and molten rock");
+
+    ASSERT_EQ(anchor.size(), size_t{128});
+    ASSERT_EQ(anchor, same_case_folded);
+    double norm = 0.0;
+    double related_score = 0.0;
+    double unrelated_score = 0.0;
+    for (size_t i = 0; i < anchor.size(); ++i) {
+        ASSERT_TRUE(std::isfinite(anchor[i]));
+        norm += static_cast<double>(anchor[i]) * anchor[i];
+        related_score += static_cast<double>(anchor[i]) * related[i];
+        unrelated_score += static_cast<double>(anchor[i]) * unrelated[i];
+    }
+    ASSERT_NEAR(norm, 1.0, 1e-6);
+    ASSERT_TRUE(related_score > unrelated_score);
+}
+
+TEST(EchoEngine, Echo_embedding_rejects_empty_prompt) {
+    Chorus::EchoEngine engine;
+    ASSERT_TRUE(!engine.initialize(Chorus::ChorusConfig{}, {}).has_value());
+    Chorus::ChorusRequest request;
+    request.type = Chorus::RequestType::Embedding;
+    const auto rejection = engine.validate_request(request);
+    ASSERT_TRUE(rejection.has_value());
+    ASSERT_TRUE(rejection->error == Chorus::ChorusError::InvalidRequest);
     engine.shutdown();
 }
 

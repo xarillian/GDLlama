@@ -18,6 +18,16 @@ Chorus::ProviderOptionDescriptors schema() {
     };
 }
 
+TEST(OptionSchema, Option_schema_preserves_provider_owned_string_choices) {
+    const Chorus::ProviderOptionDescriptor descriptor{
+        "pooling", "Pooling", "", std::string{"model"}, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+        {"model", "none", "mean", "cls", "last"}
+    };
+    ASSERT_EQ(descriptor.choices.size(), size_t{5});
+    ASSERT_EQ(descriptor.choices[0], std::string("model"));
+    ASSERT_EQ(descriptor.choices[4], std::string("last"));
+}
+
 TEST(OptionSchema, Option_schema_finds_declared_keys) {
     const auto descriptors = schema();
     const auto* found = Chorus::find_option_descriptor(descriptors, "threads");

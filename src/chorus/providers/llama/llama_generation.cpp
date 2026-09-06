@@ -108,27 +108,25 @@ make_llama_sampler(const llama_model* model, ResolvedLlamaGeneration resolved) {
             if (llama_vocab_is_eog(vocab, token))
                 biases.push_back({token, -INFINITY});
         }
-        std::variant<ResolvedLlamaGeneration, RequestRejection> resolve_llama_generation(
-            const GenerationConfig& config
-        ) {}
-
-        try {
-            return common_sampler_ptr(common_sampler_init(model, resolved.sampling));
-        } catch (const std::runtime_error& error) {
-            std::string constraint_name = "sampler configuration";
-            if (resolved.sampling.grammar.type == COMMON_GRAMMAR_TYPE_USER)
-                constraint_name = "GBNF constraint";
-            else if (resolved.sampling.grammar.type == COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT)
-                constraint_name = "JSON Schema constraint";
-            return RequestRejection{
-                ChorusError::InvalidRequest, "Invalid " + constraint_name + ": " + std::string(error.what())
-            };
-        }
     }
 
-    namespace {
+    try {
+        return common_sampler_ptr(common_sampler_init(model, resolved.sampling));
+    } catch (const std::runtime_error& error) {
+        std::string constraint_name = "sampler configuration";
+        if (resolved.sampling.grammar.type == COMMON_GRAMMAR_TYPE_USER)
+            constraint_name = "GBNF constraint";
+        else if (resolved.sampling.grammar.type == COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT)
+            constraint_name = "JSON Schema constraint";
+        return RequestRejection{
+            ChorusError::InvalidRequest, "Invalid " + constraint_name + ": " + std::string(error.what())
+        };
+    }
+}
 
-    RequestRejection common_option_rejection(
+namespace {
+
+RequestRejection common_option_rejection(
         const std::string& key, const std::string& expected, const std::string& received, const std::string& range
     ) {
         return {

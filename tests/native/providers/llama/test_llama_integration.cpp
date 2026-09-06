@@ -16,6 +16,7 @@ class LlamaGpuModelTest : public ChorusGpuModelTest {};
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <iostream>
 #include <map>
@@ -1761,7 +1762,95 @@ RuntimeDrainResult drain_runtime_until_terminal(Chorus::ChorusRuntime& runtime, 
     return result;
 }
 
+std::optional<std::vector<float>> drain_embedding(Chorus::ChorusRuntime& runtime, Chorus::RequestId request_id) {
+    for (int waited_ms = 0; waited_ms < 60000; waited_ms += 50) {
+        for (auto& event : runtime.poll()) {
+            if (event.request_id != request_id)
+                continue;
+            if (event.kind == Chorus::RuntimeEvent::Kind::Embedding)
+                return std::move(event.embedding);
+            if (event.kind == Chorus::RuntimeEvent::Kind::Error)
+                return std::nullopt;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return std::nullopt;
+}
+
 } // namespace
+
+TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_returns_a_normalized_embedding) {
+    Chorus::ChorusConfig config = make_gguf_config("tests/models/embeddinggemma-300M-Q8_0.gguf");
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"n_batch", int64_t{64}}, {"n_ubatch", int64_t{64}}};
+    Chorus::ChorusRuntime runtime;
+    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), config).has_value());
+    const auto capabilities = runtime.capabilities();
+    ASSERT_TRUE(capabilities.has_value() && capabilities->embeddings);
+
+    const auto submitted = runtime.submit(Chorus::EmbeddingRequest{{"The cat sat on the mat.", 0}});
+    ASSERT_TRUE(submitted.ok());
+    std::optional<Chorus::RuntimeEvent> terminal;
+    for (int waited_ms = 0; waited_ms < 60000 && !terminal; waited_ms += 50) {
+        for (auto& event : runtime.poll()) {
+            if (event.request_id == submitted.request_id &&
+                (event.kind == Chorus::RuntimeEvent::Kind::Embedding || event.kind == Chorus::RuntimeEvent::Kind::Error))
+                terminal = std::move(event);
+        }
+        if (!terminal)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    ASSERT_TRUE(terminal.has_value());
+    ASSERT_TRUE(terminal->kind == Chorus::RuntimeEvent::Kind::Embedding);
+    ASSERT_EQ(terminal->embedding.size(), size_t{768});
+    double norm = 0.0;
+    for (float value : terminal->embedding) {
+        ASSERT_TRUE(std::isfinite(value));
+        norm += static_cast<double>(value) * value;
+    }
+    ASSERT_NEAR(norm, 1.0, 1e-5);
+
+    std::string oversized_prompt;
+    for (int i = 0; i < 200; ++i)
+        oversized_prompt += "word ";
+    const auto oversized = runtime.submit(Chorus::EmbeddingRequest{{oversized_prompt, 0}});
+    ASSERT_TRUE(!oversized.ok());
+    ASSERT_TRUE(oversized.error == Chorus::ChorusError::InvalidRequest);
+}
+
+TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_none_pooling_uses_normalized_token_embeddings) {
+    Chorus::ChorusConfig config = make_gguf_config("tests/models/embeddinggemma-300M-Q8_0.gguf");
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
+        {"use_gpu", false}, {"n_batch", int64_t{64}}, {"n_ubatch", int64_t{64}}, {"pooling", std::string{"none"}}
+    };
+    Chorus::ChorusRuntime runtime;
+    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), config).has_value());
+
+    const auto submit = [&](const std::string& prompt) {
+        const auto result = runtime.submit(Chorus::EmbeddingRequest{{prompt, 0}});
+        if (!result.ok())
+            return std::optional<std::vector<float>>{};
+        return drain_embedding(runtime, result.request_id);
+    };
+    const auto anchor = submit("The cat sat on the mat.");
+    const auto paraphrase = submit("A feline was resting on the rug.");
+    const auto unrelated = submit("Volcanic eruptions produce molten rock.");
+    ASSERT_TRUE(anchor.has_value());
+    ASSERT_TRUE(paraphrase.has_value());
+    ASSERT_TRUE(unrelated.has_value());
+    ASSERT_EQ(anchor->size(), size_t{768});
+
+    double norm = 0.0;
+    double related_score = 0.0;
+    double unrelated_score = 0.0;
+    for (size_t i = 0; i < anchor->size(); ++i) {
+        ASSERT_TRUE(std::isfinite((*anchor)[i]));
+        norm += static_cast<double>((*anchor)[i]) * (*anchor)[i];
+        related_score += static_cast<double>((*anchor)[i]) * (*paraphrase)[i];
+        unrelated_score += static_cast<double>((*anchor)[i]) * (*unrelated)[i];
+    }
+    ASSERT_NEAR(norm, 1.0, 1e-5);
+    ASSERT_TRUE(related_score > unrelated_score);
+}
 
 TEST_F(LlamaIntegrationModelTest, Llama_chat_messages_render_and_generate) {
     Chorus::LlamaEngine engine;

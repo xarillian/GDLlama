@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -55,6 +56,7 @@ struct OwnedEvent {
     bool has_reasoning;
     std::string reasoning;
     int32_t dropped;
+    std::vector<float> embedding;
 };
 
 struct PolledEvents {
@@ -75,6 +77,8 @@ OwnedEvent copy_event(const chorus_event& event) {
         event.reasoning != nullptr,
         event.reasoning != nullptr ? event.reasoning : "",
         event.dropped,
+        event.embedding != nullptr ? std::vector<float>(event.embedding, event.embedding + event.embedding_count)
+                                 : std::vector<float>{},
     };
 }
 
@@ -91,7 +95,8 @@ PolledEvents poll_until_terminal(chorus_runtime* runtime, chorus_request_id requ
         for (size_t index = 0; index < count; ++index) {
             result.events.push_back(copy_event(events[index]));
             if (events[index].request_id == request_id &&
-                (events[index].kind == CHORUS_EVENT_COMPLETE || events[index].kind == CHORUS_EVENT_ERROR))
+                (events[index].kind == CHORUS_EVENT_COMPLETE || events[index].kind == CHORUS_EVENT_EMBEDDING ||
+                 events[index].kind == CHORUS_EVENT_ERROR))
                 result.saw_terminal = true;
         }
         if (!result.saw_terminal)
@@ -102,7 +107,7 @@ PolledEvents poll_until_terminal(chorus_runtime* runtime, chorus_request_id requ
 
 TEST(ChorusC, ChorusC_header_null_safety_and_abi_version) {
     ASSERT_EQ(chorus_c_header_smoke(), 0);
-    ASSERT_EQ(chorus_abi_version(), uint32_t{1});
+    ASSERT_EQ(chorus_abi_version(), uint32_t{2});
 }
 
 struct ErrorNameCase {
@@ -166,6 +171,43 @@ TEST(ChorusC, ChorusC_load_stop_and_empty_polls) {
 
     ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
     ASSERT_TRUE(chorus_is_loaded(runtime.get()));
+}
+
+TEST(ChorusC, ChorusC_effective_capabilities_follow_the_loaded_engine) {
+    RuntimePtr runtime(chorus_runtime_new());
+    ASSERT_TRUE(runtime != nullptr);
+    chorus_capabilities capabilities{};
+    ASSERT_TRUE(!chorus_get_capabilities(runtime.get(), &capabilities));
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
+    ASSERT_TRUE(chorus_get_capabilities(runtime.get(), &capabilities));
+    ASSERT_TRUE(capabilities.embeddings);
+    ASSERT_TRUE(capabilities.streaming);
+}
+
+TEST(ChorusC, ChorusC_embed_transports_a_runtime_owned_vector) {
+    RuntimePtr runtime(chorus_runtime_new());
+    ASSERT_TRUE(runtime != nullptr);
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
+
+    chorus_request_id request_id = -1;
+    ASSERT_EQ(chorus_embed(runtime.get(), "cat sleeps on mat", 3, &request_id), CHORUS_OK);
+    const PolledEvents result = poll_until_terminal(runtime.get(), request_id);
+    ASSERT_TRUE(result.saw_terminal);
+    ASSERT_EQ(result.events.size(), size_t{1});
+    ASSERT_EQ(result.events[0].kind, CHORUS_EVENT_EMBEDDING);
+    ASSERT_EQ(result.events[0].embedding.size(), size_t{128});
+    double norm = 0.0;
+    for (float value : result.events[0].embedding) {
+        ASSERT_TRUE(std::isfinite(value));
+        norm += static_cast<double>(value) * value;
+    }
+    ASSERT_NEAR(norm, 1.0, 1e-6);
+
+    size_t count = 0;
+    const chorus_event* events = chorus_poll(runtime.get(), &count);
+    ASSERT_TRUE(events != nullptr);
+    ASSERT_EQ(count, size_t{0});
+    ASSERT_EQ(result.events[0].embedding.size(), size_t{128});
 }
 
 TEST(ChorusC, ChorusC_builder_streams_and_completes) {

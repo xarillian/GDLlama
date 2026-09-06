@@ -2,10 +2,12 @@
 #include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
+#include "chorus/providers/llama/llama_scheduler.hpp"
 #include "gtest_utils.hpp"
 
 class LlamaSchedulerModelTest : public ChorusModelTest {};
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -16,6 +18,82 @@ class LlamaSchedulerModelTest : public ChorusModelTest {};
 #include <thread>
 #include <utility>
 #include <vector>
+
+namespace {
+
+struct SchedulerObservation {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::vector<Chorus::LlamaBatchRecord> batches;
+    std::map<Chorus::RequestId, std::vector<Chorus::ChorusSignal>> terminals;
+    Chorus::RequestId gate_request_id = -1;
+    bool gate_seen = false;
+    bool release_gate = false;
+
+    void observe(const Chorus::LlamaBatchRecord& record) {
+        std::unique_lock<std::mutex> lock(mutex);
+        batches.push_back(record);
+        if (std::find(record.request_ids.begin(), record.request_ids.end(), gate_request_id) == record.request_ids.end())
+            return;
+        gate_seen = true;
+        cv.notify_all();
+        cv.wait(lock, [&] { return release_gate; });
+        gate_request_id = -1;
+        release_gate = false;
+        cv.notify_all();
+    }
+
+    void handle(const Chorus::ChorusSignal& signal) {
+        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) &&
+            !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+            return;
+        std::lock_guard<std::mutex> lock(mutex);
+        terminals[signal.request_id].push_back(signal);
+        cv.notify_all();
+    }
+
+    bool wait_for_gate() {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, std::chrono::seconds(15), [&] { return gate_seen; });
+    }
+
+    void release() {
+        std::lock_guard<std::mutex> lock(mutex);
+        release_gate = true;
+        cv.notify_all();
+    }
+
+    bool wait_for_terminals(const std::vector<Chorus::RequestId>& ids) {
+        std::unique_lock<std::mutex> lock(mutex);
+        return cv.wait_for(lock, std::chrono::seconds(30), [&] {
+            return std::ranges::all_of(ids, [&](Chorus::RequestId id) { return !terminals[id].empty(); });
+        });
+    }
+};
+
+Chorus::ChorusRequest make_scheduler_generation(Chorus::RequestId id, int priority) {
+    Chorus::ChorusRequest request;
+    request.id = id;
+    request.priority = priority;
+    request.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
+    request.gen_config.max_tokens = 1;
+    return request;
+}
+
+Chorus::ChorusRequest make_scheduler_embedding(Chorus::RequestId id, std::string prompt, int priority) {
+    Chorus::ChorusRequest request;
+    request.id = id;
+    request.type = Chorus::RequestType::Embedding;
+    request.priority = priority;
+    request.prompt = std::move(prompt);
+    return request;
+}
+
+bool record_contains(const Chorus::LlamaBatchRecord& record, Chorus::RequestId id) {
+    return std::find(record.request_ids.begin(), record.request_ids.end(), id) != record.request_ids.end();
+}
+
+} // namespace
 
 const std::string MODEL_PATH = "tests/models/gemma-3-270m-it-F16.gguf";
 
@@ -59,6 +137,13 @@ TEST(LlamaScheduler, load_option_GPU_placement_preserves_upstream_device_selecti
     ASSERT_TRUE(context.op_offload);
 }
 
+TEST(LlamaScheduler, embeddings_require_a_single_supported_architecture) {
+    ASSERT_TRUE(Chorus::llama_embedding_architecture_supported(true, false));
+    ASSERT_TRUE(Chorus::llama_embedding_architecture_supported(false, true));
+    ASSERT_TRUE(!Chorus::llama_embedding_architecture_supported(false, false));
+    ASSERT_TRUE(!Chorus::llama_embedding_architecture_supported(true, true));
+}
+
 TEST(LlamaScheduler, load_option_context_params_forward_exact_values) {
     Chorus::LlamaLoadConfig load;
     load.context_size = 4096;
@@ -66,6 +151,7 @@ TEST(LlamaScheduler, load_option_context_params_forward_exact_values) {
     load.thread_count = 6;
     load.n_batch = 96;
     load.n_ubatch = 32;
+    load.pooling = LLAMA_POOLING_TYPE_LAST;
     const auto params = Chorus::make_llama_context_params(load);
     ASSERT_EQ(params.n_ctx, uint32_t{4096});
     ASSERT_EQ(params.n_seq_max, uint32_t{3});
@@ -73,6 +159,205 @@ TEST(LlamaScheduler, load_option_context_params_forward_exact_values) {
     ASSERT_EQ(params.n_threads_batch, int32_t{6});
     ASSERT_EQ(params.n_batch, uint32_t{96});
     ASSERT_EQ(params.n_ubatch, uint32_t{32});
+    ASSERT_EQ(params.pooling_type, LLAMA_POOLING_TYPE_LAST);
+}
+
+TEST_F(LlamaSchedulerModelTest, Mixed_requests_follow_priority_fifo_and_use_homogeneous_batches) {
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
+        {"use_gpu", false},
+        {"num_slots", int64_t{3}},
+        {"n_batch", int64_t{64}},
+        {"n_ubatch", int64_t{16}},
+        {"pooling", std::string{"none"}},
+    };
+
+    SchedulerObservation state;
+    Chorus::LlamaEngine engine;
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { state.observe(record); });
+
+    auto blocker = make_scheduler_generation(1, 100);
+    blocker.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.gate_request_id = blocker.id;
+    }
+    engine.submit_request(blocker);
+    ASSERT_TRUE(state.wait_for_gate());
+
+    auto high_embedding = make_scheduler_embedding(2, "short embedding prompt", 10);
+    high_embedding.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+    auto low_generation = make_scheduler_generation(3, 0);
+    low_generation.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+    engine.submit_request(high_embedding);
+    engine.submit_request(low_generation);
+    state.release();
+    ASSERT_TRUE(state.wait_for_terminals({blocker.id, high_embedding.id, low_generation.id}));
+
+    auto fifo_blocker = make_scheduler_generation(4, 100);
+    fifo_blocker.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.gate_request_id = fifo_blocker.id;
+        state.gate_seen = false;
+    }
+    engine.submit_request(fifo_blocker);
+    ASSERT_TRUE(state.wait_for_gate());
+
+    auto first_generation = make_scheduler_generation(5, 5);
+    first_generation.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+    auto second_embedding = make_scheduler_embedding(6, "another short embedding prompt", 5);
+    second_embedding.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+    engine.submit_request(first_generation);
+    engine.submit_request(second_embedding);
+    state.release();
+    ASSERT_TRUE(state.wait_for_terminals({fifo_blocker.id, first_generation.id, second_embedding.id}));
+    engine.shutdown();
+
+    std::lock_guard<std::mutex> lock(state.mutex);
+    const auto high = std::find_if(state.batches.begin(), state.batches.end(), [&](const auto& record) {
+        return record_contains(record, high_embedding.id) || record_contains(record, low_generation.id);
+    });
+    ASSERT_TRUE(high != state.batches.end());
+    ASSERT_TRUE(high->type == Chorus::RequestType::Embedding);
+    ASSERT_TRUE(record_contains(*high, high_embedding.id));
+    ASSERT_EQ(high->embedding_output_indices.size(), size_t{1});
+    ASSERT_EQ(high->embedding_output_indices[0], high->token_count - 1);
+
+    const auto fifo = std::find_if(state.batches.begin(), state.batches.end(), [&](const auto& record) {
+        return record_contains(record, first_generation.id) || record_contains(record, second_embedding.id);
+    });
+    ASSERT_TRUE(fifo != state.batches.end());
+    ASSERT_TRUE(fifo->type == Chorus::RequestType::Generate);
+    ASSERT_TRUE(record_contains(*fifo, first_generation.id));
+
+    const std::map<Chorus::RequestId, Chorus::RequestType> types{
+        {blocker.id, Chorus::RequestType::Generate},
+        {high_embedding.id, Chorus::RequestType::Embedding},
+        {low_generation.id, Chorus::RequestType::Generate},
+        {fifo_blocker.id, Chorus::RequestType::Generate},
+        {first_generation.id, Chorus::RequestType::Generate},
+        {second_embedding.id, Chorus::RequestType::Embedding},
+    };
+    for (const auto& record : state.batches)
+        for (const auto id : record.request_ids)
+            ASSERT_TRUE(types.at(id) == record.type);
+}
+
+TEST_F(LlamaSchedulerModelTest, Embedding_batches_respect_n_ubatch_and_cancellation) {
+    Chorus::ChorusConfig config = make_gguf_config("tests/models/embeddinggemma-300M-Q8_0.gguf");
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
+        {"use_gpu", false},
+        {"num_slots", int64_t{4}},
+        {"n_batch", int64_t{16}},
+        {"n_ubatch", int64_t{8}},
+        {"pooling", std::string{"none"}},
+    };
+
+    SchedulerObservation state;
+    Chorus::LlamaEngine engine;
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { state.observe(record); });
+
+    auto blocker = make_scheduler_embedding(10, "block", 0);
+    blocker.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.gate_request_id = blocker.id;
+    }
+    engine.submit_request(blocker);
+    ASSERT_TRUE(state.wait_for_gate());
+
+    std::vector<Chorus::ChorusRequest> embeddings;
+    for (const auto [id, prompt] : std::vector<std::pair<Chorus::RequestId, std::string>>{
+             {11, "a"}, {12, "b"}, {13, "c"}}) {
+        auto request = make_scheduler_embedding(id, prompt, 0);
+        request.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+        embeddings.push_back(std::move(request));
+    }
+    for (const auto& request : embeddings)
+        engine.submit_request(request);
+    state.release();
+    ASSERT_TRUE(state.wait_for_terminals({blocker.id, 11, 12, 13}));
+    engine.shutdown();
+
+    std::lock_guard<std::mutex> lock(state.mutex);
+    bool batched_embeddings = false;
+    for (const auto& record : state.batches) {
+        ASSERT_TRUE(record.token_count <= 8);
+        if (record.type == Chorus::RequestType::Embedding && record.request_ids.size() > 1)
+            batched_embeddings = true;
+    }
+    ASSERT_TRUE(batched_embeddings);
+}
+
+TEST_F(LlamaSchedulerModelTest, Embeddings_cancel_while_queued_and_admitted) {
+    auto make_config = [] {
+        Chorus::ChorusConfig config = make_gguf_config("tests/models/embeddinggemma-300M-Q8_0.gguf");
+        config.provider_options["llama"] = Chorus::ProviderOptionMap{
+            {"use_gpu", false},
+            {"num_slots", int64_t{1}},
+            {"n_batch", int64_t{16}},
+            {"n_ubatch", int64_t{8}},
+            {"pooling", std::string{"none"}},
+        };
+        return config;
+    };
+
+    SchedulerObservation queued_state;
+    Chorus::LlamaEngine queued_engine;
+    ASSERT_TRUE(!queued_engine.initialize(make_config(), {}).has_value());
+    queued_engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { queued_state.observe(record); });
+    auto blocker = make_scheduler_embedding(20, "block", 0);
+    blocker.on_event = [&](const Chorus::ChorusSignal& signal) { queued_state.handle(signal); };
+    {
+        std::lock_guard<std::mutex> lock(queued_state.mutex);
+        queued_state.gate_request_id = blocker.id;
+    }
+    queued_engine.submit_request(blocker);
+    ASSERT_TRUE(queued_state.wait_for_gate());
+    auto queued = make_scheduler_embedding(21, "queued", 0);
+    queued.on_event = [&](const Chorus::ChorusSignal& signal) { queued_state.handle(signal); };
+    queued_engine.submit_request(queued);
+    queued_engine.cancel_request(queued.id);
+    queued_state.release();
+    ASSERT_TRUE(queued_state.wait_for_terminals({blocker.id, queued.id}));
+    queued_engine.shutdown();
+
+    {
+        std::lock_guard<std::mutex> lock(queued_state.mutex);
+        ASSERT_EQ(queued_state.terminals[queued.id].size(), size_t{1});
+        const auto* error = std::get_if<Chorus::ChorusSignal::Error>(&queued_state.terminals[queued.id][0].event);
+        ASSERT_TRUE(error != nullptr && error->code == Chorus::ChorusError::Cancelled);
+        for (const auto& record : queued_state.batches)
+            ASSERT_TRUE(!record_contains(record, queued.id));
+    }
+
+    SchedulerObservation admitted_state;
+    Chorus::LlamaEngine admitted_engine;
+    ASSERT_TRUE(!admitted_engine.initialize(make_config(), {}).has_value());
+    admitted_engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { admitted_state.observe(record); });
+    auto admitted = make_scheduler_embedding(22, "admitted", 0);
+    admitted.on_event = [&](const Chorus::ChorusSignal& signal) { admitted_state.handle(signal); };
+    {
+        std::lock_guard<std::mutex> lock(admitted_state.mutex);
+        admitted_state.gate_request_id = admitted.id;
+    }
+    admitted_engine.submit_request(admitted);
+    ASSERT_TRUE(admitted_state.wait_for_gate());
+    admitted_engine.cancel_request(admitted.id);
+    admitted_state.release();
+    ASSERT_TRUE(admitted_state.wait_for_terminals({admitted.id}));
+    admitted_engine.shutdown();
+
+    std::lock_guard<std::mutex> lock(admitted_state.mutex);
+    ASSERT_EQ(admitted_state.terminals[admitted.id].size(), size_t{1});
+    const auto* error = std::get_if<Chorus::ChorusSignal::Error>(&admitted_state.terminals[admitted.id][0].event);
+    ASSERT_TRUE(error != nullptr && error->code == Chorus::ChorusError::Cancelled);
+    ASSERT_TRUE(std::ranges::any_of(admitted_state.batches, [&](const auto& record) {
+        return record_contains(record, admitted.id);
+    }));
 }
 
 TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
