@@ -27,7 +27,8 @@ class EchoEngine : public InferenceEngine {
   public:
     ~EchoEngine() override;
 
-    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override;
+    std::optional<Chorus::InitializationFailure>
+    initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override;
     bool is_initialized() const override;
 
     EngineCapabilities capabilities() const override;

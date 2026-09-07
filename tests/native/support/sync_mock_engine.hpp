@@ -50,8 +50,10 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     std::vector<Chorus::ChatMessage> last_messages; // messages of the last submitted request
     std::string last_chat_template;                 // template of the last submitted request
     Chorus::GenerationConfig last_config;           // resolved config of the last submitted request
+    Chorus::ExecutionMode last_execution = Chorus::ExecutionMode::Shared;
 
-    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override {
+    std::optional<Chorus::InitializationFailure>
+    initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override {
         initialize_calls++;
         _log = std::move(logger);
         if (seen_model_id)
@@ -60,7 +62,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
             std::thread([log = _log] { log.info("From worker"); }).join();
         }
         if (fail_initialize_with.has_value())
-            return fail_initialize_with;
+            return Chorus::InitializationFailure{*fail_initialize_with, "mock initialization failure"};
         _initialized = true;
         return std::nullopt;
     }
@@ -121,6 +123,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         last_messages = req.messages;
         last_chat_template = req.chat_template;
         last_config = req.gen_config;
+        last_execution = req.execution;
         if (!req.on_event)
             return;
 

@@ -9,11 +9,11 @@ ChorusRuntime::~ChorusRuntime() {
     unload_engine();
 }
 
-std::optional<ChorusError>
+std::optional<InitializationFailure>
 ChorusRuntime::load_engine(std::unique_ptr<InferenceEngine> engine, const ChorusConfig& config) {
     assert_host_thread();
     if (!engine)
-        return ChorusError::InvalidRequest;
+        return InitializationFailure{ChorusError::InvalidRequest, "An inference engine is required."};
 
     if (_engine) {
         unload_engine();
@@ -33,6 +33,11 @@ ChorusRuntime::load_engine(std::unique_ptr<InferenceEngine> engine, const Chorus
 
 bool ChorusRuntime::is_loaded() const {
     return _engine && _engine->is_initialized();
+}
+
+std::optional<LoadedModelInfo> ChorusRuntime::loaded_model_info() const {
+    assert_host_thread();
+    return is_loaded() ? _engine->loaded_model_info() : std::nullopt;
 }
 
 std::optional<EngineCapabilities> ChorusRuntime::capabilities() const {
@@ -70,6 +75,7 @@ ChorusRequest ChorusRuntime::make_engine_request(const ResolvedRequest& resolved
     ChorusRequest engine_request;
     engine_request.session_id = resolved.request.session_id;
     engine_request.priority = resolved.request.priority;
+    engine_request.execution = resolved.request.execution;
     engine_request.prompt = resolved.request.prompt;
     engine_request.gen_config = resolved.config;
     engine_request.chat_template = resolved.chat_template;
@@ -140,6 +146,7 @@ SubmitResult ChorusRuntime::submit(const EmbeddingRequest& request) {
     engine_request.type = RequestType::Embedding;
     engine_request.prompt = request.prompt;
     engine_request.priority = request.priority;
+    engine_request.execution = request.execution;
     engine_request.on_event = [this](ChorusSignal& sig) { enqueue_signal(sig); };
 
     if (auto rejection = _engine->validate_request(engine_request))

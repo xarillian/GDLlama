@@ -38,7 +38,8 @@ class InferenceEngine {
      *  - `ChorusError::UnsupportedOption`: a load option the provider does not declare.
      *  - `ChorusError::Unknown`: the provider could not classify the failure.
      */
-    virtual std::optional<ChorusError> initialize(const Chorus::ChorusConfig& chorus_config, Logger logger) = 0;
+    virtual std::optional<InitializationFailure>
+    initialize(const Chorus::ChorusConfig& chorus_config, Logger logger) = 0;
 
     /// Whether the engine is ready to accept work.
     /// An engine that fails after initialization returns false, as does an

@@ -105,23 +105,15 @@ std::optional<RequestRejection> apply_gpu_layers(LlamaLoadConfig& config, const 
     return rejection;
 }
 
-std::optional<RequestRejection> apply_num_slots(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+std::optional<RequestRejection> apply_max_concurrent_requests(
+    LlamaLoadConfig& config, const ProviderOptionValue& option
+) {
     return assign_bounded_integer(
-        config.num_slots,
+        config.max_concurrent_requests,
         std::get<int64_t>(option),
         1,
         std::numeric_limits<uint32_t>::max(),
-        "Llama load option 'num_slots' must be a positive uint32."
-    );
-}
-
-std::optional<RequestRejection> apply_tokens_per_tick(LlamaLoadConfig& config, const ProviderOptionValue& option) {
-    return assign_bounded_integer(
-        config.tokens_per_tick,
-        std::get<int64_t>(option),
-        1,
-        std::numeric_limits<int32_t>::max(),
-        "Llama load option 'tokens_per_tick' must be a positive int32."
+        "Llama load option 'max_concurrent_requests' must be a positive uint32."
     );
 }
 
@@ -190,8 +182,7 @@ constexpr std::array load_option_bindings{
     LoadOptionBinding{"thread_count", apply_thread_count},
     LoadOptionBinding{"use_gpu", apply_use_gpu},
     LoadOptionBinding{"gpu_layers", apply_gpu_layers},
-    LoadOptionBinding{"num_slots", apply_num_slots},
-    LoadOptionBinding{"tokens_per_tick", apply_tokens_per_tick},
+    LoadOptionBinding{"max_concurrent_requests", apply_max_concurrent_requests},
     LoadOptionBinding{"n_batch", apply_n_batch},
     LoadOptionBinding{"n_ubatch", apply_n_ubatch},
     LoadOptionBinding{"main_gpu", apply_main_gpu},
@@ -220,7 +211,7 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
         return ProviderOptionDescriptors{
             {"context_size",
              "Context Size",
-             "Total context window in tokens, shared by all slots.",
+             "Total context window in tokens, divided among concurrent requests.",
              int64_t{d.context_size},
              128,
              65536,
@@ -250,20 +241,12 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
              999,
              1,
              "use_gpu"},
-            {"num_slots",
-             "Slots",
-             "Maximum number of concurrent conversations.",
-             int64_t{d.num_slots},
+            {"max_concurrent_requests",
+             "Max Concurrent Requests",
+             "Maximum generation and embedding requests processed concurrently. One processes requests individually; higher values automatically co-batch compatible work. Additional requests remain queued. Higher values divide Context Size among concurrent requests and may increase resource use. Takes effect on the next load_model().",
+             int64_t{d.max_concurrent_requests},
              1,
              32,
-             1,
-             std::nullopt},
-            {"tokens_per_tick",
-             "Tokens Per Tick",
-             "Prompt tokens consumed from each active conversation per scheduler pass.",
-             int64_t{d.tokens_per_tick},
-             1,
-             4096,
              1,
              std::nullopt},
             // Widget bounds cannot depend on sibling values, so each bound uses
@@ -275,7 +258,9 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
              int64_t{d.n_ubatch},
              65536,
              1,
-             std::nullopt},
+             std::nullopt,
+             {},
+             ProviderOptionPresentation::Advanced},
             {"n_ubatch",
              "Micro-Batch Size",
              "Maximum physical sub-batch size. Must not exceed the batch size.",
@@ -283,7 +268,9 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
              1,
              int64_t{d.n_batch},
              1,
-             std::nullopt},
+             std::nullopt,
+             {},
+             ProviderOptionPresentation::Advanced},
             {"main_gpu", "Main GPU", "Zero-based index of the primary GPU.", int64_t{d.main_gpu}, 0, 15, 1, "use_gpu"},
             {"pooling",
              "Pooling",
@@ -347,7 +334,7 @@ llama_model_params make_llama_model_params(const LlamaLoadConfig& config, LlamaO
 llama_context_params make_llama_context_params(const LlamaLoadConfig& config) {
     llama_context_params params = llama_context_default_params();
     params.n_ctx = config.context_size;
-    params.n_seq_max = config.num_slots;
+    params.n_seq_max = config.max_concurrent_requests;
     params.n_threads = config.thread_count;
     params.n_threads_batch = config.thread_count;
     params.n_batch = config.n_batch;

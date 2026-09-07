@@ -7,9 +7,9 @@ int chorus_c_header_smoke(void) {
         chorus_request_set_provider_option_bool;
     chorus_error (*set_string)(chorus_request*, const char*, const char*, const char*) =
         chorus_request_set_provider_option_string;
-    chorus_error (*embed)(chorus_runtime*, const char*, int32_t, chorus_request_id*) = chorus_embed;
+    chorus_error (*embed)(chorus_runtime*, const char*, int32_t, chorus_execution_mode, chorus_request_id*) = chorus_embed;
 
-    if (chorus_abi_version() != 2 || strcmp(chorus_error_name(CHORUS_ERR_SESSION_BUSY), "SessionBusy") != 0)
+    if (chorus_abi_version() != 3 || strcmp(chorus_error_name(CHORUS_ERR_SESSION_BUSY), "SessionBusy") != 0)
         return 1;
     if (set_bool(NULL, "echo", "flag", true) != CHORUS_ERR_INVALID_REQUEST)
         return 2;
@@ -19,7 +19,7 @@ int chorus_c_header_smoke(void) {
         return 4;
     if (chorus_options_set_string(NULL, "key", "value") != CHORUS_ERR_INVALID_REQUEST)
         return 5;
-    if (embed(NULL, "prompt", 0, NULL) != CHORUS_ERR_INVALID_REQUEST)
+    if (embed(NULL, "prompt", 0, CHORUS_EXECUTION_SHARED, NULL) != CHORUS_ERR_INVALID_REQUEST)
         return 6;
 
     chorus_runtime_free(NULL);

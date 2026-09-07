@@ -54,6 +54,11 @@ typedef enum chorus_provider {
     CHORUS_PROVIDER_ECHO = 1,
 } chorus_provider;
 
+typedef enum chorus_execution_mode {
+    CHORUS_EXECUTION_SHARED = 0,
+    CHORUS_EXECUTION_EXCLUSIVE = 1,
+} chorus_execution_mode;
+
 typedef enum chorus_event_kind {
     CHORUS_EVENT_TOKEN = 0,
     CHORUS_EVENT_REASONING_TOKEN = 1,
@@ -177,6 +182,7 @@ CHORUS_API chorus_error chorus_request_set_prompt(chorus_request* req, const cha
 /* NULL clears the session and selects stateless generation. */
 CHORUS_API chorus_error chorus_request_set_session(chorus_request* req, const char* session);
 CHORUS_API chorus_error chorus_request_set_priority(chorus_request* req, int32_t priority);
+CHORUS_API chorus_error chorus_request_set_execution_mode(chorus_request* req, chorus_execution_mode execution);
 CHORUS_API chorus_error chorus_request_set_stream(chorus_request* req, bool stream);
 CHORUS_API chorus_error chorus_request_set_max_tokens(chorus_request* req, int32_t max_tokens);
 CHORUS_API chorus_error chorus_request_set_temperature(chorus_request* req, float temperature);
@@ -208,7 +214,7 @@ CHORUS_API chorus_error chorus_request_set_chat_template(chorus_request* req, co
 CHORUS_API chorus_error
 chorus_generate(chorus_runtime* rt, const chorus_request* req, chorus_request_id* out_request_id);
 CHORUS_API chorus_error chorus_embed(
-    chorus_runtime* rt, const char* prompt, int32_t priority, chorus_request_id* out_request_id
+    chorus_runtime* rt, const char* prompt, int32_t priority, chorus_execution_mode execution, chorus_request_id* out_request_id
 );
 CHORUS_API chorus_error
 chorus_regenerate(chorus_runtime* rt, const chorus_request* req, chorus_request_id* out_request_id);

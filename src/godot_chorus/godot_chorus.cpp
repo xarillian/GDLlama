@@ -273,7 +273,11 @@ void GodotChorus::_process(double /*delta*/) {
 // Core API
 
 bool GodotChorus::load_model() {
+    _last_load_error = ERR_NONE;
+    _last_load_error_message = String();
     if (_provider != PROVIDER_ECHO && _model_path.is_empty()) {
+        _last_load_error = ERR_INVALID_REQUEST;
+        _last_load_error_message = "model_path is not set.";
         UtilityFunctions::push_error("[Chorus] model_path is not set.");
         return false;
     }
@@ -299,7 +303,9 @@ bool GodotChorus::load_model() {
     // whole channel exists to answer.
     drain_logs();
     if (err.has_value()) {
-        UtilityFunctions::push_error(String("[Chorus] Model load failed: ") + chorus_error_name(err.value()));
+        _last_load_error = to_godot(err->error);
+        _last_load_error_message = to_godot_string(err->message);
+        UtilityFunctions::push_error(String("[Chorus] Model load failed: ") + chorus_error_name(err->error) + String(" - ") + _last_load_error_message);
         return false;
     }
     return true;
@@ -318,15 +324,33 @@ bool GodotChorus::supports_embeddings() const {
     return capabilities && capabilities->embeddings;
 }
 
-int64_t GodotChorus::embed(const String& prompt, int64_t priority) {
+int64_t GodotChorus::get_effective_context_size() const {
+    const auto info = _runtime.loaded_model_info();
+    return info ? info->per_request_context.value_or(0) : 0;
+}
+
+int GodotChorus::get_last_load_error() const { return _last_load_error; }
+String GodotChorus::get_last_load_error_message() const { return _last_load_error_message; }
+
+int64_t GodotChorus::embed(const String& prompt, int64_t priority, const String& execution) {
     if (priority < std::numeric_limits<int>::min() || priority > std::numeric_limits<int>::max()) {
         UtilityFunctions::push_error("[Chorus] embed rejected: priority is outside the supported int range.");
         return -1;
     }
-    return report_submit_result(
-        "embed",
-        _runtime.submit(Chorus::EmbeddingRequest{{std::string(prompt.utf8().get_data()), static_cast<int>(priority)}})
-    );
+    Chorus::ExecutionMode mode;
+    if (execution == "shared")
+        mode = Chorus::ExecutionMode::Shared;
+    else if (execution == "exclusive")
+        mode = Chorus::ExecutionMode::Exclusive;
+    else {
+        UtilityFunctions::push_error("[Chorus] embed rejected: execution must be 'shared' or 'exclusive'.");
+        return -1;
+    }
+    Chorus::EmbeddingRequest request;
+    request.prompt = std::string(prompt.utf8().get_data());
+    request.priority = static_cast<int>(priority);
+    request.execution = mode;
+    return report_submit_result("embed", _runtime.submit(request));
 }
 
 int64_t GodotChorus::generate(const Dictionary& request) {
@@ -535,6 +559,8 @@ bool GodotChorus::_set(const StringName& name, const Variant& value) {
         return true;
     }
     _load_options[descriptor->key] = std::move(*coerced);
+    if (is_loaded())
+        UtilityFunctions::push_warning("[Chorus] load option changed while loaded; takes effect on the next load_model().");
     if (is_prerequisite_for_any_option(load_option_descriptors(), descriptor->key)) {
         // Dependent options may have entered or left the Inspector surface.
         notify_property_list_changed();
@@ -559,6 +585,15 @@ void GodotChorus::_get_property_list(List<PropertyInfo>* list) const {
         return;
     list->push_back(PropertyInfo(Variant::NIL, "Provider Options", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_GROUP));
     for (const auto& descriptor : descriptors) {
+        if (descriptor.presentation != Chorus::ProviderOptionPresentation::Normal)
+            continue;
+        const bool enabled = Chorus::is_prerequisite_option_enabled(descriptors, descriptor, _load_options);
+        list->push_back(godot_chorus::property_info_for(descriptor, enabled));
+    }
+    list->push_back(PropertyInfo(Variant::NIL, "Advanced Provider Options", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_GROUP));
+    for (const auto& descriptor : descriptors) {
+        if (descriptor.presentation != Chorus::ProviderOptionPresentation::Advanced)
+            continue;
         const bool enabled = Chorus::is_prerequisite_option_enabled(descriptors, descriptor, _load_options);
         list->push_back(godot_chorus::property_info_for(descriptor, enabled));
     }
@@ -755,7 +790,7 @@ void GodotChorus::_bind_methods() {
     ClassDB::bind_method(D_METHOD("is_loaded"), &GodotChorus::is_loaded);
     ClassDB::bind_method(D_METHOD("supports_embeddings"), &GodotChorus::supports_embeddings);
     ClassDB::bind_method(D_METHOD("generate", "request"), &GodotChorus::generate);
-    ClassDB::bind_method(D_METHOD("embed", "prompt", "priority"), &GodotChorus::embed, DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("embed", "prompt", "priority", "execution"), &GodotChorus::embed, DEFVAL(0), DEFVAL("shared"));
     ClassDB::bind_method(D_METHOD("cancel_request", "request_id"), &GodotChorus::cancel_request);
     ClassDB::bind_method(D_METHOD("is_request_active", "request_id"), &GodotChorus::is_request_active);
     ClassDB::bind_method(D_METHOD("active_request_for_session", "session"), &GodotChorus::active_request_for_session);
@@ -789,6 +824,12 @@ void GodotChorus::_bind_methods() {
     ADD_PROPERTY(
         PropertyInfo(Variant::STRING, "model_path", PROPERTY_HINT_FILE, "*.gguf"), "set_model_path", "get_model_path"
     );
+    ClassDB::bind_method(D_METHOD("get_effective_context_size"), &GodotChorus::get_effective_context_size);
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "effective_context_size", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_effective_context_size");
+    ClassDB::bind_method(D_METHOD("get_last_load_error"), &GodotChorus::get_last_load_error);
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "last_load_error", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_last_load_error");
+    ClassDB::bind_method(D_METHOD("get_last_load_error_message"), &GodotChorus::get_last_load_error_message);
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "last_load_error_message", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_last_load_error_message");
 
     // Provider load options such as `context_size` and `use_gpu` are not bound
     // here. `GodotChorus::_get_property_list` renders the selected provider's

@@ -55,8 +55,7 @@ TEST(LlamaLoadOptions, Llama_load_options_map_to_distinct_config_fields) {
     ASSERT_EQ(parsed_defaults->thread_count, expected_defaults.thread_count);
     ASSERT_EQ(parsed_defaults->use_gpu, expected_defaults.use_gpu);
     ASSERT_EQ(parsed_defaults->gpu_layers, expected_defaults.gpu_layers);
-    ASSERT_EQ(parsed_defaults->num_slots, expected_defaults.num_slots);
-    ASSERT_EQ(parsed_defaults->tokens_per_tick, expected_defaults.tokens_per_tick);
+    ASSERT_EQ(parsed_defaults->max_concurrent_requests, expected_defaults.max_concurrent_requests);
     ASSERT_EQ(parsed_defaults->n_batch, expected_defaults.n_batch);
     ASSERT_EQ(parsed_defaults->n_ubatch, expected_defaults.n_ubatch);
     ASSERT_EQ(parsed_defaults->main_gpu, expected_defaults.main_gpu);
@@ -70,8 +69,7 @@ TEST(LlamaLoadOptions, Llama_load_options_map_to_distinct_config_fields) {
              ASSERT_EQ(load.gpu_layers, int32_t{17});
              ASSERT_TRUE(load.gpu_layers_explicit);
          }},
-        {"num_slots", int64_t{3}, [](const auto& load) { ASSERT_EQ(load.num_slots, uint32_t{3}); }},
-        {"tokens_per_tick", int64_t{96}, [](const auto& load) { ASSERT_EQ(load.tokens_per_tick, int32_t{96}); }},
+        {"max_concurrent_requests", int64_t{3}, [](const auto& load) { ASSERT_EQ(load.max_concurrent_requests, uint32_t{3}); }},
         {"n_batch", int64_t{1024}, [](const auto& load) { ASSERT_EQ(load.n_batch, uint32_t{1024}); }},
         {"n_ubatch", int64_t{32}, [](const auto& load) { ASSERT_EQ(load.n_ubatch, uint32_t{32}); }},
         {"main_gpu", int64_t{2}, [](const auto& load) {
@@ -114,6 +112,9 @@ TEST(LlamaLoadOptions, Llama_load_options_reject_invalid_values_with_key_context
     const int64_t above_uint32 = int64_t{std::numeric_limits<uint32_t>::max()} + 1;
     const std::vector<InvalidCase> cases{
         {"not_a_real_option", int64_t{1}},
+        {"num_slots", int64_t{1}},
+        {"tokens_per_tick", int64_t{1}},
+        {"prefill_reserve", int64_t{1}},
         {"warp_factor", int64_t{9}},
         {"context_size", std::string("large")},
         {"n_batch", true},
@@ -125,8 +126,7 @@ TEST(LlamaLoadOptions, Llama_load_options_reject_invalid_values_with_key_context
         {"context_size", int64_t{0}},
         {"thread_count", int64_t{0}},
         {"gpu_layers", int64_t{-2}},
-        {"num_slots", int64_t{0}},
-        {"tokens_per_tick", int64_t{0}},
+        {"max_concurrent_requests", int64_t{0}},
         {"n_batch", int64_t{0}},
         {"n_batch", int64_t{-1}},
         {"n_ubatch", int64_t{0}},
@@ -135,8 +135,7 @@ TEST(LlamaLoadOptions, Llama_load_options_reject_invalid_values_with_key_context
         {"context_size", above_uint32},
         {"thread_count", above_int32},
         {"gpu_layers", above_int32},
-        {"num_slots", above_uint32},
-        {"tokens_per_tick", above_int32},
+        {"max_concurrent_requests", above_uint32},
         {"n_batch", above_int32},
         {"n_ubatch", above_uint32},
         {"main_gpu", above_int32},

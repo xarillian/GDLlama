@@ -51,6 +51,23 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(embedding.size() == 128, "expected Echo embedding dimension to be 128")
 	)
 
+	await TestReport.run("exclusive execution uses the unchanged request flow", func():
+		var generation_id := chorus.generate({"prompt": "isolated", "execution": "exclusive"})
+		TestReport.check(generation_id >= 0, "expected exclusive generation to be accepted")
+		var generation_event: Array = await chorus.generation_complete
+		TestReport.check(generation_event[0] == generation_id, "expected exclusive generation to keep its request id")
+
+		var embedding_id := chorus.embed("isolated embedding", 0, "exclusive")
+		TestReport.check(embedding_id >= 0, "expected exclusive embedding to be accepted")
+		var embedding_event: Array = await chorus.embedding_complete
+		TestReport.check(embedding_event[0] == embedding_id, "expected exclusive embedding to keep its request id")
+	)
+
+	await TestReport.run("unknown execution values reject before submission", func():
+		TestReport.check(chorus.generate({"prompt": "must not run", "execution": "parallel"}) == -1, "expected unknown generation execution to reject")
+		TestReport.check(chorus.embed("must not run", 0, "parallel") == -1, "expected unknown embedding execution to reject")
+	)
+
 	await TestReport.run("empty embed() rejects before submission", func():
 		var request_id := chorus.embed("")
 		TestReport.check(request_id == -1, "expected empty embedding prompt to reject before submission")

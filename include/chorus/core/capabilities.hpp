@@ -16,6 +16,8 @@ enum class SchedulingAuthority {
     Hybrid,
 };
 
+enum class ProviderOptionPresentation { Normal, Advanced };
+
 /*
  * Hosts build their configuration UI from these descriptors instead of hardcoding the options
  * per provider. The descriptor is a single source of truth for an option's name, default, and
@@ -45,6 +47,7 @@ struct ProviderOptionDescriptor {
 
     /// Allowed values for a string option. Empty means any string is accepted.
     std::vector<std::string> choices;
+    ProviderOptionPresentation presentation = ProviderOptionPresentation::Normal;
 };
 
 using ProviderOptionDescriptors = std::vector<ProviderOptionDescriptor>;

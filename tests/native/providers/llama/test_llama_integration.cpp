@@ -219,7 +219,6 @@ TEST_F(LlamaIntegrationModelTest, Llama_batch_controls_create_context_and_genera
         {"use_gpu", false},
         {"n_batch", int64_t{96}},
         {"n_ubatch", int64_t{32}},
-        {"tokens_per_tick", int64_t{96}},
     };
 
     std::mutex mutex;
@@ -266,7 +265,6 @@ TEST_F(LlamaIntegrationModelTest, Llama_effective_batch_capacity_contains_oversi
         {"context_size", int64_t{128}},
         {"n_batch", int64_t{512}},
         {"n_ubatch", int64_t{128}},
-        {"tokens_per_tick", int64_t{512}},
     };
 
     struct State {
@@ -277,6 +275,8 @@ TEST_F(LlamaIntegrationModelTest, Llama_effective_batch_capacity_contains_oversi
     } state;
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    const auto model_info = engine.loaded_model_info();
+    ASSERT_TRUE(model_info && model_info->per_request_context);
 
     Chorus::ChorusRequest request;
     request.id = 512;
@@ -334,19 +334,24 @@ TEST_F(LlamaIntegrationModelTest, Llama_effective_batch_capacity_contains_oversi
     ASSERT_EQ(state.oversized_terminals.size(), size_t{1});
     const auto* oversized_error = std::get_if<Chorus::ChorusSignal::Error>(&state.oversized_terminals[0].event);
     ASSERT_TRUE(oversized_error != nullptr);
-    if (oversized_error)
+    if (oversized_error) {
         ASSERT_EQ(oversized_error->code, Chorus::ChorusError::Decode);
+        ASSERT_NE(oversized_error->message.find("max_concurrent_requests=1"), std::string::npos);
+        ASSERT_NE(oversized_error->message.find(
+                      "effective per-request context " + std::to_string(*model_info->per_request_context)),
+                  std::string::npos);
+    }
     ASSERT_TRUE(recovery_finished);
     ASSERT_EQ(state.recovery_terminals.size(), size_t{1});
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.recovery_terminals[0].event));
 }
 
-TEST_F(LlamaIntegrationModelTest, Llama_ConcurrentRequestsCompleteWithMultipleSlots) {
+TEST_F(LlamaIntegrationModelTest, Llama_concurrent_requests_complete_with_multiple_sequences) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
-        {"num_slots", int64_t{2}},
+        {"max_concurrent_requests", int64_t{2}},
     };
 
     std::atomic<int> completed_count{0};
@@ -358,15 +363,15 @@ TEST_F(LlamaIntegrationModelTest, Llama_ConcurrentRequestsCompleteWithMultipleSl
 
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
-    for (int slot_index = 0; slot_index < 2; ++slot_index) {
+    for (int request_index = 0; request_index < 2; ++request_index) {
         Chorus::ChorusRequest request;
-        request.id = slot_index;
+        request.id = request_index;
         request.prompt = "<start_of_turn>user\nHello!<end_of_turn>\n<start_of_turn>model\n";
         request.gen_config.max_tokens = 10;
-        request.on_event = [&, slot_index](const Chorus::ChorusSignal& sig) {
+        request.on_event = [&, request_index](const Chorus::ChorusSignal& sig) {
             if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
                 std::lock_guard<std::mutex> lock(responses_mutex);
-                responses[slot_index] += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
+                responses[request_index] += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
             } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
                 completed_count++;
             }
@@ -511,7 +516,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_removes_queued_request_befo
     auto state = std::make_shared<State>();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -584,7 +589,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_is_idempotent_and_releases_
     std::vector<Chorus::ChorusSignal> active_signals;
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -675,7 +680,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_from_committed_buffered_tok
     };
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -745,7 +750,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_shutdown_waits_for_active_cancellation_c
     auto state = std::make_shared<State>();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -1075,7 +1080,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_tokens_completes_and_reuses_sl
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
-        {"num_slots", int64_t{1}},
+        {"max_concurrent_requests", int64_t{1}},
     };
 
     std::mutex mutex;
@@ -1135,7 +1140,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_marker_never_emits_and_slot_reuses)
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
-        {"num_slots", int64_t{1}},
+        {"max_concurrent_requests", int64_t{1}},
     };
 
     struct Result {
@@ -1357,7 +1362,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_completes_while_slot_is_occupi
     auto state = std::make_shared<State>();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -1402,8 +1407,8 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_completes_while_slot_is_occupi
 }
 
 // Terminal invariant sweep: every accepted request yields exactly one terminal
-// event. One single-slot engine drives success, token limit, zero limit, stop
-// match, cancellation, and invalid-grammar-after-acceptance in sequence; the
+// event. One single-request engine drives success, token limit, zero limit,
+// stop match, cancellation, and invalid-grammar-after-acceptance in sequence; the
 // remaining scenarios (decode failure, engine stop) need their own engine
 // lifecycle and follow below.
 TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_one_per_request) {
@@ -1418,7 +1423,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_one_per_request) {
     auto sweep = std::make_shared<Sweep>();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -1557,8 +1562,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_decode_failure_ends_o
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
         {"context_size", int64_t{64}},
-        {"tokens_per_tick", int64_t{16}},
-        {"num_slots", int64_t{1}},
+        {"max_concurrent_requests", int64_t{1}},
     };
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
@@ -1603,7 +1607,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_engine_shutdown_ends_
     std::vector<Chorus::ChorusSignal> terminals;
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"num_slots", int64_t{1}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -1642,9 +1646,9 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_engine_shutdown_ends_
     ASSERT_EQ(terminals[0].request_id, request.id);
 }
 
-// Two-slot scenario: one request is cancelled while the other completes normally,
-// each ending with exactly one terminal of its own kind.
-TEST_F(LlamaIntegrationModelTest, Llama_two_slot_one_cancels_one_completes) {
+// Two-sequence scenario: one request is cancelled while the other completes
+// normally, each ending with exactly one terminal of its own kind.
+TEST_F(LlamaIntegrationModelTest, Llama_two_sequences_one_cancels_one_completes) {
 
     struct State {
         std::mutex mutex;
@@ -1656,7 +1660,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_two_slot_one_cancels_one_completes) {
     auto state = std::make_shared<State>();
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
-    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"num_slots", int64_t{2}}};
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{2}}};
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}).has_value());
 
@@ -1934,12 +1938,12 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_multi_turn_stays_contextual) {
 }
 
 TEST_F(LlamaIntegrationModelTest, Llama_chat_truncation_preserves_system) {
-    // A tiny context (num_slots=1) forces a real truncation, then the
+    // A tiny context (max_concurrent_requests=1) forces a real truncation, then the
     // render hook proves the system message survived in the fitted window.
     Chorus::ChorusRuntime runtime;
     auto config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] =
-        Chorus::ProviderOptionMap{{"context_size", int64_t{512}}, {"num_slots", int64_t{1}}, {"use_gpu", false}};
+        Chorus::ProviderOptionMap{{"context_size", int64_t{512}}, {"max_concurrent_requests", int64_t{1}}, {"use_gpu", false}};
     ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), config).has_value());
 
     std::vector<Chorus::ChatMessage> history{{"system", "You are Brunn the blacksmith."}};

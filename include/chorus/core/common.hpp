@@ -33,6 +33,8 @@ enum class ChorusError {
 
 enum class RequestType { Generate, Embedding };
 
+enum class ExecutionMode { Shared, Exclusive };
+
 enum class TokenChannel { Content, Reasoning };
 
 /*
@@ -58,6 +60,17 @@ struct RequestRejection {
     ChorusError error = ChorusError::Unknown;
     std::string message;
 };
+
+struct InitializationFailure {
+    ChorusError error = ChorusError::Unknown;
+    std::string message;
+
+    bool operator==(ChorusError value) const { return error == value; }
+};
+
+inline bool operator==(ChorusError value, const InitializationFailure& failure) {
+    return failure == value;
+}
 
 /*
  * A message spliced into a conversation at a fixed distance from its end.
@@ -115,6 +128,7 @@ struct ChorusRequest {
     std::string prompt;
 
     int priority = 0;
+    ExecutionMode execution = ExecutionMode::Shared;
 
     std::vector<ChatMessage> messages;
     std::string chat_template; // Overrides the model's embedded template when non-empty.

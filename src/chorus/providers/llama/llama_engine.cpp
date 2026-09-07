@@ -28,7 +28,7 @@ LlamaEngine::~LlamaEngine() {
     shutdown();
 }
 
-std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config, Logger logger) {
+std::optional<InitializationFailure> LlamaEngine::initialize(const ChorusConfig& config, Logger logger) {
     bool holds_dead_scheduler = false;
     {
         std::lock_guard<std::mutex> lock(_lifecycle_mutex);
@@ -45,7 +45,7 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config, L
 
     if (config.model.format != ModelFormat::Gguf && config.model.format != ModelFormat::Auto) {
         _log.error("Engine loads GGUF only", {{"model", config.model.model_id}});
-        return ChorusError::UnsupportedModelFormat;
+        return InitializationFailure{ChorusError::UnsupportedModelFormat, "This engine loads GGUF models only."};
     }
 
     try {
@@ -64,7 +64,7 @@ std::optional<ChorusError> LlamaEngine::initialize(const ChorusConfig& config, L
         return std::nullopt;
     } catch (const std::exception& e) {
         _log.error("Exception during initialization", {{"detail", e.what()}});
-        return ChorusError::Unknown;
+        return InitializationFailure{ChorusError::Unknown, e.what()};
     }
 }
 

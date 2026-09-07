@@ -103,6 +103,9 @@ class GodotChorus : public godot::Node {
     void stop_all();
     bool is_loaded() const;
     bool supports_embeddings() const;
+    int64_t get_effective_context_size() const;
+    int get_last_load_error() const;
+    godot::String get_last_load_error_message() const;
 
     /*
      * Submits one stateless generation or sessioned chat turn.
@@ -144,7 +147,7 @@ class GodotChorus : public godot::Node {
      *  - `-1`: normalization or submission failed.
      */
     int64_t generate(const godot::Dictionary& request);
-    int64_t embed(const godot::String& prompt, int64_t priority = 0);
+    int64_t embed(const godot::String& prompt, int64_t priority = 0, const godot::String& execution = "shared");
 
     /*
      * Rerolls the last assistant message in a session.
@@ -321,6 +324,8 @@ class GodotChorus : public godot::Node {
     // supplies the internal fallback.
     godot::Ref<ChorusGenerationDefaults> _generation_defaults;
     godot::Ref<ChorusGenerationDefaults> _fallback_generation_defaults;
+    int _last_load_error = ERR_NONE;
+    godot::String _last_load_error_message;
 };
 
 VARIANT_ENUM_CAST(GodotChorus::ErrorCode);

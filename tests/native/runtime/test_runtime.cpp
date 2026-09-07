@@ -67,7 +67,19 @@ TEST(Runtime, Runtime_failed_load_leaves_runtime_unloaded) {
     auto err = runtime.load_engine(std::move(engine), make_config());
     ASSERT_TRUE(err.has_value());
     ASSERT_TRUE(err.value() == Chorus::ChorusError::ModelLoad);
+    ASSERT_EQ(err->message, "mock initialization failure");
     ASSERT_TRUE(!runtime.is_loaded());
+}
+
+TEST(Runtime, Runtime_execution_mode_reaches_the_engine) {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* observed = engine.get();
+    ASSERT_FALSE(runtime.load_engine(std::move(engine), make_config()).has_value());
+    auto request = make_request("isolated");
+    request.execution = Chorus::ExecutionMode::Exclusive;
+    ASSERT_TRUE(runtime.submit(request).ok());
+    ASSERT_EQ(observed->last_execution, Chorus::ExecutionMode::Exclusive);
 }
 
 TEST(Runtime, Runtime_poll_on_idle_runtime_returns_empty) {

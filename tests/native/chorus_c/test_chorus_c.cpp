@@ -107,7 +107,7 @@ PolledEvents poll_until_terminal(chorus_runtime* runtime, chorus_request_id requ
 
 TEST(ChorusC, ChorusC_header_null_safety_and_abi_version) {
     ASSERT_EQ(chorus_c_header_smoke(), 0);
-    ASSERT_EQ(chorus_abi_version(), uint32_t{2});
+    ASSERT_EQ(chorus_abi_version(), uint32_t{3});
 }
 
 struct ErrorNameCase {
@@ -190,7 +190,7 @@ TEST(ChorusC, ChorusC_embed_transports_a_runtime_owned_vector) {
     ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
 
     chorus_request_id request_id = -1;
-    ASSERT_EQ(chorus_embed(runtime.get(), "cat sleeps on mat", 3, &request_id), CHORUS_OK);
+    ASSERT_EQ(chorus_embed(runtime.get(), "cat sleeps on mat", 3, CHORUS_EXECUTION_SHARED, &request_id), CHORUS_OK);
     const PolledEvents result = poll_until_terminal(runtime.get(), request_id);
     ASSERT_TRUE(result.saw_terminal);
     ASSERT_EQ(result.events.size(), size_t{1});

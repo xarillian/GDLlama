@@ -1,122 +1,86 @@
 #include "chorus/providers/llama/llama_scheduler.hpp"
-#include "chorus/core/common.hpp"
 #include "chorus/providers/llama/llama_engine.hpp"
-#include "chorus/providers/llama/llama_utils.hpp"
 
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <stdexcept>
 
 LlamaScheduler::~LlamaScheduler() {
     shutdown();
 }
 
 bool LlamaScheduler::load_model_from_file(const Chorus::LlamaLoadConfig& config) {
-    llama_model_params model_params = Chorus::make_llama_model_params(config, _no_offload_devices);
-
-    model = llama_model_load_from_file(config.weights_path.c_str(), model_params);
-    if (!model) {
+    model = llama_model_load_from_file(config.weights_path.c_str(), Chorus::make_llama_model_params(config, _no_offload_devices));
+    if (!model)
         _log.error("Failed to load model weights", {{"path", config.weights_path}});
-        return false;
-    }
-
-    return true;
+    return model != nullptr;
 }
 
 bool LlamaScheduler::init_context(const Chorus::LlamaLoadConfig& config) {
-    llama_context_params ctx_params = Chorus::make_llama_context_params(config);
-
-    context = llama_init_from_model(model, ctx_params);
-    if (!context) {
+    context = llama_init_from_model(model, Chorus::make_llama_context_params(config));
+    if (!context)
         _log.error("Failed to create the inference context", {{"context_size", (int64_t)config.context_size}});
-        return false;
-    }
-
-    return true;
+    return context != nullptr;
 }
 
-void LlamaScheduler::init_slots(uint32_t count) {
-    slots.clear();
-    slots.resize(count);
-    for (uint32_t index = 0; index < count; ++index)
-        slots[index].id = static_cast<int>(index);
-}
-
-std::optional<Chorus::ChorusError>
+std::optional<Chorus::InitializationFailure>
 LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) {
     _log = std::move(logger);
-    // Acquired before anything is loaded, so llama's own account of a failed
-    // model load reaches the host instead of the process's stderr.
     _llama_log_bridge = Chorus::LlamaLogBridge::acquire(_log);
-
     auto parsed = Chorus::parse_llama_load_config(config);
-    if (auto* rejection = std::get_if<Chorus::RequestRejection>(&parsed)) {
-        _log.error("Rejected load options", {{"detail", rejection->message}});
-        return rejection->error;
-    }
-    const Chorus::LlamaLoadConfig& load_config = std::get<Chorus::LlamaLoadConfig>(parsed);
-
+    if (auto* rejection = std::get_if<Chorus::RequestRejection>(&parsed))
+        return Chorus::InitializationFailure{rejection->error, rejection->message};
+    const auto& load_config = std::get<Chorus::LlamaLoadConfig>(parsed);
     if (!load_model_from_file(load_config))
-        return Chorus::ChorusError::ModelLoad;
-    if (!init_context(load_config))
-        return Chorus::ChorusError::ContextInit;
+        return Chorus::InitializationFailure{Chorus::ChorusError::ModelLoad, "Failed to load model weights."};
+    if (!init_context(load_config)) {
+        shutdown();
+        return Chorus::InitializationFailure{Chorus::ChorusError::ContextInit, "Failed to create the inference context."};
+    }
 
-    init_slots(load_config.num_slots);
-    _tokens_per_tick = load_config.tokens_per_tick;
     _batch_capacity = static_cast<int32_t>(llama_n_batch(context));
     _micro_batch_capacity = static_cast<int32_t>(llama_n_ubatch(context));
+    _max_concurrent_requests = load_config.max_concurrent_requests;
+    if (_max_concurrent_requests > static_cast<uint32_t>(_batch_capacity)) {
+        const std::string message = "This model configuration supports at most " + std::to_string(_batch_capacity) +
+                                    " concurrent requests; requested " + std::to_string(_max_concurrent_requests) + ".";
+        shutdown();
+        return Chorus::InitializationFailure{Chorus::ChorusError::UnsupportedOption, message};
+    }
     _pooling = llama_pooling_type(context);
     _embedding_dimensions = llama_model_n_embd_out(model);
     _has_encoder = llama_model_has_encoder(model);
     _has_decoder = llama_model_has_decoder(model);
     if (_pooling == LLAMA_POOLING_TYPE_RANK) {
-        _log.error("Rank pooling is not an embedding output");
-        return Chorus::ChorusError::UnsupportedFeature;
+        shutdown();
+        return Chorus::InitializationFailure{Chorus::ChorusError::UnsupportedFeature, "The model's rank pooling is not an embedding output."};
     }
-
-    if (static_cast<int64_t>(load_config.num_slots) * load_config.tokens_per_tick > _batch_capacity) {
-        _log.warn(
-            "Per-tick batch demand exceeds the context's effective n_batch and will be clamped to it",
-            {{"num_slots", (int64_t)load_config.num_slots},
-             {"tokens_per_tick", (int64_t)load_config.tokens_per_tick},
-             {"requested_n_batch", (int64_t)load_config.n_batch},
-             {"effective_n_batch", (int64_t)_batch_capacity}}
-        );
-    }
-
-    batch.initialize(_batch_capacity, 0, 1);
+    batch.initialize(_batch_capacity, 0, _max_concurrent_requests);
+    _sequence_ids.reset(static_cast<int>(_max_concurrent_requests));
 
     Chorus::LoadedModelInfo info;
     info.model_id = config.model.model_id;
     info.format = Chorus::ModelFormat::Gguf;
     info.family = Chorus::LlamaUtils::model_metadata(model, "general.architecture");
     info.quantization = Chorus::LlamaUtils::model_description(model);
-    info.maximum_context = (uint32_t)llama_model_n_ctx_train(model);
-    // Prompt fitting budgets against an even division of the context across
-    // concurrent slots.
-    info.per_request_context = (uint32_t)(llama_n_ctx(context) / std::max<size_t>(1, slots.size()));
+    info.maximum_context = static_cast<uint32_t>(llama_model_n_ctx_train(model));
+    info.per_request_context = static_cast<uint32_t>(llama_n_ctx(context) / _max_concurrent_requests);
     info.model_bytes = llama_model_size(model);
     info.input_modalities = {Chorus::Modality::Text};
     info.output_modalities = {Chorus::Modality::Text};
-    _model_info = info;
-
+    _model_info = std::move(info);
     try {
-        _model_default_chat_templates = common_chat_templates_init(model, /*chat_template_override=*/"");
+        _model_default_chat_templates = common_chat_templates_init(model, "");
     } catch (const std::exception& e) {
-        // Explicit overrides still work without embedded templates.
-        // Otherwise, chat rejects during ingest,
-        // `LlamaScheduler::render_chat_prompt` returns `std::nullopt`, and raw
-        // prompt generation remains available.
         _log.warn("Chat templates unavailable", {{"detail", e.what()}});
     }
-
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
         is_running = true;
         _cancel_requested.clear();
     }
     worker_thread = std::thread(&LlamaScheduler::worker_loop, this);
-
     return std::nullopt;
 }
 
@@ -126,14 +90,11 @@ void LlamaScheduler::shutdown() {
         is_running = false;
     }
     queue_cv.notify_all();
-
-    if (worker_thread.joinable()) {
+    if (worker_thread.joinable())
         worker_thread.join();
-    }
-
     batch.reset();
-    for (auto& slot : slots)
-        slot.sampler.reset();
+    _active_sequences.clear();
+    _sequence_ids.reset();
     if (context) {
         llama_free(context);
         context = nullptr;
@@ -143,9 +104,7 @@ void LlamaScheduler::shutdown() {
         model = nullptr;
     }
     _model_default_chat_templates.reset();
-    _model_info = std::nullopt;
-    // `::llama_model_free` and `::llama_free` log during teardown, and those
-    // records belong to this engine's host, so the bridge is released last.
+    _model_info.reset();
     _llama_log_bridge.reset();
 }
 
@@ -154,41 +113,32 @@ std::optional<Chorus::RenderedPrompt> LlamaScheduler::render_chat_prompt(
 ) const {
     if (!model)
         return std::nullopt;
-    auto rendered = [&] {
-        std::lock_guard<std::mutex> template_lock(_template_mutex);
-        return Chorus::render_llama_chat(
-            model, _model_default_chat_templates.get(), template_override, messages, enable_thinking
-        );
-    }();
+    std::lock_guard<std::mutex> lock(_template_mutex);
+    auto rendered = Chorus::render_llama_chat(model, _model_default_chat_templates.get(), template_override, messages, enable_thinking);
     if (std::holds_alternative<Chorus::RequestRejection>(rendered))
         return std::nullopt;
-    auto& render = std::get<Chorus::LlamaChatRender>(rendered);
-    // Vocab tokenization is read-only and safe beside the running worker.
-    std::vector<int32_t> tokens =
-        Chorus::LlamaUtils::tokenize(context, render.prompt, /*add_special=*/true, /*parse_special=*/true);
-    return Chorus::RenderedPrompt{std::move(render.prompt), (int32_t)tokens.size()};
+    auto& value = std::get<Chorus::LlamaChatRender>(rendered);
+    auto tokens = Chorus::LlamaUtils::tokenize(context, value.prompt, true, true);
+    return Chorus::RenderedPrompt{std::move(value.prompt), static_cast<int32_t>(tokens.size())};
 }
 
-bool LlamaScheduler::is_healthy() const {
-    return is_running.load();
-}
+bool LlamaScheduler::is_healthy() const { return is_running.load(); }
 
 Chorus::EngineCapabilities LlamaScheduler::capabilities() const {
-    Chorus::EngineCapabilities capabilities = Chorus::llama_provider_capabilities();
-    capabilities.streaming = _has_decoder;
-    capabilities.embeddings = Chorus::llama_embedding_architecture_supported(_has_encoder, _has_decoder) &&
-                              _embedding_dimensions > 0 && _pooling != LLAMA_POOLING_TYPE_RANK;
-    capabilities.prompt_rendering = _has_decoder;
-    return capabilities;
+    auto caps = Chorus::llama_provider_capabilities();
+    caps.streaming = _has_decoder;
+    caps.embeddings = Chorus::llama_embedding_architecture_supported(_has_encoder, _has_decoder) &&
+                      _embedding_dimensions > 0 && _pooling != LLAMA_POOLING_TYPE_RANK;
+    caps.prompt_rendering = _has_decoder;
+    return caps;
 }
 
-std::optional<Chorus::RequestRejection>
-LlamaScheduler::validate_embedding(const Chorus::ChorusRequest& request) const {
+std::optional<Chorus::RequestRejection> LlamaScheduler::validate_embedding(const Chorus::ChorusRequest& request) const {
     if (!capabilities().embeddings)
         return Chorus::RequestRejection{Chorus::ChorusError::UnsupportedFeature, "The loaded model cannot produce embeddings."};
     if (request.prompt.empty())
         return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "Embedding prompts must not be empty."};
-    auto tokens = Chorus::LlamaUtils::tokenize(context, request.prompt, true);
+    const auto tokens = Chorus::LlamaUtils::tokenize(context, request.prompt, true);
     if (tokens.empty())
         return Chorus::RequestRejection{Chorus::ChorusError::Tokenize, "Tokenization failed (empty result)."};
     if (tokens.size() > static_cast<size_t>(_micro_batch_capacity))
@@ -199,19 +149,15 @@ LlamaScheduler::validate_embedding(const Chorus::ChorusRequest& request) const {
 bool LlamaScheduler::push_request(const Chorus::ChorusRequest& req) {
     auto pending = std::make_shared<PendingRequest>();
     pending->request = req;
-    bool accepted = false;
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
-        if (is_running) {
-            pending->submission_sequence = _next_submission_sequence++;
-            request_queue.push(std::move(pending));
-            accepted = true;
-        }
+        if (!is_running)
+            return false;
+        pending->submission_sequence = _next_submission_sequence++;
+        request_queue.push(std::move(pending));
     }
-    if (accepted) {
-        queue_cv.notify_one();
-    }
-    return accepted;
+    queue_cv.notify_one();
+    return true;
 }
 
 void LlamaScheduler::cancel_request(Chorus::RequestId id) {
@@ -224,132 +170,65 @@ void LlamaScheduler::cancel_request(Chorus::RequestId id) {
     queue_cv.notify_one();
 }
 
-void LlamaScheduler::worker_loop() {
-    while (true) {
-        if (process_control_requests())
-            return;
-
-        ingest_new_requests();
-
-        if (process_control_requests())
-            return;
-
-        bool has_work = prepare_next_batch(_tokens_per_tick);
-
-        if (!has_work) {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            queue_cv.wait_for(lock, std::chrono::milliseconds(10), [this] {
-                return !is_running || !request_queue.empty() || !_cancel_requested.empty();
-            });
-            continue;
-        }
-
-        int decode_rc = run_inference();
-        if (process_control_requests())
-            return;
-
-        if (decode_rc != 0) {
-            fail_busy_slots(Chorus::ChorusError::Decode);
-            if (decode_rc < 0) {
-                _log.fatal("Decode failed unrecoverably; stopping the engine", {{"code", (int64_t)decode_rc}});
-                {
-                    std::lock_guard<std::mutex> lock(queue_mutex);
-                    is_running = false;
-                }
-                queue_cv.notify_all();
-            }
-            continue;
-        }
-
-        if (_batch_type == Chorus::RequestType::Embedding)
-            extract_embedding_batch();
-        else
-            sample_batch();
-    }
+bool LlamaScheduler::has_active_exclusive() const {
+    return std::ranges::any_of(_active_sequences, [](const auto& entry) {
+        return entry.second.request.execution == Chorus::ExecutionMode::Exclusive;
+    });
 }
 
 bool LlamaScheduler::process_control_requests() {
-    std::vector<PendingSignal> terminals;
-    bool shutting_down = false;
+    std::vector<PendingSignal> signals;
+    bool stopped = false;
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
-        shutting_down = !is_running;
-
+        stopped = !is_running;
         std::priority_queue<PendingRequestPtr, std::vector<PendingRequestPtr>, PendingRequestCompare> retained;
         while (!request_queue.empty()) {
             auto pending = request_queue.top();
             request_queue.pop();
-            if (shutting_down || _cancel_requested.contains(pending->request.id)) {
-                terminals.emplace_back(
-                    std::move(pending->request),
-                    Chorus::ChorusSignal::Error{
-                        Chorus::ChorusError::Cancelled,
-                        shutting_down ? "Request cancelled: engine stopped." : "Request cancelled.",
-                    }
-                );
+            if (stopped || _cancel_requested.erase(pending->request.id)) {
+                signals.emplace_back(std::move(pending->request), Chorus::ChorusSignal::Error{
+                    Chorus::ChorusError::Cancelled, stopped ? "Request cancelled: engine stopped." : "Request cancelled."});
             } else {
                 retained.push(std::move(pending));
             }
         }
         request_queue = std::move(retained);
-
-        for (auto& slot : slots) {
-            if (!slot.is_busy)
-                continue;
-            if (!shutting_down && !_cancel_requested.contains(slot.current_request.id))
-                continue;
-            terminals.push_back(release_with_event(
-                slot,
-                Chorus::ChorusSignal::Error{
-                    Chorus::ChorusError::Cancelled,
-                    shutting_down ? "Request cancelled: engine stopped." : "Request cancelled.",
-                }
-            ));
-        }
-
-        _cancel_requested.clear();
     }
-    emit_signals(std::move(terminals));
-    return shutting_down;
+    std::vector<int> cancelled;
+    for (int id : ordered_active_sequence_ids()) {
+        const auto found = _active_sequences.find(id);
+        if (found == _active_sequences.end())
+            continue;
+        bool request_stopped = false;
+        if (take_cancellation(found->second.request.id, request_stopped))
+            cancelled.push_back(id);
+        stopped = stopped || request_stopped;
+    }
+    for (int id : cancelled)
+        retire_sequence(id, Chorus::ChorusSignal::Error{Chorus::ChorusError::Cancelled, stopped ? "Request cancelled: engine stopped." : "Request cancelled."}, signals);
+    emit_signals(std::move(signals));
+    return stopped;
 }
 
-std::optional<LlamaScheduler::PendingSignal>
-LlamaScheduler::take_cancellation_terminal_locked(const Chorus::ChorusRequest& request) {
-    const bool stopped = !is_running;
-    if (!stopped && _cancel_requested.erase(request.id) == 0)
-        return std::nullopt;
-
-    return PendingSignal{
-        request,
-        Chorus::ChorusSignal::Error{
-            Chorus::ChorusError::Cancelled,
-            stopped ? "Request cancelled: engine stopped." : "Request cancelled.",
-        },
-    };
+bool LlamaScheduler::take_cancellation(Chorus::RequestId id, bool& stopped) {
+    std::lock_guard<std::mutex> lock(queue_mutex);
+    stopped = !is_running;
+    return stopped || _cancel_requested.erase(id) > 0;
 }
 
 std::optional<LlamaScheduler::PendingSignal> LlamaScheduler::resolve_pending_request(PendingRequest& pending) {
-    Chorus::ChorusRequest& request = pending.request;
-    if (request.type == Chorus::RequestType::Embedding)
+    if (pending.request.type == Chorus::RequestType::Embedding)
         return std::nullopt;
     if (!pending.resolved) {
-        auto resolution = Chorus::resolve_llama_generation(request.gen_config);
-        if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&resolution)) {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            if (auto cancelled = take_cancellation_terminal_locked(request))
-                return cancelled;
-            return PendingSignal{request, Chorus::ChorusSignal::Error{rejection->error, rejection->message}};
-        }
+        auto resolution = Chorus::resolve_llama_generation(pending.request.gen_config);
+        if (auto* rejection = std::get_if<Chorus::RequestRejection>(&resolution))
+            return PendingSignal{pending.request, Chorus::ChorusSignal::Error{rejection->error, rejection->message}};
         pending.resolved.emplace(std::get<Chorus::ResolvedLlamaGeneration>(std::move(resolution)));
     }
-
-    if (pending.resolved->max_tokens != 0)
-        return std::nullopt;
-
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    if (auto cancelled = take_cancellation_terminal_locked(request))
-        return cancelled;
-    return PendingSignal{request, Chorus::ChorusSignal::Stop{}};
+    if (pending.resolved->max_tokens == 0)
+        return PendingSignal{pending.request, Chorus::ChorusSignal::Stop{}};
+    return std::nullopt;
 }
 
 LlamaScheduler::PreparedRequestResult LlamaScheduler::prepare_request(PendingRequest& pending) {
@@ -363,268 +242,294 @@ LlamaScheduler::PreparedRequestResult LlamaScheduler::prepare_request(PendingReq
             return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "Embedding prompt exceeds the physical micro-batch capacity."};
         return prepared;
     }
-
     prepared.max_tokens = pending.resolved->max_tokens;
     prepared.stop_sequences = std::move(pending.resolved->stop);
-
     auto sampler = Chorus::make_llama_sampler(model, std::move(*pending.resolved));
     std::optional<Chorus::RequestRejection> render_rejection;
-
     if (!pending.request.messages.empty()) {
-        auto rendered = [&] {
-            std::lock_guard<std::mutex> template_lock(_template_mutex);
-            return Chorus::render_llama_chat(
-                model,
-                _model_default_chat_templates.get(),
-                pending.request.chat_template,
-                pending.request.messages,
-                pending.request.gen_config.show_thinking.value_or(true)
-            );
-        }();
-        if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered)) {
+        std::lock_guard<std::mutex> lock(_template_mutex);
+        auto rendered = Chorus::render_llama_chat(model, _model_default_chat_templates.get(), pending.request.chat_template,
+                                                   pending.request.messages, pending.request.gen_config.show_thinking.value_or(true));
+        if (auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered))
             render_rejection = *rejection;
-        } else {
-            auto& render = std::get<Chorus::LlamaChatRender>(rendered);
-            prepared.tokens =
-                Chorus::LlamaUtils::tokenize(context, render.prompt, /*add_special=*/true, /*parse_special=*/true);
-            for (auto& template_stop_sequence : render.template_stop_sequences)
-                prepared.stop_sequences.push_back(std::move(template_stop_sequence));
-            // The request flag controls template rendering, not channel
-            // separation. Some reasoning templates ignore the flag and still
-            // open a think block, so capability alone selects the parser.
-            prepared.parse_stream = Chorus::make_llama_chat_parse_stream(render);
+        else {
+            auto& value = std::get<Chorus::LlamaChatRender>(rendered);
+            prepared.tokens = Chorus::LlamaUtils::tokenize(context, value.prompt, true, true);
+            for (auto& stop : value.template_stop_sequences)
+                prepared.stop_sequences.push_back(std::move(stop));
+            prepared.parse_stream = Chorus::make_llama_chat_parse_stream(value);
         }
     } else {
         prepared.tokens = Chorus::LlamaUtils::tokenize(context, pending.request.prompt, true);
     }
-
-    // Preserve failure precedence: a rejected render leaves no tokens but is
-    // not a tokenization failure, and sampler validation happened before both.
     if (render_rejection)
-        return std::move(*render_rejection);
-    if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&sampler))
+        return *render_rejection;
+    if (auto* rejection = std::get_if<Chorus::RequestRejection>(&sampler))
         return *rejection;
     if (prepared.tokens.empty())
         return Chorus::RequestRejection{Chorus::ChorusError::Tokenize, "Tokenization failed (empty result)."};
-
     prepared.sampler = std::get<common_sampler_ptr>(std::move(sampler));
     return prepared;
 }
 
-std::optional<LlamaScheduler::PendingSignal>
-LlamaScheduler::admit_request(const Chorus::ChorusRequest& request, PreparedRequestResult prepared) {
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    if (auto cancelled = take_cancellation_terminal_locked(request))
-        return cancelled;
-
-    if (const auto* rejection = std::get_if<Chorus::RequestRejection>(&prepared))
-        return PendingSignal{request, Chorus::ChorusSignal::Error{rejection->error, rejection->message}};
-
-    const int slot_idx = find_free_slot();
-    if (slot_idx == -1) {
-        // Capacity is checked before preparation, and only this worker releases
-        // slots. Keep the runtime guard so a broken invariant terminates the
-        // request once instead of indexing `LlamaScheduler::slots[-1]`.
-        assert(slot_idx != -1);
-        return PendingSignal{
-            request,
-            Chorus::ChorusSignal::Error{
-                Chorus::ChorusError::Unknown,
-                "Internal scheduler error: no free slot after admission.",
-            },
-        };
-    }
-
-    PreparedRequest& admitted = std::get<PreparedRequest>(prepared);
-    Slot& slot = slots[slot_idx];
-    slot.is_busy = true;
-    slot.submission_sequence = admitted.submission_sequence;
-    slot.current_request = request;
-    slot.n_past = 0;
-    slot.n_decoded = 0;
-    slot.input_cursor = 0;
-    slot.current_input_tokens = std::move(admitted.tokens);
-    slot.max_tokens = admitted.max_tokens;
-    slot.sampler = std::move(admitted.sampler);
-    slot.parse_stream = std::move(admitted.parse_stream);
-    if (!admitted.stop_sequences.empty())
-        slot.stop_filter.emplace(std::move(admitted.stop_sequences));
-    return std::nullopt;
-}
-
-void LlamaScheduler::ingest_new_requests() {
-    std::vector<PendingRequestPtr> pending_requests;
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        pending_requests.reserve(request_queue.size());
-        while (!request_queue.empty()) {
-            pending_requests.push_back(request_queue.top());
+void LlamaScheduler::admit_available() {
+    std::vector<PendingSignal> signals;
+    while (true) {
+        PendingRequestPtr pending;
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            if (!is_running || request_queue.empty() || has_active_exclusive())
+                break;
+            if (request_queue.top()->request.execution == Chorus::ExecutionMode::Exclusive && !_active_sequences.empty())
+                break;
+            pending = request_queue.top();
             request_queue.pop();
-        }
-    }
-
-    for (auto& pending : pending_requests) {
-        Chorus::ChorusRequest& request = pending->request;
-
-        std::optional<PendingSignal> cancellation;
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            cancellation = take_cancellation_terminal_locked(request);
-        }
-        if (cancellation) {
-            emit_signal(std::move(*cancellation));
-            continue;
-        }
-
-        if (auto terminal = resolve_pending_request(*pending)) {
-            emit_signal(std::move(*terminal));
-            continue;
-        }
-
-        std::optional<PendingSignal> controlled_terminal;
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            if (auto cancelled = take_cancellation_terminal_locked(request)) {
-                controlled_terminal = std::move(*cancelled);
-            } else if (find_free_slot() == -1) {
-                request_queue.push(std::move(pending));
+            if (_cancel_requested.erase(pending->request.id)) {
+                signals.emplace_back(std::move(pending->request), Chorus::ChorusSignal::Error{Chorus::ChorusError::Cancelled, "Request cancelled."});
+                continue;
             }
         }
-        if (controlled_terminal) {
-            emit_signal(std::move(*controlled_terminal));
+        if (auto terminal = resolve_pending_request(*pending)) {
+            bool stopped = false;
+            if (take_cancellation(pending->request.id, stopped))
+                signals.emplace_back(std::move(pending->request), Chorus::ChorusSignal::Error{
+                    Chorus::ChorusError::Cancelled, stopped ? "Request cancelled: engine stopped." : "Request cancelled."});
+            else
+                signals.push_back(std::move(*terminal));
             continue;
         }
-        if (!pending)
-            continue;
-
-        auto terminal = admit_request(request, prepare_request(*pending));
-        if (!terminal)
-            continue;
-
-        const auto* error = std::get_if<Chorus::ChorusSignal::Error>(&terminal->event);
-        if (error && error->code == Chorus::ChorusError::Tokenize)
-            _log.for_request(request.id, request.session_id)
-                .error("Tokenization produced no tokens; dropping the request");
-        emit_signal(std::move(*terminal));
+        if (!pending->prepared) {
+            auto prepared = prepare_request(*pending);
+            if (auto* rejection = std::get_if<Chorus::RequestRejection>(&prepared)) {
+                bool stopped = false;
+                if (take_cancellation(pending->request.id, stopped))
+                    signals.emplace_back(std::move(pending->request), Chorus::ChorusSignal::Error{
+                        Chorus::ChorusError::Cancelled, stopped ? "Request cancelled: engine stopped." : "Request cancelled."});
+                else
+                    signals.emplace_back(std::move(pending->request), Chorus::ChorusSignal::Error{rejection->error, rejection->message});
+                continue;
+            }
+            pending->prepared = std::make_shared<PreparedRequest>(std::get<PreparedRequest>(std::move(prepared)));
+        }
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            if (!is_running || _cancel_requested.erase(pending->request.id)) {
+                signals.emplace_back(std::move(pending->request), Chorus::ChorusSignal::Error{Chorus::ChorusError::Cancelled, "Request cancelled."});
+                continue;
+            }
+            if (_sequence_ids.empty() || has_active_exclusive() ||
+                (!request_queue.empty() && PendingRequestCompare{}(pending, request_queue.top()))) {
+                request_queue.push(std::move(pending));
+                break;
+            }
+            if (pending->request.execution == Chorus::ExecutionMode::Exclusive && !_active_sequences.empty()) {
+                request_queue.push(std::move(pending));
+                break;
+            }
+            const int id = *_sequence_ids.acquire();
+            auto prepared = std::move(*pending->prepared);
+            Sequence sequence;
+            sequence.id = id;
+            sequence.request = std::move(pending->request);
+            sequence.submission_sequence = pending->submission_sequence;
+            sequence.prompt_tokens = std::move(prepared.tokens);
+            sequence.max_tokens = prepared.max_tokens;
+            sequence.sampler = std::move(prepared.sampler);
+            sequence.parse_stream = std::move(prepared.parse_stream);
+            if (!prepared.stop_sequences.empty())
+                sequence.stop_filter.emplace(std::move(prepared.stop_sequences));
+            _active_sequences.emplace(id, std::move(sequence));
+        }
     }
+    emit_signals(std::move(signals));
 }
 
-bool LlamaScheduler::prepare_next_batch(int32_t tokens_per_tick) {
-    llama_batch& curr_batch = batch.get();
-    curr_batch.n_tokens = 0;
-    std::vector<Slot*> runnable;
-    for (auto& slot : slots) {
-        slot.included_in_batch = false;
-        slot.embedding_output_index = -1;
-        if (slot.is_busy && slot.input_cursor < slot.current_input_tokens.size())
-            runnable.push_back(&slot);
-    }
-    if (runnable.empty())
-        return false;
-
-    std::ranges::sort(runnable, [](const Slot* left, const Slot* right) {
-        if (left->current_request.priority != right->current_request.priority)
-            return left->current_request.priority > right->current_request.priority;
-        return left->submission_sequence < right->submission_sequence;
+std::vector<int> LlamaScheduler::ordered_active_sequence_ids() const {
+    std::vector<int> ids;
+    ids.reserve(_active_sequences.size());
+    for (const auto& entry : _active_sequences)
+        ids.push_back(entry.first);
+    std::ranges::sort(ids, [this](int left, int right) {
+        const Sequence& left_sequence = _active_sequences.at(left);
+        const Sequence& right_sequence = _active_sequences.at(right);
+        if (left_sequence.request.priority != right_sequence.request.priority)
+            return left_sequence.request.priority > right_sequence.request.priority;
+        return left_sequence.submission_sequence < right_sequence.submission_sequence;
     });
-    _batch_type = runnable.front()->current_request.type;
-    const size_t capacity = _batch_type == Chorus::RequestType::Embedding
-                                ? static_cast<size_t>(_micro_batch_capacity)
-                                : static_cast<size_t>(_batch_capacity);
-
-    for (Slot* slot : runnable) {
-        if (slot->current_request.type != _batch_type)
-            continue;
-        const size_t remaining = slot->current_input_tokens.size() - slot->input_cursor;
-        const size_t capacity_left = capacity - static_cast<size_t>(curr_batch.n_tokens);
-        if (capacity_left == 0)
-            break;
-        if (_batch_type == Chorus::RequestType::Embedding && remaining > capacity_left)
-            break;
-
-        const size_t count = _batch_type == Chorus::RequestType::Embedding
-                                 ? remaining
-                                 : std::min({remaining, static_cast<size_t>(tokens_per_tick), capacity_left});
-        for (size_t offset = 0; offset < count; ++offset) {
-            const size_t token_index = slot->input_cursor + offset;
-            const bool last = token_index == slot->current_input_tokens.size() - 1;
-            const bool output = _batch_type == Chorus::RequestType::Embedding
-                                    ? (_pooling == LLAMA_POOLING_TYPE_NONE ? last : true)
-                                    : last;
-            Chorus::LlamaUtils::batch_add_seq(
-                curr_batch,
-                slot->current_input_tokens[token_index],
-                slot->id,
-                slot->n_past + static_cast<int32_t>(offset),
-                output
-            );
-            if (_batch_type == Chorus::RequestType::Embedding && _pooling == LLAMA_POOLING_TYPE_NONE && output)
-                slot->embedding_output_index = curr_batch.n_tokens - 1;
-        }
-        slot->n_past += static_cast<int32_t>(count);
-        slot->input_cursor += count;
-        slot->included_in_batch = true;
-    }
-    return curr_batch.n_tokens > 0;
+    return ids;
 }
 
-int LlamaScheduler::run_inference() {
+std::vector<LlamaScheduler::Sequence*> LlamaScheduler::ordered_runnable() const {
+    std::vector<Sequence*> values;
+    for (int id : ordered_active_sequence_ids()) {
+        const auto found = _active_sequences.find(id);
+        if (found == _active_sequences.end())
+            continue;
+        auto& sequence = const_cast<Sequence&>(found->second);
+        if (sequence.request.type == Chorus::RequestType::Embedding || sequence.phase == GenerationPhase::Decode ||
+            sequence.prompt_cursor < sequence.prompt_tokens.size())
+            values.push_back(&sequence);
+    }
+    return values;
+}
+
+std::optional<LlamaScheduler::BatchPlan> LlamaScheduler::build_plan(int32_t generation_budget, int32_t embedding_budget) const {
+    std::vector<Chorus::LlamaPlannerSequence> planner_sequences;
+    for (const Sequence* sequence : ordered_runnable()) {
+        planner_sequences.push_back({
+            sequence->id,
+            sequence->request.type,
+            sequence->request.priority,
+            sequence->submission_sequence,
+            sequence->phase == GenerationPhase::Decode ? Chorus::LlamaPlannerPhase::Decode : Chorus::LlamaPlannerPhase::Prefill,
+            sequence->prompt_cursor,
+            sequence->prompt_tokens.size(),
+            sequence->request.execution == Chorus::ExecutionMode::Exclusive,
+        });
+    }
+    const auto planned = Chorus::llama_plan_batch(
+        std::move(planner_sequences), generation_budget, embedding_budget, _decode_fairness_cursor,
+        _has_contested_type ? std::optional<Chorus::RequestType>{_last_contested_type} : std::nullopt
+    );
+    if (!planned)
+        return std::nullopt;
+
+    BatchPlan plan;
+    plan.type = planned->type;
+    plan.contested_type = planned->contested_type;
+    plan.decode_fairness = planned->decode_fairness;
+    auto delta_for = [&plan](int id) -> SequenceDelta& {
+        auto found = std::ranges::find(plan.deltas, id, &SequenceDelta::sequence_id);
+        if (found == plan.deltas.end()) {
+            plan.participants.push_back(id);
+            plan.deltas.push_back({id});
+            return plan.deltas.back();
+        }
+        return *found;
+    };
+    for (const auto& entry : planned->entries) {
+        const auto found = _active_sequences.find(entry.sequence_id);
+        if (found == _active_sequences.end())
+            throw std::logic_error("planner selected an unknown sequence");
+        const Sequence& sequence = found->second;
+        auto& delta = delta_for(sequence.id);
+        const int32_t token = entry.decode ? sequence.pending_token : sequence.prompt_tokens.at(entry.prompt_offset);
+        const int32_t position = entry.decode ? sequence.n_past
+                                               : sequence.n_past + static_cast<int32_t>(entry.prompt_offset - sequence.prompt_cursor);
+        const bool logits = plan.type == Chorus::RequestType::Embedding && _pooling != LLAMA_POOLING_TYPE_NONE ? true : entry.logits;
+        plan.entries.push_back({sequence.id, token, position, logits});
+        ++delta.kv_advance;
+        if (!entry.decode)
+            ++delta.prompt_advance;
+        if (logits) {
+            delta.sampled = plan.type == Chorus::RequestType::Generate;
+            if (plan.type == Chorus::RequestType::Embedding && _pooling == LLAMA_POOLING_TYPE_NONE)
+                delta.embedding_output_index = static_cast<int32_t>(plan.entries.size() - 1);
+        }
+    }
+    return plan;
+}
+
+void LlamaScheduler::populate_batch(const BatchPlan& plan) {
+    auto& value = batch.get();
+    value.n_tokens = 0;
+    for (const auto& entry : plan.entries)
+        Chorus::LlamaUtils::batch_add_seq(value, entry.token, entry.sequence_id, entry.position, entry.logits);
+}
+
+int LlamaScheduler::run_inference(const BatchPlan& plan) {
 #ifdef TEST_BUILD
     std::function<void(const Chorus::LlamaBatchRecord&)> observer;
-    {
-        std::lock_guard<std::mutex> lock(_batch_observer_mutex);
-        observer = _batch_observer;
-    }
+    { std::lock_guard<std::mutex> lock(_batch_observer_mutex); observer = _batch_observer; }
     if (observer) {
-        const llama_batch& curr_batch = batch.get();
-        Chorus::LlamaBatchRecord record{_batch_type, curr_batch.n_tokens, {}, {}};
-        std::vector<bool> seen(slots.size());
-        for (int32_t index = 0; index < curr_batch.n_tokens; ++index) {
-            const int slot_id = curr_batch.seq_id[index][0];
-            if (seen[slot_id])
-                continue;
-            seen[slot_id] = true;
-            record.request_ids.push_back(slots[slot_id].current_request.id);
-            if (_batch_type == Chorus::RequestType::Embedding)
-                record.embedding_output_indices.push_back(slots[slot_id].embedding_output_index);
+        Chorus::LlamaBatchRecord record{plan.type, static_cast<int32_t>(plan.entries.size()), {}, {}};
+        for (const auto& delta : plan.deltas) {
+            const auto& sequence = _active_sequences.at(delta.sequence_id);
+            record.request_ids.push_back(sequence.request.id);
+            if (plan.type == Chorus::RequestType::Embedding)
+                record.embedding_output_indices.push_back(delta.embedding_output_index);
         }
         observer(record);
     }
 #endif
-    llama_set_embeddings(context, _batch_type == Chorus::RequestType::Embedding);
-    int rc = llama_decode(context, batch.get());
-    if (rc != 0) {
+    llama_set_embeddings(context, plan.type == Chorus::RequestType::Embedding);
+    const int rc = llama_decode(context, batch.get());
+    if (rc != 0)
         _log.error("Decode failed", {{"code", (int64_t)rc}});
-    }
     return rc;
 }
 
-#ifdef TEST_BUILD
-void LlamaScheduler::set_batch_observer(std::function<void(const Chorus::LlamaBatchRecord&)> observer) {
-    std::lock_guard<std::mutex> lock(_batch_observer_mutex);
-    _batch_observer = std::move(observer);
+void LlamaScheduler::commit_plan(const BatchPlan& plan) {
+    for (const auto& delta : plan.deltas) {
+        auto found = _active_sequences.find(delta.sequence_id);
+        if (found == _active_sequences.end())
+            throw std::logic_error("batch participant disappeared before commit");
+        found->second.prompt_cursor += delta.prompt_advance;
+        found->second.n_past += delta.kv_advance;
+    }
+    if (plan.contested_type) {
+        _last_contested_type = *plan.contested_type;
+        _has_contested_type = true;
+    }
+    if (plan.decode_fairness)
+        _decode_fairness_cursor = *plan.decode_fairness;
 }
-#endif
 
-void LlamaScheduler::extract_embedding_batch() {
-    std::vector<PendingSignal> signals;
-    for (auto& slot : slots) {
-        if (!slot.is_busy || !slot.included_in_batch)
+void LlamaScheduler::process_generation_plan(const BatchPlan& plan) {
+    const llama_vocab* vocab = llama_model_get_vocab(model);
+    for (size_t index = 0; index < plan.entries.size(); ++index) {
+        if (!plan.entries[index].logits)
             continue;
+        auto found = _active_sequences.find(plan.entries[index].sequence_id);
+        if (found == _active_sequences.end())
+            continue;
+        Sequence& sequence = found->second;
+        llama_token token = common_sampler_sample(sequence.sampler.get(), context, static_cast<int>(index));
+        common_sampler_accept(sequence.sampler.get(), token, true);
+        ++sequence.n_decoded;
+        if (llama_vocab_is_eog(vocab, token)) {
+            complete_sequence(sequence.id, true);
+            continue;
+        }
+        std::string piece = Chorus::LlamaUtils::token_to_piece(context, token);
+        if (sequence.parse_stream) {
+            auto delta = sequence.parse_stream->push(piece);
+            if (!delta.reasoning.empty())
+                emit_token(sequence, sequence.reasoning_chunker.push(delta.reasoning), Chorus::TokenChannel::Reasoning);
+            piece = std::move(delta.content);
+        }
+        bool stopped = false;
+        if (sequence.stop_filter) {
+            auto filtered = sequence.stop_filter->push(piece);
+            emit_token(sequence, std::move(filtered.safe_text));
+            stopped = filtered.matched;
+        } else {
+            emit_token(sequence, sequence.content_chunker.push(piece));
+        }
+        if (stopped || (sequence.max_tokens > 0 && sequence.n_decoded >= sequence.max_tokens)) {
+            complete_sequence(sequence.id, !stopped);
+            continue;
+        }
+        sequence.phase = GenerationPhase::Decode;
+        sequence.pending_token = token;
+    }
+}
 
-        const float* source = _pooling == LLAMA_POOLING_TYPE_NONE
-                                  ? llama_get_embeddings_ith(context, slot.embedding_output_index)
-                                  : llama_get_embeddings_seq(context, slot.id);
+void LlamaScheduler::process_embedding_plan(const BatchPlan& plan) {
+    std::vector<PendingSignal> signals;
+    for (const auto& delta : plan.deltas) {
+        auto found = _active_sequences.find(delta.sequence_id);
+        if (found == _active_sequences.end())
+            continue;
+        const float* source = _pooling == LLAMA_POOLING_TYPE_NONE ? llama_get_embeddings_ith(context, delta.embedding_output_index)
+                                                                   : llama_get_embeddings_seq(context, delta.sequence_id);
         std::vector<float> values;
         bool valid = source && _embedding_dimensions > 0;
         double squared_norm = 0.0;
         if (valid) {
             values.assign(source, source + _embedding_dimensions);
             for (float value : values) {
-                if (!std::isfinite(value)) {
-                    valid = false;
-                    break;
-                }
+                if (!std::isfinite(value)) { valid = false; break; }
                 squared_norm += static_cast<double>(value) * value;
             }
             valid = valid && std::isfinite(squared_norm) && squared_norm > 0.0;
@@ -634,203 +539,213 @@ void LlamaScheduler::extract_embedding_batch() {
             for (float& value : values)
                 value = static_cast<float>(value / norm);
         }
-
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        const bool cancelled = !is_running || _cancel_requested.erase(slot.current_request.id) > 0;
-        Chorus::ChorusRequest request = slot.current_request;
-        release_slot(slot.id);
-        if (cancelled) {
-            signals.emplace_back(std::move(request), Chorus::ChorusSignal::Error{Chorus::ChorusError::Cancelled, "Request cancelled."});
-        } else if (!valid) {
-            signals.emplace_back(std::move(request), Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "Embedding output was missing or invalid."});
-        } else {
+        bool cancelled;
+        { std::lock_guard<std::mutex> lock(queue_mutex); cancelled = _cancel_requested.erase(found->second.request.id) > 0 || !is_running; }
+        if (cancelled)
+            retire_sequence(delta.sequence_id, Chorus::ChorusSignal::Error{Chorus::ChorusError::Cancelled, "Request cancelled."}, signals);
+        else if (!valid)
+            retire_sequence(delta.sequence_id, Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "Embedding output was missing or invalid."}, signals);
+        else {
+            const Chorus::ChorusRequest request = found->second.request;
             signals.emplace_back(request, Chorus::ChorusSignal::Embedding{std::move(values)});
-            signals.emplace_back(std::move(request), Chorus::ChorusSignal::Stop{});
+            retire_sequence(delta.sequence_id, Chorus::ChorusSignal::Stop{}, signals);
         }
     }
     emit_signals(std::move(signals));
 }
 
-void LlamaScheduler::sample_batch() {
-    const llama_vocab* vocab = llama_model_get_vocab(model);
-    llama_batch& curr_batch = batch.get();
-    for (int i = 0; i < curr_batch.n_tokens; ++i) {
-        if (!curr_batch.logits[i])
+std::optional<LlamaScheduler::BatchPlan>
+LlamaScheduler::recovery_plan(const BatchPlan& failed, const Chorus::LlamaRecoverySelection& selection) const {
+    if (selection.sequence_ids.empty() || selection.sequence_ids.size() != selection.entry_limits.size())
+        return std::nullopt;
+
+    std::map<int, size_t> limits;
+    for (size_t index = 0; index < selection.sequence_ids.size(); ++index) {
+        if (!_active_sequences.contains(selection.sequence_ids[index]) || !limits.emplace(selection.sequence_ids[index], selection.entry_limits[index]).second)
+            return std::nullopt;
+    }
+
+    BatchPlan retry;
+    retry.type = failed.type;
+    retry.contested_type = failed.contested_type;
+    retry.decode_fairness = failed.decode_fairness;
+    for (int id : selection.sequence_ids) {
+        retry.participants.push_back(id);
+        retry.deltas.push_back({id});
+    }
+    std::map<int, size_t> selected;
+    for (const auto& entry : failed.entries) {
+        auto limit = limits.find(entry.sequence_id);
+        if (limit == limits.end() || selected[entry.sequence_id] >= limit->second)
             continue;
+        ++selected[entry.sequence_id];
+        auto delta = std::ranges::find(retry.deltas, entry.sequence_id, &SequenceDelta::sequence_id);
+        if (delta == retry.deltas.end())
+            throw std::logic_error("recovery entry has no contributor");
+        const Sequence& sequence = _active_sequences.at(entry.sequence_id);
+        ++delta->kv_advance;
+        if (failed.type == Chorus::RequestType::Embedding || sequence.phase == GenerationPhase::Prefill)
+            ++delta->prompt_advance;
+        if (entry.logits) {
+            delta->sampled = failed.type == Chorus::RequestType::Generate;
+            if (failed.type == Chorus::RequestType::Embedding && _pooling == LLAMA_POOLING_TYPE_NONE)
+                delta->embedding_output_index = static_cast<int32_t>(retry.entries.size());
+        }
+        retry.entries.push_back(entry);
+    }
+    return retry.entries.empty() ? std::nullopt : std::optional<BatchPlan>{std::move(retry)};
+}
 
-        int seq_id = curr_batch.seq_id[i][0];
-        Slot& slot = slots[seq_id];
-        if (!slot.is_busy)
-            continue;
+std::string LlamaScheduler::recovery_capacity_message() const {
+    const uint32_t effective_context = _model_info && _model_info->per_request_context
+                                           ? *_model_info->per_request_context
+                                           : static_cast<uint32_t>(llama_n_ctx(context) / _max_concurrent_requests);
+    return "Inference capacity is exhausted for this request at max_concurrent_requests=" +
+           std::to_string(_max_concurrent_requests) + " with effective per-request context " +
+           std::to_string(effective_context) + ". Reduce max_concurrent_requests or increase context_size.";
+}
 
-        llama_token new_token_id = common_sampler_sample(slot.sampler.get(), context, i);
-        common_sampler_accept(slot.sampler.get(), new_token_id, true);
-        slot.n_decoded++;
+bool LlamaScheduler::recover_decode(const BatchPlan& failed) {
+    std::vector<Chorus::LlamaRecoveryContribution> contributors;
+    for (int id : failed.participants) {
+        const auto sequence = _active_sequences.find(id);
+        if (sequence == _active_sequences.end())
+            return false;
+        const size_t entries = static_cast<size_t>(std::ranges::count(failed.entries, id, &BatchEntry::sequence_id));
+        const size_t minimum_entries = failed.type == Chorus::RequestType::Embedding ? entries : size_t{1};
+        contributors.push_back({id, entries, minimum_entries});
+    }
+    for (const auto& selection : Chorus::llama_recovery_reductions(contributors)) {
+        auto retry = recovery_plan(failed, selection);
+        if (!retry)
+            return false;
+        populate_batch(*retry);
+        const int rc = run_inference(*retry);
+        if (rc == 0) {
+            commit_plan(*retry);
+            if (retry->type == Chorus::RequestType::Embedding)
+                process_embedding_plan(*retry);
+            else
+                process_generation_plan(*retry);
+            return true;
+        }
+        if (rc != 1)
+            return false;
+    }
+    std::vector<PendingSignal> signals;
+    if (!failed.participants.empty()) {
+        retire_sequence(failed.participants.front(), Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode,
+                                                                                   recovery_capacity_message()}, signals);
+    }
+    emit_signals(std::move(signals));
+    return true;
+}
 
-        bool is_eos = llama_vocab_is_eog(vocab, new_token_id);
-        bool is_limit = (slot.max_tokens > 0 && slot.n_decoded >= slot.max_tokens);
-
-        if (is_eos) {
-            complete_slot(slot, true);
+void LlamaScheduler::worker_loop() {
+    while (true) {
+        if (process_control_requests())
+            return;
+        admit_available();
+        if (process_control_requests())
+            return;
+        auto plan = build_plan(_batch_capacity, _micro_batch_capacity);
+        if (!plan) {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+            queue_cv.wait_for(lock, std::chrono::milliseconds(10), [this] {
+                return !is_running || !request_queue.empty() || !_cancel_requested.empty();
+            });
             continue;
         }
-
-        std::string piece = Chorus::LlamaUtils::token_to_piece(context, new_token_id);
-        if (slot.parse_stream) {
-            auto delta = slot.parse_stream->push(piece);
-            if (!delta.reasoning.empty())
-                emit_token(slot, slot.reasoning_chunker.push(delta.reasoning), Chorus::TokenChannel::Reasoning);
-            // Only content meets the stop filter. An all-reasoning piece leaves
-            // it empty: both emission paths no-op while completion bookkeeping
-            // still runs.
-            piece = std::move(delta.content);
+        populate_batch(*plan);
+        const int rc = run_inference(*plan);
+        if (rc == 0) {
+            commit_plan(*plan);
+            if (plan->type == Chorus::RequestType::Embedding)
+                process_embedding_plan(*plan);
+            else
+                process_generation_plan(*plan);
+            continue;
         }
-        if (slot.stop_filter) {
-            auto filtered = slot.stop_filter->push(piece);
-            emit_token(slot, std::move(filtered.safe_text));
-            if (filtered.matched) {
-                complete_slot(slot, false);
-                continue;
-            }
-        } else {
-            emit_token(slot, slot.content_chunker.push(piece));
-        }
-
-        if (is_limit)
-            complete_slot(slot, true);
-        else
-            slot.current_input_tokens.push_back(new_token_id);
+        if (rc == 1 && recover_decode(*plan))
+            continue;
+        fail_all(Chorus::ChorusError::Decode, "Inference decode failed.");
+        { std::lock_guard<std::mutex> lock(queue_mutex); is_running = false; }
+        queue_cv.notify_all();
     }
 }
 
-int LlamaScheduler::find_free_slot() {
-    for (size_t index = 0; index < slots.size(); ++index) {
-        if (!slots[index].is_busy)
-            return static_cast<int>(index);
-    }
-    return -1;
+void LlamaScheduler::retire_sequence(int sequence_id, Chorus::ChorusSignal::Event event, std::vector<PendingSignal>& signals) {
+    auto found = _active_sequences.find(sequence_id);
+    if (found == _active_sequences.end())
+        return;
+    Chorus::ChorusRequest request = std::move(found->second.request);
+    found->second.sampler.reset();
+    found->second.stop_filter.reset();
+    found->second.parse_stream.reset();
+    found->second.reasoning_chunker.reset();
+    found->second.content_chunker.reset();
+    if (context)
+        llama_memory_seq_rm(llama_get_memory(context), sequence_id, 0, -1);
+    _active_sequences.erase(found);
+    _sequence_ids.release(sequence_id);
+    signals.emplace_back(std::move(request), std::move(event));
 }
 
-void LlamaScheduler::release_slot(int slot_id) {
-    Slot& slot = slots[slot_id];
-
-    slot.sampler.reset();
-    slot.stop_filter.reset();
-    slot.parse_stream.reset();
-    slot.reasoning_chunker.reset();
-    slot.content_chunker.reset();
-
-    // Reclaim this sequence's KV cache so freed capacity is available to other slots.
-    if (context) {
-        llama_memory_t mem = llama_get_memory(context);
-        llama_memory_seq_rm(mem, slot.id, 0, -1);
+void LlamaScheduler::complete_sequence(int sequence_id, bool flush_pending_text) {
+    auto found = _active_sequences.find(sequence_id);
+    if (found == _active_sequences.end())
+        return;
+    Sequence& sequence = found->second;
+    Chorus::LlamaChatParseStream::Delta residual;
+    if (sequence.parse_stream) {
+        residual = sequence.parse_stream->finalize();
+        residual.reasoning = sequence.reasoning_chunker.push(residual.reasoning);
     }
-
-    slot.current_request = {};
-    slot.current_input_tokens.clear();
-    slot.is_busy = false;
+    std::vector<PendingSignal> signals;
+    bool cancelled;
+    { std::lock_guard<std::mutex> lock(queue_mutex); cancelled = _cancel_requested.erase(sequence.request.id) > 0 || !is_running; }
+    if (cancelled) {
+        retire_sequence(sequence_id, Chorus::ChorusSignal::Error{Chorus::ChorusError::Cancelled, "Request cancelled."}, signals);
+    } else {
+        if (!residual.reasoning.empty())
+            signals.emplace_back(sequence.request, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Reasoning, std::move(residual.reasoning)});
+        if (flush_pending_text) {
+            auto filtered = Chorus::finish_content_stream(sequence.stop_filter ? &*sequence.stop_filter : nullptr,
+                                                           sequence.content_chunker, residual.content);
+            if (!filtered.safe_text.empty())
+                signals.emplace_back(sequence.request, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, std::move(filtered.safe_text)});
+        }
+        retire_sequence(sequence_id, Chorus::ChorusSignal::Stop{}, signals);
+    }
+    emit_signals(std::move(signals));
 }
 
-LlamaScheduler::PendingSignal LlamaScheduler::release_with_event(Slot& slot, Chorus::ChorusSignal::Event event) {
-    PendingSignal pending{slot.current_request, std::move(event)};
-    release_slot(slot.id);
-    return pending;
+void LlamaScheduler::fail_all(Chorus::ChorusError code, const std::string& message) {
+    std::vector<PendingSignal> signals;
+    for (int id : ordered_active_sequence_ids())
+        retire_sequence(id, Chorus::ChorusSignal::Error{code, message}, signals);
+    emit_signals(std::move(signals));
 }
 
 void LlamaScheduler::emit_signal(PendingSignal pending) {
     if (!pending.request.on_event)
         return;
-
     Chorus::ChorusSignal signal{pending.request.id, std::move(pending.event)};
     pending.request.on_event(signal);
 }
-
 void LlamaScheduler::emit_signals(std::vector<PendingSignal> pending) {
     for (auto& signal : pending)
         emit_signal(std::move(signal));
 }
-
-void LlamaScheduler::emit_token(Slot& slot, std::string text, Chorus::TokenChannel channel) {
-    if (text.empty() || !slot.current_request.on_event)
+void LlamaScheduler::emit_token(Sequence& sequence, std::string text, Chorus::TokenChannel channel) {
+    if (text.empty() || !sequence.request.on_event)
         return;
-
-    Chorus::ChorusSignal signal{
-        slot.current_request.id,
-        Chorus::ChorusSignal::Token{channel, std::move(text)},
-    };
-    slot.current_request.on_event(signal);
+    Chorus::ChorusSignal signal{sequence.request.id, Chorus::ChorusSignal::Token{channel, std::move(text)}};
+    sequence.request.on_event(signal);
 }
-
-void LlamaScheduler::complete_slot(Slot& slot, bool flush_pending_text) {
-    // Finalize the reasoning split before taking the queue lock: it is a full
-    // non-partial parse of the whole response, the parse stream is worker-owned,
-    // and the host thread waits on queue_mutex in push/cancel. A request that
-    // turns out cancelled below pays for a discarded parse; cancels are rare.
-    Chorus::LlamaChatParseStream::Delta residual;
-    if (slot.parse_stream) {
-        residual = slot.parse_stream->finalize();
-        // Reasoning residuals pass the same UTF-8 guard as the streamed path.
-        // Content stays raw until finish_content_stream so malformed-byte
-        // recovery cannot join non-contiguous stop-marker fragments.
-        residual.reasoning = slot.reasoning_chunker.push(residual.reasoning);
-    }
-
-    std::vector<PendingSignal> buffered_tokens;
-    std::optional<PendingSignal> terminal;
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        const bool cancelled = !is_running || _cancel_requested.erase(slot.current_request.id) > 0;
-        if (cancelled) {
-            terminal = release_with_event(
-                slot, Chorus::ChorusSignal::Error{Chorus::ChorusError::Cancelled, "Request cancelled."}
-            );
-        } else {
-            // Residuals surface before the terminal: reasoning first, then
-            // residual content passes through the stop filter before its
-            // withheld tail is released.
-            if (!residual.reasoning.empty()) {
-                buffered_tokens.emplace_back(
-                    slot.current_request,
-                    Chorus::ChorusSignal::Token{
-                        Chorus::TokenChannel::Reasoning,
-                        std::move(residual.reasoning),
-                    }
-                );
-            }
-            if (flush_pending_text) {
-                auto filtered = Chorus::finish_content_stream(
-                    slot.stop_filter ? &*slot.stop_filter : nullptr, slot.content_chunker, residual.content
-                );
-                std::string text = std::move(filtered.safe_text);
-                if (!text.empty())
-                    buffered_tokens.emplace_back(
-                        slot.current_request,
-                        Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, std::move(text)}
-                    );
-            }
-            terminal = release_with_event(slot, Chorus::ChorusSignal::Stop{});
-        }
-    }
-    emit_signals(std::move(buffered_tokens));
-    emit_signal(std::move(*terminal));
+#ifdef TEST_BUILD
+void LlamaScheduler::set_batch_observer(std::function<void(const Chorus::LlamaBatchRecord&)> observer) {
+    std::lock_guard<std::mutex> lock(_batch_observer_mutex);
+    _batch_observer = std::move(observer);
 }
-
-void LlamaScheduler::fail_busy_slots(Chorus::ChorusError code) {
-    std::vector<PendingSignal> terminals;
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        for (auto& slot : slots) {
-            if (!slot.is_busy)
-                continue;
-
-            const bool cancelled = !is_running || _cancel_requested.erase(slot.current_request.id) > 0;
-            terminals.push_back(
-                cancelled ? release_with_event(
-                                slot, Chorus::ChorusSignal::Error{Chorus::ChorusError::Cancelled, "Request cancelled."}
-                            )
-                          : release_with_event(slot, Chorus::ChorusSignal::Error{code, "Inference decode failed."})
-            );
-        }
-    }
-    emit_signals(std::move(terminals));
-}
+#endif

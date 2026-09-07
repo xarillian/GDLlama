@@ -98,7 +98,7 @@ EchoEngine::~EchoEngine() {
     shutdown();
 }
 
-std::optional<ChorusError> EchoEngine::initialize(const ChorusConfig& config, Logger logger) {
+std::optional<InitializationFailure> EchoEngine::initialize(const ChorusConfig& config, Logger logger) {
     _log = std::move(logger);
 
     if (_initialized) {
@@ -109,7 +109,7 @@ std::optional<ChorusError> EchoEngine::initialize(const ChorusConfig& config, Lo
     // No model asset is needed; model configuration is accepted and unread by design.
     if (!config.provider_options.empty()) {
         _log.error("Engine accepts no provider options");
-        return ChorusError::UnsupportedOption;
+        return InitializationFailure{ChorusError::UnsupportedOption, "EchoEngine accepts no provider options."};
     }
 
     _running = true;

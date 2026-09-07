@@ -39,7 +39,7 @@ struct chorus_runtime {
 
 namespace {
 
-constexpr uint32_t kAbiVersion = 2;
+constexpr uint32_t kAbiVersion = 3;
 const chorus_event kEmptyEvent{};
 const chorus_log_field kEmptyLogField{};
 const chorus_log_record kEmptyLogRecord{};
@@ -117,6 +117,18 @@ bool to_cpp_provider(chorus_provider provider, Chorus::Provider& out, const char
     case CHORUS_PROVIDER_ECHO:
         out = Chorus::Provider::Echo;
         provider_id = "echo";
+        return true;
+    }
+    return false;
+}
+
+bool to_cpp_execution_mode(chorus_execution_mode mode, Chorus::ExecutionMode& out) noexcept {
+    switch (mode) {
+    case CHORUS_EXECUTION_SHARED:
+        out = Chorus::ExecutionMode::Shared;
+        return true;
+    case CHORUS_EXECUTION_EXCLUSIVE:
+        out = Chorus::ExecutionMode::Exclusive;
         return true;
     }
     return false;
@@ -410,8 +422,10 @@ chorus_error chorus_load(
             config.provider_options[provider_id] = options->values;
 
         auto error = rt->value.load_engine(Chorus::make_engine(cpp_provider), config);
-        if (error)
-            return runtime_result(rt, *error);
+        if (error) {
+            replace_last_error(rt, error->message);
+            return to_c_error(error->error);
+        }
         clear_last_error(rt);
         return CHORUS_OK;
     } catch (const std::exception& error) {
@@ -498,6 +512,15 @@ chorus_error chorus_request_set_priority(chorus_request* req, int32_t priority) 
     if (!req)
         return CHORUS_ERR_INVALID_REQUEST;
     return guard_builder([&] { req->value.priority = priority; });
+}
+
+chorus_error chorus_request_set_execution_mode(chorus_request* req, chorus_execution_mode execution) {
+    if (!req)
+        return CHORUS_ERR_INVALID_REQUEST;
+    Chorus::ExecutionMode mode;
+    if (!to_cpp_execution_mode(execution, mode))
+        return CHORUS_ERR_INVALID_REQUEST;
+    return guard_builder([&] { req->value.execution = mode; });
 }
 
 chorus_error chorus_request_set_stream(chorus_request* req, bool stream) {
@@ -640,7 +663,7 @@ chorus_error chorus_request_set_chat_template(chorus_request* req, const char* c
 }
 
 chorus_error chorus_embed(
-    chorus_runtime* rt, const char* prompt, int32_t priority, chorus_request_id* out_request_id
+    chorus_runtime* rt, const char* prompt, int32_t priority, chorus_execution_mode execution, chorus_request_id* out_request_id
 ) {
     if (out_request_id)
         *out_request_id = -1;
@@ -648,8 +671,15 @@ chorus_error chorus_embed(
         return CHORUS_ERR_INVALID_REQUEST;
     if (!prompt || !out_request_id)
         return invalid_request(rt, "prompt and out_request_id are required.");
+    Chorus::ExecutionMode mode;
+    if (!to_cpp_execution_mode(execution, mode))
+        return invalid_request(rt, "Unknown execution mode.");
     try {
-        const Chorus::SubmitResult result = rt->value.submit(Chorus::EmbeddingRequest{{prompt, priority}});
+        Chorus::EmbeddingRequest request;
+        request.prompt = prompt;
+        request.priority = priority;
+        request.execution = mode;
+        const Chorus::SubmitResult result = rt->value.submit(request);
         if (!result.ok()) {
             replace_last_error(rt, result.message);
             return to_c_error(result.error);

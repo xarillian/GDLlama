@@ -38,7 +38,8 @@ class LlamaEngine : public InferenceEngine {
   public:
     ~LlamaEngine() override;
 
-    std::optional<Chorus::ChorusError> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override;
+    std::optional<Chorus::InitializationFailure>
+    initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override;
     bool is_initialized() const override;
 
     EngineCapabilities capabilities() const override;

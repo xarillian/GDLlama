@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="GodotChorus" inherits="Node" api_type="extension" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/godotengine/godot/master/doc/class.xsd">
 	<brief_description>
+		Local asynchronous LLM inference with automatic continuous batching.
 	</brief_description>
 	<description>
+		Set [member max_concurrent_requests] before [method load_model] to co-batch ordinary [method generate] and [method embed] calls. A returned request ID identifies accepted queued or running work. Values above one divide context capacity and may increase resource use; inspect [member effective_context_size] after loading. Concurrent workloads can change exact seeded output, while one concurrent request preserves single-stream execution. Check [member last_load_error] and [member last_load_error_message] when loading fails. Use [code]"execution": "exclusive"[/code] only for uncommon non-preemptive isolation; it waits for active work and does not strengthen determinism.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -43,6 +45,7 @@
 			<return type="int" />
 			<param index="0" name="prompt" type="String" />
 			<param index="1" name="priority" type="int" default="0" />
+			<param index="2" name="execution" type="String" default="&quot;shared&quot;" />
 			<description>
 				Asynchronously computes a normalized embedding for [param prompt]. Success emits [signal embedding_complete].
 			</description>
@@ -134,6 +137,15 @@
 		<member name="generation_defaults" type="ChorusGenerationDefaults" setter="set_generation_defaults" getter="get_generation_defaults">
 		</member>
 		<member name="model_path" type="String" setter="set_model_path" getter="get_model_path" default="&quot;&quot;">
+		</member>
+		<member name="effective_context_size" type="int" getter="get_effective_context_size">
+			Observed per-request context capacity after loading.
+		</member>
+		<member name="last_load_error" type="int" getter="get_last_load_error">
+			Stable error code from the latest load attempt.
+		</member>
+		<member name="last_load_error_message" type="String" getter="get_last_load_error_message">
+			Readable detail from the latest failed load.
 		</member>
 		<member name="override_log_level" type="bool" setter="set_override_log_level" getter="get_override_log_level" default="false">
 		</member>

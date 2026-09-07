@@ -16,8 +16,7 @@ static func run_tests(parent: Node) -> void:
 		"thread_count": 4,
 		"use_gpu": true,
 		"gpu_layers": -1,
-		"num_slots": 1,
-		"tokens_per_tick": 512,
+		"max_concurrent_requests": 1,
 		"n_batch": 2048,
 		"n_ubatch": 512,
 		"main_gpu": 0,
@@ -44,11 +43,8 @@ static func run_tests(parent: Node) -> void:
 		chorus.gpu_layers = 12
 		TestReport.check(chorus.gpu_layers == 12, "expected gpu_layers to round-trip")
 
-		chorus.num_slots = 4
-		TestReport.check(chorus.num_slots == 4, "expected num_slots to round-trip")
-
-		chorus.tokens_per_tick = 256
-		TestReport.check(chorus.tokens_per_tick == 256, "expected tokens_per_tick to round-trip")
+		chorus.max_concurrent_requests = 4
+		TestReport.check(chorus.max_concurrent_requests == 4, "expected max_concurrent_requests to round-trip")
 
 		chorus.n_batch = 4096
 		TestReport.check(chorus.n_batch == 4096, "expected n_batch to round-trip")
@@ -102,10 +98,10 @@ static func run_tests(parent: Node) -> void:
 
 	await TestReport.run("switching providers preserves a configured option", func():
 		chorus.provider = GodotChorus.PROVIDER_LLAMA
-		chorus.num_slots = 7
+		chorus.max_concurrent_requests = 7
 		chorus.provider = GodotChorus.PROVIDER_ECHO
 		chorus.provider = GodotChorus.PROVIDER_LLAMA
-		TestReport.check(chorus.num_slots == 7, "expected num_slots to survive a provider round-trip")
+		TestReport.check(chorus.max_concurrent_requests == 7, "expected max_concurrent_requests to survive a provider round-trip")
 	)
 
 	chorus.queue_free()

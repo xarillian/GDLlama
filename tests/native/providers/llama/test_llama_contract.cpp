@@ -22,12 +22,11 @@ EngineUnderTest llama_under_test() {
         config.model.model_id = "test-model";
         config.model.format = Chorus::ModelFormat::Gguf;
         config.model.assets.push_back({Chorus::AssetRole::Weights, CONTRACT_MODEL_PATH});
-        // One slot on the CPU: the contract cases reason about work the engine
-        // still holds, and a second slot would run the trailing request instead
-        // of leaving it queued.
+        // One concurrent request lets the contract cases reason about work the
+        // engine still holds instead of admitting the trailing request.
         config.provider_options["llama"] = Chorus::ProviderOptionMap{
             {"use_gpu", false},
-            {"num_slots", int64_t{1}},
+            {"max_concurrent_requests", int64_t{1}},
             {"context_size", int64_t{1024}},
         };
         return config;

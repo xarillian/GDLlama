@@ -19,7 +19,7 @@ static Chorus::ChorusConfig make_reasoning_config() {
     config.model.format = Chorus::ModelFormat::Gguf;
     config.model.assets.push_back({Chorus::AssetRole::Weights, kReasoningModelPath});
     config.provider_options["llama"] =
-        Chorus::ProviderOptionMap{{"context_size", int64_t{2048}}, {"num_slots", int64_t{1}}};
+        Chorus::ProviderOptionMap{{"context_size", int64_t{2048}}, {"max_concurrent_requests", int64_t{1}}};
     return config;
 }
 

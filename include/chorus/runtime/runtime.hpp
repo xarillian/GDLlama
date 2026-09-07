@@ -21,6 +21,7 @@ enum class TurnOutcome { None, Completed, Cancelled, Errored };
 struct InferenceRequest {
     std::string prompt;
     int priority = 0; // Higher values indicate higher scheduling priority.
+    ExecutionMode execution = ExecutionMode::Shared;
 };
 
 struct EmbeddingRequest : InferenceRequest {};
@@ -144,10 +145,12 @@ class ChorusRuntime {
      *  - `Chorus::ChorusError::UnsupportedOption`: a load option is unsupported.
      *  - `Chorus::ChorusError::Unknown`: the provider could not classify the failure.
      */
-    std::optional<ChorusError> load_engine(std::unique_ptr<InferenceEngine> engine, const ChorusConfig& config);
+    std::optional<InitializationFailure> load_engine(std::unique_ptr<InferenceEngine> engine, const ChorusConfig& config);
 
     // Whether an initialized engine is ready to accept work.
     bool is_loaded() const;
+
+    std::optional<LoadedModelInfo> loaded_model_info() const;
 
     // Copies the effective capabilities of the initialized engine.
     std::optional<EngineCapabilities> capabilities() const;

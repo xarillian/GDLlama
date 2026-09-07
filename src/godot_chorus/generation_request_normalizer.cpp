@@ -417,6 +417,17 @@ std::optional<String> apply_generation_request_fields(
             return scalar_error("priority", "must fit a signed 32-bit integer.");
         gen_request.priority = static_cast<int>(priority);
     }
+    if (request.has("execution")) {
+        if (request["execution"].get_type() != Variant::STRING)
+            return scalar_error("execution", "must be 'shared' or 'exclusive'.");
+        const std::string execution = std::string(((String)request["execution"]).utf8().get_data());
+        if (execution == "shared")
+            gen_request.execution = Chorus::ExecutionMode::Shared;
+        else if (execution == "exclusive")
+            gen_request.execution = Chorus::ExecutionMode::Exclusive;
+        else
+            return scalar_error("execution", "must be 'shared' or 'exclusive'.");
+    }
     if (request.has("session")) {
         if (request["session"].get_type() != Variant::STRING)
             return scalar_error("session", "must be a String.");

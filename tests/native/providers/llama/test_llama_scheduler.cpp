@@ -1,8 +1,11 @@
 #include "chorus/core/common.hpp"
 #include "chorus/providers/llama/llama_engine.hpp"
+#include "chorus/providers/llama/llama_batch_planner.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
+#include "chorus/providers/llama/llama_recovery_planner.hpp"
 #include "chorus/providers/llama/llama_scheduler.hpp"
+#include "chorus/providers/llama/llama_sequence_id_pool.hpp"
 #include "gtest_utils.hpp"
 
 class LlamaSchedulerModelTest : public ChorusModelTest {};
@@ -26,6 +29,7 @@ struct SchedulerObservation {
     std::condition_variable cv;
     std::vector<Chorus::LlamaBatchRecord> batches;
     std::map<Chorus::RequestId, std::vector<Chorus::ChorusSignal>> terminals;
+    std::vector<Chorus::RequestId> terminal_order;
     Chorus::RequestId gate_request_id = -1;
     bool gate_seen = false;
     bool release_gate = false;
@@ -33,12 +37,14 @@ struct SchedulerObservation {
     void observe(const Chorus::LlamaBatchRecord& record) {
         std::unique_lock<std::mutex> lock(mutex);
         batches.push_back(record);
-        if (std::find(record.request_ids.begin(), record.request_ids.end(), gate_request_id) == record.request_ids.end())
+        const auto observed_gate = gate_request_id;
+        if (std::find(record.request_ids.begin(), record.request_ids.end(), observed_gate) == record.request_ids.end())
             return;
         gate_seen = true;
         cv.notify_all();
         cv.wait(lock, [&] { return release_gate; });
-        gate_request_id = -1;
+        if (gate_request_id == observed_gate)
+            gate_request_id = -1;
         release_gate = false;
         cv.notify_all();
     }
@@ -49,6 +55,7 @@ struct SchedulerObservation {
             return;
         std::lock_guard<std::mutex> lock(mutex);
         terminals[signal.request_id].push_back(signal);
+        terminal_order.push_back(signal.request_id);
         cv.notify_all();
     }
 
@@ -105,6 +112,90 @@ static Chorus::ChorusConfig make_gguf_config(const std::string& path) {
     return config;
 }
 
+TEST(LlamaScheduler, sequence_ids_allocate_reuse_and_reject_invalid_release) {
+    Chorus::LlamaSequenceIdPool pool(2);
+    ASSERT_EQ(pool.acquire(), std::optional<int>{0});
+    ASSERT_EQ(pool.acquire(), std::optional<int>{1});
+    ASSERT_EQ(pool.acquire(), std::nullopt);
+    pool.release(0);
+    ASSERT_EQ(pool.acquire(), std::optional<int>{0});
+    EXPECT_THROW(pool.release(4), std::logic_error);
+    pool.release(0);
+    EXPECT_THROW(pool.release(0), std::logic_error);
+}
+
+TEST(LlamaScheduler, pure_generation_planner_reserves_decode_tokens_before_prefill) {
+    const std::vector<Chorus::LlamaPlannerSequence> sequences{
+        {1, Chorus::RequestType::Generate, 4, 10, Chorus::LlamaPlannerPhase::Decode, 0, 0, false},
+        {2, Chorus::RequestType::Generate, 4, 20, Chorus::LlamaPlannerPhase::Decode, 0, 0, false},
+        {3, Chorus::RequestType::Generate, 4, 30, Chorus::LlamaPlannerPhase::Prefill, 0, 6, false},
+    };
+    const auto plan = Chorus::llama_plan_batch(sequences, 3, 8, 0, std::nullopt);
+    ASSERT_TRUE(plan);
+    ASSERT_EQ(plan->entries.size(), size_t{3});
+    EXPECT_EQ(plan->entries[0].sequence_id, 1);
+    EXPECT_EQ(plan->entries[1].sequence_id, 2);
+    EXPECT_EQ(plan->entries[2].sequence_id, 3);
+    EXPECT_TRUE(plan->entries[0].decode);
+    EXPECT_TRUE(plan->entries[1].decode);
+    EXPECT_FALSE(plan->entries[2].decode);
+    EXPECT_EQ(sequences[2].prompt_cursor, size_t{0});
+}
+
+TEST(LlamaScheduler, pure_generation_planner_rotates_equal_priority_decoders) {
+    const std::vector<Chorus::LlamaPlannerSequence> sequences{
+        {1, Chorus::RequestType::Generate, 4, 10, Chorus::LlamaPlannerPhase::Decode, 0, 0, false},
+        {2, Chorus::RequestType::Generate, 4, 20, Chorus::LlamaPlannerPhase::Decode, 0, 0, false},
+    };
+    const auto first = Chorus::llama_plan_batch(sequences, 1, 8, 0, std::nullopt);
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(first->decode_fairness);
+    const auto second = Chorus::llama_plan_batch(sequences, 1, 8, *first->decode_fairness, std::nullopt);
+    ASSERT_TRUE(second);
+    EXPECT_EQ(first->entries[0].sequence_id, 1);
+    EXPECT_EQ(second->entries[0].sequence_id, 2);
+}
+
+TEST(LlamaScheduler, pure_homogeneous_planner_alternates_and_never_splits_embeddings) {
+    const std::vector<Chorus::LlamaPlannerSequence> sequences{
+        {1, Chorus::RequestType::Embedding, 4, 10, Chorus::LlamaPlannerPhase::Prefill, 0, 3, false},
+        {2, Chorus::RequestType::Generate, 4, 20, Chorus::LlamaPlannerPhase::Prefill, 0, 4, false},
+        {3, Chorus::RequestType::Embedding, 4, 30, Chorus::LlamaPlannerPhase::Prefill, 0, 4, false},
+    };
+    const auto first = Chorus::llama_plan_batch(sequences, 8, 6, 0, std::nullopt);
+    ASSERT_TRUE(first);
+    EXPECT_EQ(first->type, Chorus::RequestType::Embedding);
+    EXPECT_EQ(first->participants, std::vector<int>({1}));
+    const auto second = Chorus::llama_plan_batch(sequences, 8, 6, 0, first->contested_type);
+    ASSERT_TRUE(second);
+    EXPECT_EQ(second->type, Chorus::RequestType::Generate);
+    EXPECT_TRUE(std::ranges::all_of(second->entries, [](const auto& entry) { return entry.sequence_id == 2; }));
+}
+
+TEST(LlamaScheduler, scripted_recovery_reduces_only_failed_contributors_before_commit) {
+    const std::vector<Chorus::LlamaRecoveryContribution> contributors{{1, 4, 1}, {2, 3, 1}, {3, 1, 1}};
+    const auto retries = Chorus::llama_recovery_reductions(contributors);
+    ASSERT_EQ(retries.size(), size_t{7});
+    EXPECT_EQ(retries.front().entry_limits, std::vector<size_t>({4, 2, 1}));
+    EXPECT_EQ(retries[4].entry_limits, std::vector<size_t>({1, 1, 1}));
+    EXPECT_EQ(retries[5].sequence_ids, std::vector<int>({1, 2}));
+    EXPECT_EQ(retries[6].sequence_ids, std::vector<int>({1}));
+
+    std::map<int, size_t> committed{{1, 0}, {2, 0}, {3, 0}, {99, 0}};
+    for (const auto& retry : retries) {
+        EXPECT_EQ(std::ranges::find(retry.sequence_ids, 99), retry.sequence_ids.end());
+        if (retry.sequence_ids != std::vector<int>({1, 2}))
+            continue;
+        for (size_t index = 0; index < retry.sequence_ids.size(); ++index)
+            committed[retry.sequence_ids[index]] += retry.entry_limits[index];
+        break;
+    }
+    EXPECT_EQ(committed[1], size_t{1});
+    EXPECT_EQ(committed[2], size_t{1});
+    EXPECT_EQ(committed[3], size_t{0});
+    EXPECT_EQ(committed[99], size_t{0});
+}
+
 TEST(LlamaScheduler, load_option_CPU_placement_disables_every_offload_path) {
     Chorus::LlamaLoadConfig load;
     load.use_gpu = false;
@@ -147,7 +238,7 @@ TEST(LlamaScheduler, embeddings_require_a_single_supported_architecture) {
 TEST(LlamaScheduler, load_option_context_params_forward_exact_values) {
     Chorus::LlamaLoadConfig load;
     load.context_size = 4096;
-    load.num_slots = 3;
+    load.max_concurrent_requests = 3;
     load.thread_count = 6;
     load.n_batch = 96;
     load.n_ubatch = 32;
@@ -166,7 +257,7 @@ TEST_F(LlamaSchedulerModelTest, Mixed_requests_follow_priority_fifo_and_use_homo
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
-        {"num_slots", int64_t{3}},
+        {"max_concurrent_requests", int64_t{3}},
         {"n_batch", int64_t{64}},
         {"n_ubatch", int64_t{16}},
         {"pooling", std::string{"none"}},
@@ -249,7 +340,7 @@ TEST_F(LlamaSchedulerModelTest, Embedding_batches_respect_n_ubatch_and_cancellat
     Chorus::ChorusConfig config = make_gguf_config("tests/models/embeddinggemma-300M-Q8_0.gguf");
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
-        {"num_slots", int64_t{4}},
+        {"max_concurrent_requests", int64_t{4}},
         {"n_batch", int64_t{16}},
         {"n_ubatch", int64_t{8}},
         {"pooling", std::string{"none"}},
@@ -297,7 +388,7 @@ TEST_F(LlamaSchedulerModelTest, Embeddings_cancel_while_queued_and_admitted) {
         Chorus::ChorusConfig config = make_gguf_config("tests/models/embeddinggemma-300M-Q8_0.gguf");
         config.provider_options["llama"] = Chorus::ProviderOptionMap{
             {"use_gpu", false},
-            {"num_slots", int64_t{1}},
+            {"max_concurrent_requests", int64_t{1}},
             {"n_batch", int64_t{16}},
             {"n_ubatch", int64_t{8}},
             {"pooling", std::string{"none"}},
@@ -360,6 +451,59 @@ TEST_F(LlamaSchedulerModelTest, Embeddings_cancel_while_queued_and_admitted) {
     }));
 }
 
+TEST_F(LlamaSchedulerModelTest, Active_cancellations_emit_priority_ordered_terminals) {
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{
+        {"use_gpu", false},
+        {"max_concurrent_requests", int64_t{3}},
+    };
+
+    SchedulerObservation state;
+    Chorus::LlamaEngine engine;
+    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { state.observe(record); });
+
+    auto blocker = make_scheduler_generation(100, 100);
+    blocker.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.gate_request_id = blocker.id;
+    }
+    engine.submit_request(blocker);
+    ASSERT_TRUE(state.wait_for_gate());
+
+    auto low = make_scheduler_generation(101, 0);
+    low.gen_config.max_tokens = 8;
+    low.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
+    low.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+    auto high = make_scheduler_generation(102, 10);
+    high.gen_config.max_tokens = 8;
+    high.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
+    high.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.gate_request_id = high.id;
+        state.gate_seen = false;
+    }
+    engine.submit_request(low);
+    engine.submit_request(high);
+    state.release();
+    ASSERT_TRUE(state.wait_for_gate());
+
+    engine.cancel_request(low.id);
+    engine.cancel_request(high.id);
+    state.release();
+    ASSERT_TRUE(state.wait_for_terminals({low.id, high.id}));
+    engine.shutdown();
+
+    std::lock_guard<std::mutex> lock(state.mutex);
+    ASSERT_EQ(state.terminals[low.id].size(), size_t{1});
+    ASSERT_EQ(state.terminals[high.id].size(), size_t{1});
+    ASSERT_GE(state.terminal_order.size(), size_t{2});
+    EXPECT_EQ(state.terminal_order[state.terminal_order.size() - 2], high.id);
+    EXPECT_EQ(state.terminal_order.back(), low.id);
+}
+
 TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
@@ -367,8 +511,8 @@ TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
         {"context_size", int64_t{64}}, // tiny unified KV cache
         {"n_batch", int64_t{64}},      // keep decode-failure setup independent from the larger default batch
         {"n_ubatch", int64_t{32}},
-        {"tokens_per_tick", int64_t{16}},
-        {"num_slots", int64_t{1}},
+        {"n_batch", int64_t{16}},
+        {"max_concurrent_requests", int64_t{1}},
     };
 
     // A prompt guaranteed to exceed 64 KV cells (~2000 tokens).
@@ -462,8 +606,8 @@ TEST_F(LlamaSchedulerModelTest, Higher_priority_request_served_first) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
-        {"num_slots",
-         int64_t{1}}, // one slot serializes execution; the priority_queue decides who runs first, not submit order
+        {"max_concurrent_requests",
+         int64_t{1}}, // one active request lets the priority queue choose before admission
     };
 
     std::mutex order_mutex;
@@ -521,11 +665,11 @@ TEST_F(LlamaSchedulerModelTest, Higher_priority_request_served_first) {
     engine.shutdown();
 }
 
-TEST_F(LlamaSchedulerModelTest, Slot_reusable_after_request_completes) {
+TEST_F(LlamaSchedulerModelTest, Sequence_id_reusable_after_request_completes) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
-        {"num_slots", int64_t{1}}, // force the second request to reuse the first slot
+        {"max_concurrent_requests", int64_t{1}}, // force the second request to reuse the released sequence ID
     };
 
     struct Result {
@@ -577,7 +721,7 @@ TEST_F(LlamaSchedulerModelTest, Slot_reusable_after_request_completes) {
         return;
     }
 
-    auto [second, second_finished] = run_one(2); // must reuse the reclaimed slot
+    auto [second, second_finished] = run_one(2); // must reuse the reclaimed sequence ID
 
     engine.shutdown();
 
@@ -594,14 +738,13 @@ TEST_F(LlamaSchedulerModelTest, Batch_demand_beyond_capacity_is_clamped_not_over
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
         {"context_size", int64_t{64}},
-        {"n_batch", int64_t{64}}, // explicit logical batch capacity
+        {"n_batch", int64_t{64}},
         {"n_ubatch", int64_t{32}},
-        {"tokens_per_tick", int64_t{64}}, // per-slot demand; 4 slots * 64 = 256 tokens offered to a 64-token batch
-        {"num_slots", int64_t{4}},
+        {"max_concurrent_requests", int64_t{4}},
     };
 
-    // Long prompts keep every slot in prefill for many ticks, so multiple slots
-    // contribute to the same batch regardless of ingest timing.
+    // Long prompts keep every sequence in prefill across many passes, so several
+    // requests contribute to the same batch regardless of ingest timing.
     std::string long_prompt;
     for (int i = 0; i < 40; ++i)
         long_prompt += "The quick brown fox jumps over the lazy dog. ";
