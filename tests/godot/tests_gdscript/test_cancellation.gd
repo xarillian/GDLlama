@@ -11,7 +11,7 @@ static func run_tests(parent: Node) -> void:
 	chorus.load_model()
 
 	await TestReport.run("cancel_request() yields generation_error with ERR_CANCELLED", func():
-		var request_id := chorus.generate({"prompt": "a rather long sentence to leave a window for cancellation"})
+		var request_id := chorus.generate(ChorusRequest.stateless("a rather long sentence to leave a window for cancellation")).request_id
 		TestReport.check(chorus.is_request_active(request_id), "expected the request to be active immediately after generate()")
 
 		TestReport.check(chorus.cancel_request(request_id), "expected cancel_request() to return true for a live request")

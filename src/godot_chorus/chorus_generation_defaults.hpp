@@ -8,6 +8,7 @@
 #include <godot_cpp/variant/string.hpp>
 
 #include "chorus/core/generation_config.hpp"
+#include "godot_chorus/chorus_types.hpp"
 
 /*
  * Stores reusable generation overrides shared by one or more `GodotChorus` nodes.
@@ -24,13 +25,6 @@ class ChorusGenerationDefaults : public godot::Resource {
     static void _bind_methods();
 
   public:
-    enum ConstraintFormat {
-        CONSTRAINT_FORMAT_GBNF,
-        CONSTRAINT_FORMAT_JSON_SCHEMA,
-        CONSTRAINT_FORMAT_REGEX,
-        CONSTRAINT_FORMAT_LARK,
-    };
-
     ChorusGenerationDefaults();
 
     /*
@@ -88,8 +82,8 @@ class ChorusGenerationDefaults : public godot::Resource {
 
     void set_override_constraint(bool enabled);
     bool get_override_constraint() const;
-    void set_constraint_format(ConstraintFormat format);
-    ConstraintFormat get_constraint_format() const;
+    void set_constraint_format(ChorusConstraintFormat::Value format);
+    ChorusConstraintFormat::Value get_constraint_format() const;
     void set_constraint_source(const godot::String& source);
     godot::String get_constraint_source() const;
 
@@ -105,5 +99,3 @@ class ChorusGenerationDefaults : public godot::Resource {
     Chorus::GenerationConfigPatch _patch;
     godot::Dictionary _provider_options;
 };
-
-VARIANT_ENUM_CAST(ChorusGenerationDefaults::ConstraintFormat);

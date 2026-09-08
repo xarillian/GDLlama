@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusSubmitResult" inherits="RefCounted" api_type="extension">
+	<brief_description>Immutable result of generation or embedding admission.</brief_description>
+	<description>Immutable result of generation or embedding admission.</description>
+	<methods></methods>
+	<members>
+		<member name="request" type="ChorusInferenceRequest">Read-only result value.</member>
+		<member name="request_id" type="int">Read-only result value.</member>
+		<member name="request_message_id" type="int">Read-only result value.</member>
+		<member name="response_message_id" type="int">Read-only result value.</member>
+		<member name="error" type="int" enum="GodotChorus.ErrorCode">Read-only result value.</member>
+		<member name="message" type="String">Read-only result value.</member>
+		<member name="accepted" type="bool">Read-only result value.</member>
+	</members>
+	<constants>
+	</constants>
+</class>

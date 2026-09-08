@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "chorus/engine_factory.hpp"
-#include "godot_chorus/generation_request_normalizer.hpp"
+#include "godot_chorus/request_conversion.hpp"
 #include "godot_chorus/option_conversion.hpp"
 #include "godot_chorus/provider_option_properties.hpp"
 
@@ -57,18 +57,23 @@ static Chorus::Provider to_chorus_provider(GodotChorus::ProviderChoice provider)
 
 using godot_chorus::to_godot_string;
 
-static int64_t report_submit_result(const char* operation, const Chorus::SubmitResult& result) {
-    if (result.ok())
-        return result.request_id;
+static Ref<ChorusSubmitResult> submit_result(const Ref<ChorusInferenceRequest>& request, const Chorus::SubmitResult& result) {
+    return Ref<ChorusSubmitResult>(memnew(ChorusSubmitResult(
+        request,
+        result.request_id,
+        result.request_message_id.value_or(-1),
+        result.response_message_id.value_or(-1),
+        GodotChorus::to_godot(result.error),
+        to_godot_string(result.message)
+    )));
+}
 
-    String message =
-        String("[Chorus] ") + String(operation) + String("() rejected: ") + chorus_error_name(result.error);
-    if (!result.message.empty())
-        message += String(" - ") + to_godot_string(result.message);
-    if (result.error == Chorus::ChorusError::EngineNotReady)
-        message += ". Call load_model() first.";
-    UtilityFunctions::push_error(message);
-    return -1;
+static Ref<ChorusSubmitResult> rejected_submit(const Ref<ChorusInferenceRequest>& request, const String& message) {
+    return Ref<ChorusSubmitResult>(memnew(ChorusSubmitResult(request, -1, -1, -1, GodotChorus::ERR_INVALID_REQUEST, message)));
+}
+
+static Ref<ChorusResult> operation_result(std::optional<Chorus::ChorusError> error) {
+    return Ref<ChorusResult>(memnew(ChorusResult(error ? GodotChorus::to_godot(*error) : GodotChorus::ERR_NONE, error ? String(chorus_error_name(*error)) : String())));
 }
 
 int GodotChorus::to_godot(Chorus::TurnOutcome outcome) {
@@ -230,7 +235,8 @@ void GodotChorus::drain_logs() {
 void GodotChorus::_process(double /*delta*/) {
     drain_logs();
     for (const auto& event : _runtime.poll()) {
-        const String session = event.session_id ? to_godot_string(*event.session_id) : String();
+        const StringName session_name = event.session_id ? StringName(to_godot_string(*event.session_id)) : StringName();
+        const String session = String(session_name);
         switch (event.kind) {
         case Chorus::RuntimeEvent::Kind::StreamedToken:
             emit_signal("token_generated", event.request_id, session, to_godot_string(event.text));
@@ -238,14 +244,20 @@ void GodotChorus::_process(double /*delta*/) {
         case Chorus::RuntimeEvent::Kind::StreamedReasoningToken:
             emit_signal("reasoning_token_generated", event.request_id, session, to_godot_string(event.text));
             break;
-        case Chorus::RuntimeEvent::Kind::HistoryTruncated:
-            emit_signal("history_truncated", session, event.dropped);
+        case Chorus::RuntimeEvent::Kind::HistoryTruncated: {
+            PackedInt64Array omitted;
+            omitted.resize(static_cast<int64_t>(event.omitted_message_ids.size()));
+            for (int64_t i = 0; i < omitted.size(); ++i)
+                omitted.set(i, event.omitted_message_ids[static_cast<size_t>(i)]);
+            emit_signal("history_truncated", event.request_id, session_name, omitted);
             break;
+        }
         case Chorus::RuntimeEvent::Kind::Complete:
             emit_signal(
                 "generation_complete",
                 event.request_id,
-                session,
+                session_name,
+                event.message_id.value_or(-1),
                 to_godot_string(event.text),
                 to_godot_string(event.reasoning)
             );
@@ -255,7 +267,7 @@ void GodotChorus::_process(double /*delta*/) {
             values.resize(static_cast<int64_t>(event.embedding.size()));
             for (int64_t i = 0; i < values.size(); ++i)
                 values.set(i, event.embedding[static_cast<size_t>(i)]);
-            emit_signal("embedding_complete", event.request_id, values);
+            emit_signal("embedding_complete", event.request_id, session_name, values);
             break;
         }
         case Chorus::RuntimeEvent::Kind::Error:
@@ -332,54 +344,65 @@ int64_t GodotChorus::get_effective_context_size() const {
 int GodotChorus::get_last_load_error() const { return _last_load_error; }
 String GodotChorus::get_last_load_error_message() const { return _last_load_error_message; }
 
-int64_t GodotChorus::embed(const String& prompt, int64_t priority, const String& execution) {
-    if (priority < std::numeric_limits<int>::min() || priority > std::numeric_limits<int>::max()) {
-        UtilityFunctions::push_error("[Chorus] embed rejected: priority is outside the supported int range.");
-        return -1;
-    }
-    Chorus::ExecutionMode mode;
-    if (execution == "shared")
-        mode = Chorus::ExecutionMode::Shared;
-    else if (execution == "exclusive")
-        mode = Chorus::ExecutionMode::Exclusive;
-    else {
-        UtilityFunctions::push_error("[Chorus] embed rejected: execution must be 'shared' or 'exclusive'.");
-        return -1;
-    }
-    Chorus::EmbeddingRequest request;
-    request.prompt = std::string(prompt.utf8().get_data());
-    request.priority = static_cast<int>(priority);
-    request.execution = mode;
-    return report_submit_result("embed", _runtime.submit(request));
+Ref<ChorusSubmitResult> GodotChorus::generate(const Ref<ChorusRequest>& request) {
+    Ref<ChorusInferenceRequest> source = request;
+    if (!push_host_defaults())
+        return rejected_submit(source, "generation_defaults contains an unsupported value.");
+    auto converted = godot_chorus::generation_request_from_resource(request);
+    if (std::holds_alternative<std::string>(converted))
+        return rejected_submit(source, to_godot_string(std::get<std::string>(converted)));
+    return submit_result(source, _runtime.submit(std::get<Chorus::GenerationRequest>(converted)));
 }
 
-int64_t GodotChorus::generate(const Dictionary& request) {
+Ref<ChorusSubmitResult> GodotChorus::regenerate(const Ref<ChorusRequest>& request) {
+    Ref<ChorusInferenceRequest> source = request;
     if (!push_host_defaults())
-        return -1;
-
-    auto normalized = godot_chorus::normalize_generation_request(request);
-    if (std::holds_alternative<String>(normalized)) {
-        UtilityFunctions::push_error(std::get<String>(normalized));
-        return -1;
-    }
-
-    auto& gen_request = std::get<Chorus::GenerationRequest>(normalized);
-    return report_submit_result("generate", _runtime.submit(gen_request));
+        return rejected_submit(source, "generation_defaults contains an unsupported value.");
+    auto converted = godot_chorus::generation_request_from_resource(request);
+    if (std::holds_alternative<std::string>(converted))
+        return rejected_submit(source, to_godot_string(std::get<std::string>(converted)));
+    return submit_result(source, _runtime.regenerate(std::get<Chorus::GenerationRequest>(converted)));
 }
 
-int64_t GodotChorus::regenerate(const String& session, const Dictionary& overrides) {
-    if (!push_host_defaults())
-        return -1;
+Ref<ChorusSubmitResult> GodotChorus::embed(const Ref<ChorusEmbeddingRequest>& request) {
+    Ref<ChorusInferenceRequest> source = request;
+    auto converted = godot_chorus::embedding_request_from_resource(request);
+    if (std::holds_alternative<std::string>(converted))
+        return rejected_submit(source, to_godot_string(std::get<std::string>(converted)));
+    return submit_result(source, _runtime.submit(std::get<Chorus::EmbeddingRequest>(converted)));
+}
 
-    auto normalized = godot_chorus::normalize_generation_input(overrides);
-    if (std::holds_alternative<String>(normalized)) {
-        UtilityFunctions::push_error(std::get<String>(normalized));
-        return -1;
+TypedArray<ChorusSubmitResult> GodotChorus::generate_batch(const TypedArray<ChorusRequest>& requests) {
+    TypedArray<ChorusSubmitResult> out;
+    auto patch = effective_generation_defaults()->to_patch();
+    if (!patch) {
+        const String message = "generation_defaults contains an unsupported value.";
+        for (int i = 0; i < requests.size(); ++i) {
+            Ref<ChorusRequest> request = requests[i];
+            Ref<ChorusInferenceRequest> source = request;
+            out.push_back(rejected_submit(source, message));
+        }
+        return out;
     }
+    _runtime.set_host_defaults({std::move(*patch), std::string(_chat_template.utf8().get_data())});
+    for (int i = 0; i < requests.size(); ++i) {
+        Ref<ChorusRequest> request = requests[i];
+        Ref<ChorusInferenceRequest> source = request;
+        auto converted = godot_chorus::generation_request_from_resource(request);
+        out.push_back(std::holds_alternative<std::string>(converted)
+            ? rejected_submit(source, to_godot_string(std::get<std::string>(converted)))
+            : submit_result(source, _runtime.submit(std::get<Chorus::GenerationRequest>(converted))));
+    }
+    return out;
+}
 
-    auto& gen_request = std::get<Chorus::GenerationRequest>(normalized);
-    gen_request.session_id = std::string(session.utf8().get_data());
-    return report_submit_result("regenerate", _runtime.regenerate(gen_request));
+TypedArray<ChorusSubmitResult> GodotChorus::embed_batch(const TypedArray<ChorusEmbeddingRequest>& requests) {
+    TypedArray<ChorusSubmitResult> out;
+    for (int i = 0; i < requests.size(); ++i) {
+        Ref<ChorusEmbeddingRequest> request = requests[i];
+        out.push_back(embed(request));
+    }
+    return out;
 }
 
 // Runtime controls
@@ -399,71 +422,48 @@ int64_t GodotChorus::active_request_for_session(const String& session) const {
 
 // Conversation history
 
-static Dictionary chat_message_to_dict(const Chorus::ChatMessage& message) {
-    Dictionary dict;
-    dict["role"] = to_godot_string(message.role);
-    dict["content"] = to_godot_string(message.content);
-    return dict;
-}
-
-bool GodotChorus::import_conversation_history(const String& session, const Array& history) {
-    std::vector<Chorus::ChatMessage> messages;
+Ref<ChorusResult> GodotChorus::import_conversation_history(const StringName& session, const TypedArray<ChorusMessage>& history) {
+    std::vector<Chorus::ConversationMessage> messages;
     messages.reserve(history.size());
     for (int i = 0; i < history.size(); ++i) {
-        if (history[i].get_type() != Variant::DICTIONARY) {
-            UtilityFunctions::push_error(
-                "[Chorus] import_conversation_history: entries must be {role, content} Dictionaries."
-            );
-            return false;
+        Ref<ChorusMessage> item = history[i];
+        if (item.is_null())
+            return Ref<ChorusResult>(memnew(ChorusResult(ERR_INVALID_REQUEST, "history contains a null ChorusMessage.")));
+        Chorus::MessageRole role;
+        switch (item->get_role()) {
+        case ChorusRole::SYSTEM: role = Chorus::MessageRole::System; break;
+        case ChorusRole::USER: role = Chorus::MessageRole::User; break;
+        case ChorusRole::ASSISTANT: role = Chorus::MessageRole::Assistant; break;
+        default: return Ref<ChorusResult>(memnew(ChorusResult(ERR_INVALID_REQUEST, "history role is invalid.")));
         }
-        auto message = godot_chorus::parse_chat_message_dictionary((Dictionary)history[i]);
-        if (std::holds_alternative<godot_chorus::ChatMessageParseError>(message)) {
-            if (std::get<godot_chorus::ChatMessageParseError>(message) ==
-                godot_chorus::ChatMessageParseError::MissingFields) {
-                UtilityFunctions::push_error(
-                    "[Chorus] import_conversation_history: entries require 'role' and 'content'."
-                );
-            } else {
-                UtilityFunctions::push_error(
-                    "[Chorus] import_conversation_history: 'role' and 'content' must be Strings."
-                );
-            }
-            return false;
-        }
-        messages.push_back(std::move(std::get<Chorus::ChatMessage>(message)));
+        messages.push_back({item->get_id(), {role, Chorus::MessageContent::text(std::string(item->get_content().utf8().get_data()))}});
     }
-    auto err = _runtime.import_conversation_history(std::string(session.utf8().get_data()), std::move(messages));
-    if (err.has_value()) {
-        UtilityFunctions::push_error(String("[Chorus] import_conversation_history failed: ") + chorus_error_name(*err));
-        return false;
-    }
-    return true;
+    return operation_result(_runtime.import_conversation_history(std::string(String(session).utf8().get_data()), std::move(messages)));
 }
 
-Array GodotChorus::export_conversation_history(const String& session) const {
-    Array out;
-    for (const auto& message : _runtime.export_conversation_history(std::string(session.utf8().get_data())))
-        out.push_back(chat_message_to_dict(message));
+TypedArray<ChorusMessage> GodotChorus::export_conversation_history(const StringName& session) const {
+    TypedArray<ChorusMessage> out;
+    for (const auto& item : _runtime.export_conversation_history(std::string(String(session).utf8().get_data()))) {
+        ChorusRole::Value role;
+        switch (item.message.role) {
+        case Chorus::MessageRole::System: role = ChorusRole::SYSTEM; break;
+        case Chorus::MessageRole::User: role = ChorusRole::USER; break;
+        case Chorus::MessageRole::Assistant: role = ChorusRole::ASSISTANT; break;
+        default: continue;
+        }
+        const auto content = Chorus::joined_text(item.message.content);
+        if (content)
+            out.push_back(ChorusMessage::create(item.id, role, to_godot_string(*content)));
+    }
     return out;
 }
 
-bool GodotChorus::clear_conversation_history(const String& session) {
-    auto err = _runtime.clear_conversation_history(std::string(session.utf8().get_data()));
-    if (err.has_value()) {
-        UtilityFunctions::push_error(String("[Chorus] clear_conversation_history failed: ") + chorus_error_name(*err));
-        return false;
-    }
-    return true;
+Ref<ChorusResult> GodotChorus::clear_conversation_history(const StringName& session) {
+    return operation_result(_runtime.clear_conversation_history(std::string(String(session).utf8().get_data())));
 }
 
-bool GodotChorus::edit_message(const String& session, int64_t index, const String& content) {
-    auto err =
-        _runtime.edit_message(std::string(session.utf8().get_data()), index, std::string(content.utf8().get_data()));
-    if (err.has_value()) {
-        UtilityFunctions::push_error(String("[Chorus] edit_message failed: ") + chorus_error_name(*err));
-        return false;
-    }
-    return true;
+Ref<ChorusResult> GodotChorus::edit_message(const StringName& session, int64_t message_id, const String& content) {
+    return operation_result(_runtime.edit_message(std::string(String(session).utf8().get_data()), message_id, Chorus::MessageContent::text(std::string(content.utf8().get_data()))));
 }
 
 PackedStringArray GodotChorus::list_conversations() const {
@@ -473,37 +473,28 @@ PackedStringArray GodotChorus::list_conversations() const {
     return out;
 }
 
-bool GodotChorus::reset_context() {
-    auto err = _runtime.reset_context();
-    if (err.has_value()) {
-        UtilityFunctions::push_error(
-            String("[Chorus] reset_context failed: ") + chorus_error_name(*err) +
-            String(" - cancel or stop_all + poll first.")
-        );
-        return false;
-    }
-    return true;
+Ref<ChorusResult> GodotChorus::reset_context() {
+    return operation_result(_runtime.reset_context());
 }
 
 GodotChorus::TurnOutcomeCode GodotChorus::last_turn_outcome(const String& session) const {
     return static_cast<TurnOutcomeCode>(to_godot(_runtime.last_turn_outcome(std::string(session.utf8().get_data()))));
 }
 
-String GodotChorus::render_chat_prompt(const String& session, const String& template_override, const Array& inject) {
-    auto parsed = godot_chorus::normalize_inject_array(inject);
-    if (std::holds_alternative<String>(parsed)) {
-        UtilityFunctions::push_error(std::get<String>(parsed));
-        return String();
-    }
-
+Ref<ChorusRenderResult> GodotChorus::render_prompt(const Ref<ChorusRequest>& request) {
+    Ref<ChorusRenderResult> value;
+    value.instantiate();
     if (!push_host_defaults())
-        return String();
-    auto rendered = _runtime.render_prompt(
-        std::string(session.utf8().get_data()),
-        std::string(template_override.utf8().get_data()),
-        std::get<std::vector<Chorus::InjectedMessage>>(parsed)
-    );
-    return rendered.has_value() ? to_godot_string(*rendered) : String();
+        return Ref<ChorusRenderResult>(memnew(ChorusRenderResult(String(), PackedInt64Array(), ERR_INVALID_REQUEST, "generation_defaults contains an unsupported value.")));
+    auto converted = godot_chorus::generation_request_from_resource(request);
+    if (std::holds_alternative<std::string>(converted))
+        return Ref<ChorusRenderResult>(memnew(ChorusRenderResult(String(), PackedInt64Array(), ERR_INVALID_REQUEST, to_godot_string(std::get<std::string>(converted)))));
+    const auto rendered = _runtime.render_prompt(std::get<Chorus::GenerationRequest>(converted));
+    PackedInt64Array omitted;
+    omitted.resize(static_cast<int64_t>(rendered.omitted_message_ids.size()));
+    for (int64_t i = 0; i < omitted.size(); ++i)
+        omitted.set(i, rendered.omitted_message_ids[static_cast<size_t>(i)]);
+    return Ref<ChorusRenderResult>(memnew(ChorusRenderResult(to_godot_string(rendered.text), omitted, to_godot(rendered.error), to_godot_string(rendered.message))));
 }
 
 // Properties
@@ -669,7 +660,7 @@ bool GodotChorus::push_host_defaults() {
     auto patch = effective_generation_defaults()->to_patch();
     if (!patch) {
         UtilityFunctions::push_error(
-            "[Chorus] generation_defaults provider_options contains an unsupported value."
+            "[Chorus] generation_defaults contains an unsupported value."
         );
         return false;
     }
@@ -716,18 +707,23 @@ void GodotChorus::_bind_methods() {
     ADD_SIGNAL(MethodInfo(
         "generation_complete",
         PropertyInfo(Variant::INT, "request_id"),
-        PropertyInfo(Variant::STRING, "session"),
-        PropertyInfo(Variant::STRING, "full_text"),
+        PropertyInfo(Variant::STRING_NAME, "session"),
+        PropertyInfo(Variant::INT, "message_id"),
+        PropertyInfo(Variant::STRING, "content"),
         PropertyInfo(Variant::STRING, "reasoning")
     ));
     ADD_SIGNAL(MethodInfo(
         "embedding_complete",
         PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::STRING_NAME, "session"),
         PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "embedding")
     ));
-    ADD_SIGNAL(
-        MethodInfo("history_truncated", PropertyInfo(Variant::STRING, "session"), PropertyInfo(Variant::INT, "dropped"))
-    );
+    ADD_SIGNAL(MethodInfo(
+        "history_truncated",
+        PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::STRING_NAME, "session"),
+        PropertyInfo(Variant::PACKED_INT64_ARRAY, "omitted_message_ids")
+    ));
     ADD_SIGNAL(MethodInfo(
         "generation_error",
         PropertyInfo(Variant::INT, "request_id"),
@@ -790,30 +786,22 @@ void GodotChorus::_bind_methods() {
     ClassDB::bind_method(D_METHOD("is_loaded"), &GodotChorus::is_loaded);
     ClassDB::bind_method(D_METHOD("supports_embeddings"), &GodotChorus::supports_embeddings);
     ClassDB::bind_method(D_METHOD("generate", "request"), &GodotChorus::generate);
-    ClassDB::bind_method(D_METHOD("embed", "prompt", "priority", "execution"), &GodotChorus::embed, DEFVAL(0), DEFVAL("shared"));
+    ClassDB::bind_method(D_METHOD("generate_batch", "requests"), &GodotChorus::generate_batch);
+    ClassDB::bind_method(D_METHOD("regenerate", "request"), &GodotChorus::regenerate);
+    ClassDB::bind_method(D_METHOD("embed", "request"), &GodotChorus::embed);
+    ClassDB::bind_method(D_METHOD("embed_batch", "requests"), &GodotChorus::embed_batch);
     ClassDB::bind_method(D_METHOD("cancel_request", "request_id"), &GodotChorus::cancel_request);
     ClassDB::bind_method(D_METHOD("is_request_active", "request_id"), &GodotChorus::is_request_active);
     ClassDB::bind_method(D_METHOD("active_request_for_session", "session"), &GodotChorus::active_request_for_session);
 
-    // Conversation history
-    ClassDB::bind_method(
-        D_METHOD("regenerate", "session", "overrides"), &GodotChorus::regenerate, DEFVAL(Dictionary())
-    );
-    ClassDB::bind_method(
-        D_METHOD("import_conversation_history", "session", "history"), &GodotChorus::import_conversation_history
-    );
+    ClassDB::bind_method(D_METHOD("import_conversation_history", "session", "history"), &GodotChorus::import_conversation_history);
     ClassDB::bind_method(D_METHOD("export_conversation_history", "session"), &GodotChorus::export_conversation_history);
     ClassDB::bind_method(D_METHOD("clear_conversation_history", "session"), &GodotChorus::clear_conversation_history);
-    ClassDB::bind_method(D_METHOD("edit_message", "session", "index", "content"), &GodotChorus::edit_message);
+    ClassDB::bind_method(D_METHOD("edit_message", "session", "message_id", "content"), &GodotChorus::edit_message);
     ClassDB::bind_method(D_METHOD("list_conversations"), &GodotChorus::list_conversations);
     ClassDB::bind_method(D_METHOD("reset_context"), &GodotChorus::reset_context);
     ClassDB::bind_method(D_METHOD("last_turn_outcome", "session"), &GodotChorus::last_turn_outcome);
-    ClassDB::bind_method(
-        D_METHOD("render_chat_prompt", "session", "template", "inject"),
-        &GodotChorus::render_chat_prompt,
-        DEFVAL(String()),
-        DEFVAL(Array())
-    );
+    ClassDB::bind_method(D_METHOD("render_prompt", "request"), &GodotChorus::render_prompt);
 
     // Utility methods
     ClassDB::bind_method(D_METHOD("similarity_cos", "array1", "array2"), &GodotChorus::similarity_cos);

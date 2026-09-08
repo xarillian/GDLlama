@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusMessage" inherits="Resource" api_type="extension">
+	<brief_description>Durable conversation history message.</brief_description>
+	<description>Use [method create] to assemble a message for history import.</description>
+	<methods>
+		<method name="create" qualifiers="static"><return type="ChorusMessage"/><param index="0" name="id" type="int"/><param index="1" name="role" type="int" enum="ChorusRole.Value"/><param index="2" name="content" type="String"/></method>
+	</methods>
+	<members>
+		<member name="id" type="int"/><member name="role" type="int" enum="ChorusRole.Value"/><member name="content" type="String"/>
+	</members>
+	<constants></constants>
+</class>

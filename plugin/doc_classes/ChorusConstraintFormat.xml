@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusConstraintFormat" inherits="RefCounted" api_type="extension">
+	<brief_description>Structured output constraint formats.</brief_description>
+	<description>Structured output constraint formats.</description>
+	<methods></methods>
+	<members></members>
+	<constants>
+		<constant name="GBNF" value="0" enum="ChorusConstraintFormat.Value" />
+		<constant name="JSON_SCHEMA" value="1" enum="ChorusConstraintFormat.Value" />
+		<constant name="REGEX" value="2" enum="ChorusConstraintFormat.Value" />
+		<constant name="LARK" value="3" enum="ChorusConstraintFormat.Value" />
+	</constants>
+</class>

@@ -43,4 +43,17 @@ TEST(PromptFitting, unavailable_probe_preserves_all_messages_without_omissions) 
     ASSERT_TRUE(result.omitted_message_ids.empty());
     ASSERT_EQ(result.fitted.size(), 2U);
 }
+
+TEST(PromptFitting, omits_the_durable_zero_id) {
+    std::vector<FittingCandidate> history{
+        {message(MessageRole::User, "old"), 0},
+        {message(MessageRole::Assistant, "reply"), 1},
+        {message(MessageRole::User, "pending"), std::nullopt},
+    };
+
+    auto fitted = Chorus::fit_messages_to_budget(history, {}, 1, one_per_message);
+    ASSERT_TRUE(std::holds_alternative<Chorus::FitResult>(fitted));
+    const auto& result = std::get<Chorus::FitResult>(fitted);
+    ASSERT_EQ(result.omitted_message_ids, (std::vector<MessageId>{0, 1}));
+}
 } // namespace

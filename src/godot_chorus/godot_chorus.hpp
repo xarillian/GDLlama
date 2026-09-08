@@ -15,6 +15,7 @@
 #include "chorus/core/common.hpp"
 #include "chorus/runtime/runtime.hpp"
 #include "godot_chorus/chorus_generation_defaults.hpp"
+#include "godot_chorus/chorus_types.hpp"
 
 /*
  * Adapts the host-neutral Chorus runtime to a Godot node.
@@ -107,62 +108,11 @@ class GodotChorus : public godot::Node {
     int get_last_load_error() const;
     godot::String get_last_load_error_message() const;
 
-    /*
-     * Submits one stateless generation or sessioned chat turn.
-     *
-     * `request` accepts these request fields:
-     *  - `prompt`: required `godot::String`.
-     *  - `stream`: emits `GodotChorus::token_generated` for each token when true.
-     *  - `priority`: higher values enter the runtime queue first.
-     *  - `session`: stable continuity lane; empty or absent means stateless.
-     *
-     * A session permits one live request. After `GodotChorus::stop_all` or
-     * `GodotChorus::load_model`, resubmission remains busy until
-     * `GodotChorus::_process` drains the cancelled terminal event, preserving
-     * per-session event order.
-     *
-     * Generation fields overlay `GodotChorus::generation_defaults`, which
-     * overlays the engine defaults. An absent field inherits, `null` clears an
-     * inherited value, and any other value replaces it:
-     *  - `max_tokens`, `top_k`: integer values.
-     *  - `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`: floating-point values.
-     *  - `seed`: non-negative integer.
-     *  - `stop`: array of strings; an empty array disables inherited stop sequences.
-     *  - `provider_options`: recursively merged namespaces; a `null` leaf erases its key.
-     *  - `repeat_penalty`: shorthand for `provider_options["llama"]["repeat_penalty"]`.
-     *  - `constraint`: dictionary containing `format` and `source`.
-     *  - `grammar`, `json_schema`, `json`: mutually exclusive constraint shorthands.
-     *  - `show_thinking`: reasoning-model toggle.
-     *
-     * `repeat_penalty` is applied after `provider_options`, so the shorthand
-     * wins when both specify the same option. Unknown provider options and
-     * multiple constraint spellings reject the request.
-     *
-     * Sessioned requests also accept:
-     *  - `inject`: ephemeral `{role, content, depth?}` messages excluded from durable history.
-     *  - `chat_template`: per-request template overriding `GodotChorus::chat_template`.
-     *
-     * Returns:
-     *  - `int64_t`: the non-negative accepted request ID.
-     *  - `-1`: normalization or submission failed.
-     */
-    int64_t generate(const godot::Dictionary& request);
-    int64_t embed(const godot::String& prompt, int64_t priority = 0, const godot::String& execution = "shared");
-
-    /*
-     * Rerolls the last assistant message in a session.
-     *
-     * `overrides` accepts the generation fields from `GodotChorus::generate`
-     * except `prompt`; history supplies the turn text. The positional
-     * `session` argument selects the lane, so a dictionary `session` field is
-     * ignored. Completion replaces the old reply, while cancellation or error
-     * restores it.
-     *
-     * Returns:
-     *  - `int64_t`: the non-negative accepted request ID.
-     *  - `-1`: normalization or submission failed.
-     */
-    int64_t regenerate(const godot::String& session, const godot::Dictionary& overrides);
+    godot::Ref<ChorusSubmitResult> generate(const godot::Ref<ChorusRequest>& request);
+    godot::TypedArray<ChorusSubmitResult> generate_batch(const godot::TypedArray<ChorusRequest>& requests);
+    godot::Ref<ChorusSubmitResult> regenerate(const godot::Ref<ChorusRequest>& request);
+    godot::Ref<ChorusSubmitResult> embed(const godot::Ref<ChorusEmbeddingRequest>& request);
+    godot::TypedArray<ChorusSubmitResult> embed_batch(const godot::TypedArray<ChorusEmbeddingRequest>& requests);
 
     /// Requests remain active until `GodotChorus::_process` drains their terminal event.
     bool cancel_request(int64_t request_id);
@@ -175,67 +125,19 @@ class GodotChorus : public godot::Node {
      */
     int64_t active_request_for_session(const godot::String& session) const;
 
-    /*
-     * Replaces one session's durable history.
-     *
-     * Validation and runtime failures return false and are reported through
-     * Godot's error log.
-     *
-     * Errors:
-     *  - `Chorus::ChorusError::SessionBusy`: the session has active work.
-     */
-    bool import_conversation_history(const godot::String& session, const godot::Array& history);
-    /*
-     * Returns:
-     *  - `godot::Array`: `{role, content}` dictionaries for the session.
-     *  - Empty `godot::Array`: the session is unknown.
-     */
-    godot::Array export_conversation_history(const godot::String& session) const;
-    /*
-     * Clears one session's durable history.
-     *
-     * Runtime failures return false and are reported through Godot's error log.
-     *
-     * Errors:
-     *  - `Chorus::ChorusError::SessionBusy`: the session has active work.
-     */
-    bool clear_conversation_history(const godot::String& session);
-    /*
-     * Rewrites one message without changing its role.
-     *
-     * Negative indexes count from the end, with `-1` naming the newest
-     * message. Unknown sessions, out-of-range indexes, and busy sessions fail.
-     * Role changes and message insertion or deletion use an export, mutate,
-     * import round trip.
-     */
-    bool edit_message(const godot::String& session, int64_t index, const godot::String& content);
+    godot::Ref<ChorusResult> import_conversation_history(const godot::StringName& session, const godot::TypedArray<ChorusMessage>& history);
+    godot::TypedArray<ChorusMessage> export_conversation_history(const godot::StringName& session) const;
+    godot::Ref<ChorusResult> clear_conversation_history(const godot::StringName& session);
+    godot::Ref<ChorusResult> edit_message(const godot::StringName& session, int64_t message_id, const godot::String& content);
     godot::PackedStringArray list_conversations() const;
     /*
      * Clears every conversation.
      *
-     * Runtime failures return false and are reported through Godot's error log.
-     *
-     * Errors:
-     *  - `Chorus::ChorusError::SessionBusy`: at least one session has active work.
+     * Returns a `ChorusResult` with the runtime diagnostic, if any.
      */
-    bool reset_context();
+    godot::Ref<ChorusResult> reset_context();
     TurnOutcomeCode last_turn_outcome(const godot::String& session) const;
-    /*
-     * Renders the prompt a default-configured turn would consume now.
-     *
-     * The node's effective generation defaults determine the fitting
-     * reservation and `show_thinking` value. A later `GodotChorus::generate`
-     * call can fit differently by overriding either value.
-     *
-     * Returns:
-     *  - `godot::String`: the fitted prompt when rendering is available.
-     *  - Empty `godot::String`: rendering is unavailable.
-     */
-    godot::String render_chat_prompt(
-        const godot::String& session,
-        const godot::String& template_override = godot::String(),
-        const godot::Array& inject = godot::Array()
-    );
+    godot::Ref<ChorusRenderResult> render_prompt(const godot::Ref<ChorusRequest>& request);
 
     void _process(double delta) override;
 

@@ -240,16 +240,42 @@ TEST(RuntimeSessions, Runtime_sessioned_embedding_owns_lane_until_terminal_deliv
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
+    mock->emit_cancelled_on_cancel = true;
     runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
     const auto submitted = runtime.submit(embedding("memory", "s1"));
     ASSERT_TRUE(submitted.ok());
     ASSERT_EQ(runtime.active_request_for_session("s1"), submitted.request_id);
     ASSERT_EQ(runtime.submit(sessioned("chat", "s1")).error, Chorus::ChorusError::SessionBusy);
-    runtime.stop_all();
+    ASSERT_TRUE(runtime.cancel(submitted.request_id));
+    ASSERT_EQ(runtime.submit(embedding("still busy", "s1")).error, Chorus::ChorusError::SessionBusy);
     const auto events = runtime.poll();
     ASSERT_EQ(events.size(), 1U);
     ASSERT_EQ(events[0].session_id, std::optional<Chorus::SessionId>{"s1"});
+    ASSERT_TRUE(runtime.submit(embedding("reusable", "s1")).ok());
     ASSERT_TRUE(runtime.export_conversation_history("s1").empty());
+}
+
+TEST(RuntimeSessions, Runtime_embedding_batch_cancellation_is_independent) {
+    Chorus::ChorusRuntime runtime;
+    auto mock = std::make_unique<SyncMockEngine>();
+    mock->hold_requests = true;
+    mock->emit_cancelled_on_cancel = true;
+    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+
+    const auto results = runtime.submit_batch(std::vector<Chorus::EmbeddingRequest>{
+        embedding("first", "one"), embedding("second", "two")
+    });
+    ASSERT_EQ(results.size(), 2U);
+    ASSERT_TRUE(results[0].ok());
+    ASSERT_TRUE(results[1].ok());
+    ASSERT_TRUE(runtime.cancel(results[0].request_id));
+    ASSERT_TRUE(runtime.is_request_active(results[1].request_id));
+    const auto first_terminal = runtime.poll();
+    ASSERT_EQ(first_terminal.size(), 1U);
+    ASSERT_EQ(first_terminal[0].request_id, results[0].request_id);
+    ASSERT_TRUE(runtime.is_request_active(results[1].request_id));
+    ASSERT_TRUE(runtime.cancel(results[1].request_id));
+    ASSERT_EQ(runtime.poll().size(), 1U);
 }
 
 TEST(RuntimeSessions, Runtime_batches_follow_singular_input_order) {

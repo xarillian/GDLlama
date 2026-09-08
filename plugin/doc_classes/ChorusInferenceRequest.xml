@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusInferenceRequest" inherits="Resource" api_type="extension">
+	<brief_description>Base resource for generation and embedding input.</brief_description>
+	<description>Shared typed request fields. An empty session denotes stateless input.</description>
+	<methods></methods>
+	<members>
+		<member name="content" type="String"/><member name="session" type="StringName"/><member name="priority" type="int"/>
+		<member name="execution" type="int" enum="ChorusExecution.Value"/>
+	</members>
+	<constants></constants>
+</class>

@@ -9,7 +9,7 @@
 	<members>
 		<member name="provider_options" type="Dictionary" setter="set_provider_options" getter="get_provider_options" default="{}">
 		</member>
-		<member name="constraint_format" type="int" setter="set_constraint_format" getter="get_constraint_format" enum="ChorusGenerationDefaults.ConstraintFormat" default="0">
+		<member name="constraint_format" type="int" setter="set_constraint_format" getter="get_constraint_format" enum="ChorusConstraintFormat.Value" default="0">
 		</member>
 		<member name="constraint_source" type="String" setter="set_constraint_source" getter="get_constraint_source" default="&quot;&quot;">
 		</member>
@@ -53,13 +53,5 @@
 		</member>
 	</members>
 	<constants>
-		<constant name="CONSTRAINT_FORMAT_GBNF" value="0" enum="ConstraintFormat">
-		</constant>
-		<constant name="CONSTRAINT_FORMAT_JSON_SCHEMA" value="1" enum="ConstraintFormat">
-		</constant>
-		<constant name="CONSTRAINT_FORMAT_REGEX" value="2" enum="ConstraintFormat">
-		</constant>
-		<constant name="CONSTRAINT_FORMAT_LARK" value="3" enum="ConstraintFormat">
-		</constant>
 	</constants>
 </class>

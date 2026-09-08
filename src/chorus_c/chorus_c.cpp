@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <exception>
 #include <limits>
 #include <new>
@@ -32,6 +33,9 @@ struct chorus_runtime {
     std::vector<Chorus::RuntimeEvent> event_source;
     std::vector<chorus_event> events;
 
+    std::deque<std::string> result_strings;
+    std::vector<chorus_message_id> result_omitted_message_ids;
+
     std::vector<Chorus::LogRecord> log_source;
     std::vector<std::vector<chorus_log_field>> log_fields;
     std::vector<chorus_log_record> logs;
@@ -39,7 +43,31 @@ struct chorus_runtime {
 
 namespace {
 
-constexpr uint32_t kAbiVersion = 3;
+constexpr uint32_t kAbiVersion = 4;
+
+std::optional<Chorus::MessageRole> to_cpp_role(chorus_message_role role) noexcept {
+    switch (role) {
+    case CHORUS_ROLE_SYSTEM:
+        return Chorus::MessageRole::System;
+    case CHORUS_ROLE_USER:
+        return Chorus::MessageRole::User;
+    case CHORUS_ROLE_ASSISTANT:
+        return Chorus::MessageRole::Assistant;
+    }
+    return std::nullopt;
+}
+
+chorus_message_role to_c_role(Chorus::MessageRole role) noexcept {
+    switch (role) {
+    case Chorus::MessageRole::System:
+        return CHORUS_ROLE_SYSTEM;
+    case Chorus::MessageRole::User:
+        return CHORUS_ROLE_USER;
+    case Chorus::MessageRole::Assistant:
+        return CHORUS_ROLE_ASSISTANT;
+    }
+    return CHORUS_ROLE_USER;
+}
 const chorus_event kEmptyEvent{};
 const chorus_log_field kEmptyLogField{};
 const chorus_log_record kEmptyLogRecord{};
@@ -294,14 +322,47 @@ char* copy_owned_string(std::string_view value) noexcept {
     return copy;
 }
 
-void free_chat_messages(chorus_chat_message* messages, size_t count) noexcept {
+void free_conversation_messages(chorus_conversation_message* messages, size_t count) noexcept {
     if (!messages)
         return;
-    for (size_t i = 0; i < count; ++i) {
-        std::free(const_cast<char*>(messages[i].role));
+    for (size_t i = 0; i < count; ++i)
         std::free(const_cast<char*>(messages[i].content));
-    }
     std::free(messages);
+}
+
+void clear_result_storage(chorus_runtime* rt) noexcept {
+    if (!rt)
+        return;
+    rt->result_strings.clear();
+    rt->result_omitted_message_ids.clear();
+}
+
+void initialize_submit_result(chorus_submit_result* result) noexcept {
+    if (result)
+        *result = {-1, -1, -1, CHORUS_ERR_INVALID_REQUEST, nullptr};
+}
+
+void initialize_render_result(chorus_render_result* result) noexcept {
+    if (result)
+        *result = {nullptr, nullptr, 0, CHORUS_ERR_INVALID_REQUEST, nullptr};
+}
+
+void store_submit_results(
+    chorus_runtime* rt, const std::vector<Chorus::SubmitResult>& results, chorus_submit_result* output
+) {
+    clear_result_storage(rt);
+    for (const auto& result : results)
+        rt->result_strings.push_back(result.message);
+    for (size_t i = 0; i < results.size(); ++i) {
+        const auto& source = results[i];
+        output[i] = {
+            source.request_id,
+            source.request_message_id.value_or(-1),
+            source.response_message_id.value_or(-1),
+            to_c_error(source.error),
+            rt->result_strings[i].empty() ? nullptr : rt->result_strings[i].c_str(),
+        };
+    }
 }
 
 void free_string_list(char** strings, size_t count) noexcept {
@@ -647,13 +708,16 @@ chorus_error chorus_request_set_provider_option_string(
 }
 
 chorus_error chorus_request_add_inject(
-    chorus_request* req, chorus_chat_message message, int32_t depth
+    chorus_request* req, chorus_message_role role, const char* content, int32_t depth
 ) {
-    if (!req || !message.role || !message.content)
+    if (!req || !content)
         return CHORUS_ERR_INVALID_REQUEST;
-    return guard_builder([&] {
-        req->value.inject.push_back({{std::string(message.role), std::string(message.content)}, depth});
-    });
+    const auto cpp_role = to_cpp_role(role);
+    if (!cpp_role)
+        return CHORUS_ERR_INVALID_REQUEST;
+    return guard_builder(
+        [&] { req->value.inject.push_back({{*cpp_role, Chorus::MessageContent::text(content)}, depth}); }
+    );
 }
 
 chorus_error chorus_request_set_chat_template(chorus_request* req, const char* chat_template) {
@@ -662,54 +726,30 @@ chorus_error chorus_request_set_chat_template(chorus_request* req, const char* c
     return guard_builder([&] { req->value.chat_template = chat_template; });
 }
 
-chorus_error chorus_embed(
-    chorus_runtime* rt, const char* prompt, int32_t priority, chorus_execution_mode execution, chorus_request_id* out_request_id
-) {
-    if (out_request_id)
-        *out_request_id = -1;
-    if (!rt)
-        return CHORUS_ERR_INVALID_REQUEST;
-    if (!prompt || !out_request_id)
-        return invalid_request(rt, "prompt and out_request_id are required.");
+std::optional<Chorus::EmbeddingRequest> to_cpp_embedding_request(const chorus_embedding_request& request) {
+    if (!request.content)
+        return std::nullopt;
     Chorus::ExecutionMode mode;
-    if (!to_cpp_execution_mode(execution, mode))
-        return invalid_request(rt, "Unknown execution mode.");
-    try {
-        Chorus::EmbeddingRequest request;
-        request.prompt = prompt;
-        request.priority = priority;
-        request.execution = mode;
-        const Chorus::SubmitResult result = rt->value.submit(request);
-        if (!result.ok()) {
-            replace_last_error(rt, result.message);
-            return to_c_error(result.error);
-        }
-        *out_request_id = result.request_id;
-        clear_last_error(rt);
-        return CHORUS_OK;
-    } catch (const std::exception& error) {
-        return unknown_exception(rt, error.what());
-    } catch (...) {
-        return unknown_exception(rt, "Unknown exception while submitting an embedding request.");
-    }
+    if (!to_cpp_execution_mode(request.execution, mode))
+        return std::nullopt;
+    Chorus::EmbeddingRequest output;
+    output.prompt = request.content;
+    output.priority = request.priority;
+    output.execution = mode;
+    if (request.session)
+        output.session_id = request.session;
+    return output;
 }
 
-chorus_error chorus_generate(
-    chorus_runtime* rt, const chorus_request* req, chorus_request_id* out_request_id
-) {
-    if (out_request_id)
-        *out_request_id = -1;
+chorus_error chorus_generate(chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result) {
+    initialize_submit_result(out_result);
     if (!rt)
         return CHORUS_ERR_INVALID_REQUEST;
-    if (!req || !out_request_id)
-        return invalid_request(rt, "request and out_request_id are required.");
+    clear_result_storage(rt);
+    if (!req || !out_result)
+        return invalid_request(rt, "request and out_result are required.");
     try {
-        const Chorus::SubmitResult result = rt->value.submit(req->value);
-        if (!result.ok()) {
-            replace_last_error(rt, result.message);
-            return to_c_error(result.error);
-        }
-        *out_request_id = result.request_id;
+        store_submit_results(rt, {rt->value.submit(req->value)}, out_result);
         clear_last_error(rt);
         return CHORUS_OK;
     } catch (const std::exception& error) {
@@ -719,22 +759,100 @@ chorus_error chorus_generate(
     }
 }
 
-chorus_error chorus_regenerate(
-    chorus_runtime* rt, const chorus_request* req, chorus_request_id* out_request_id
+chorus_error chorus_generate_batch(
+    chorus_runtime* rt, const chorus_request* const* reqs, size_t count, chorus_submit_result* out_results
 ) {
-    if (out_request_id)
-        *out_request_id = -1;
+    if (out_results)
+        for (size_t i = 0; i < count; ++i)
+            initialize_submit_result(&out_results[i]);
     if (!rt)
         return CHORUS_ERR_INVALID_REQUEST;
-    if (!req || !out_request_id)
-        return invalid_request(rt, "request and out_request_id are required.");
+    clear_result_storage(rt);
+    if ((count != 0 && (!reqs || !out_results)))
+        return invalid_request(rt, "requests and out_results are required for a nonempty batch.");
     try {
-        const Chorus::SubmitResult result = rt->value.regenerate(req->value);
-        if (!result.ok()) {
-            replace_last_error(rt, result.message);
-            return to_c_error(result.error);
+        std::vector<Chorus::SubmitResult> results;
+        results.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+            if (!reqs[i]) {
+                results.push_back({-1, std::nullopt, std::nullopt, Chorus::ChorusError::InvalidRequest, "request is required."});
+                continue;
+            }
+            results.push_back(rt->value.submit(reqs[i]->value));
         }
-        *out_request_id = result.request_id;
+        store_submit_results(rt, results, out_results);
+        clear_last_error(rt);
+        return CHORUS_OK;
+    } catch (const std::exception& error) {
+        return unknown_exception(rt, error.what());
+    } catch (...) {
+        return unknown_exception(rt, "Unknown exception while submitting a request batch.");
+    }
+}
+
+chorus_error chorus_embed(chorus_runtime* rt, const chorus_embedding_request* req, chorus_submit_result* out_result) {
+    initialize_submit_result(out_result);
+    if (!rt)
+        return CHORUS_ERR_INVALID_REQUEST;
+    clear_result_storage(rt);
+    if (!req || !out_result)
+        return invalid_request(rt, "request and out_result are required.");
+    const auto request = to_cpp_embedding_request(*req);
+    if (!request)
+        return invalid_request(rt, "embedding content and execution are required.");
+    try {
+        store_submit_results(rt, {rt->value.submit(*request)}, out_result);
+        clear_last_error(rt);
+        return CHORUS_OK;
+    } catch (const std::exception& error) {
+        return unknown_exception(rt, error.what());
+    } catch (...) {
+        return unknown_exception(rt, "Unknown exception while submitting an embedding request.");
+    }
+}
+
+chorus_error chorus_embed_batch(
+    chorus_runtime* rt, const chorus_embedding_request* reqs, size_t count, chorus_submit_result* out_results
+) {
+    if (out_results)
+        for (size_t i = 0; i < count; ++i)
+            initialize_submit_result(&out_results[i]);
+    if (!rt)
+        return CHORUS_ERR_INVALID_REQUEST;
+    clear_result_storage(rt);
+    if (count != 0 && (!reqs || !out_results))
+        return invalid_request(rt, "requests and out_results are required for a nonempty batch.");
+    try {
+        std::vector<Chorus::SubmitResult> results;
+        results.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+            const auto request = to_cpp_embedding_request(reqs[i]);
+            if (!request) {
+                results.push_back({-1, std::nullopt, std::nullopt, Chorus::ChorusError::InvalidRequest,
+                                   "embedding content and execution are required."});
+                continue;
+            }
+            results.push_back(rt->value.submit(*request));
+        }
+        store_submit_results(rt, results, out_results);
+        clear_last_error(rt);
+        return CHORUS_OK;
+    } catch (const std::exception& error) {
+        return unknown_exception(rt, error.what());
+    } catch (...) {
+        return unknown_exception(rt, "Unknown exception while submitting an embedding request batch.");
+    }
+}
+
+chorus_error chorus_regenerate(chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result) {
+    initialize_submit_result(out_result);
+    if (!rt)
+        return CHORUS_ERR_INVALID_REQUEST;
+    clear_result_storage(rt);
+    if (!req || !out_result)
+        return invalid_request(rt, "request and out_result are required.");
+    try {
+        store_submit_results(rt, {rt->value.regenerate(req->value)}, out_result);
         clear_last_error(rt);
         return CHORUS_OK;
     } catch (const std::exception& error) {
@@ -791,6 +909,7 @@ const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count) {
         *out_count = 0;
     if (!rt)
         return &kEmptyEvent;
+    clear_result_storage(rt);
     if (!out_count) {
         invalid_request(rt, "out_count is required.");
         return &kEmptyEvent;
@@ -809,7 +928,9 @@ const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count) {
             event.text = source.text.c_str();
             event.error = to_c_error(source.error);
             event.reasoning = source.kind == Chorus::RuntimeEvent::Kind::Complete ? source.reasoning.c_str() : nullptr;
-            event.dropped = source.dropped;
+            event.message_id = source.message_id.value_or(-1);
+            event.omitted_message_ids = source.omitted_message_ids.empty() ? nullptr : source.omitted_message_ids.data();
+            event.omitted_message_id_count = source.omitted_message_ids.size();
             event.embedding = source.kind == Chorus::RuntimeEvent::Kind::Embedding && !source.embedding.empty()
                                   ? source.embedding.data()
                                   : nullptr;
@@ -910,7 +1031,7 @@ const chorus_log_record* chorus_poll_logs(chorus_runtime* rt, size_t* out_count)
 }
 
 chorus_error chorus_history_import(
-    chorus_runtime* rt, const char* session, const chorus_chat_message* history, size_t count
+    chorus_runtime* rt, const char* session, const chorus_conversation_message* history, size_t count
 ) {
     if (!rt)
         return CHORUS_ERR_INVALID_REQUEST;
@@ -918,12 +1039,13 @@ chorus_error chorus_history_import(
         return invalid_request(rt, "session and history storage are required.");
 
     try {
-        std::vector<Chorus::ChatMessage> copied;
+        std::vector<Chorus::ConversationMessage> copied;
         copied.reserve(count);
         for (size_t i = 0; i < count; ++i) {
-            if (!history[i].role || !history[i].content)
-                return invalid_request(rt, "Every history message requires role and content.");
-            copied.push_back({history[i].role, history[i].content});
+            const auto role = to_cpp_role(history[i].role);
+            if (!role || !history[i].content || history[i].id < 0)
+                return invalid_request(rt, "Every history message requires a nonnegative ID, known role, and content.");
+            copied.push_back({history[i].id, {*role, Chorus::MessageContent::text(history[i].content)}});
         }
         auto error = rt->value.import_conversation_history(session, std::move(copied));
         if (error)
@@ -938,7 +1060,7 @@ chorus_error chorus_history_import(
 }
 
 chorus_error chorus_history_export(
-    const chorus_runtime* rt, const char* session, chorus_chat_message** out_messages, size_t* out_count
+    const chorus_runtime* rt, const char* session, chorus_conversation_message** out_messages, size_t* out_count
 ) {
     if (out_messages)
         *out_messages = nullptr;
@@ -966,17 +1088,20 @@ chorus_error chorus_history_export(
         }
 
         const size_t allocation_count = history.empty() ? 1 : history.size();
-        auto* output = static_cast<chorus_chat_message*>(
-            std::calloc(allocation_count, sizeof(chorus_chat_message))
+        auto* output = static_cast<chorus_conversation_message*>(
+            std::calloc(allocation_count, sizeof(chorus_conversation_message))
         );
         if (!output)
             return unknown_exception(rt, "Unable to allocate the history snapshot.");
 
         for (size_t i = 0; i < history.size(); ++i) {
-            output[i].role = copy_owned_string(history[i].role);
-            output[i].content = copy_owned_string(history[i].content);
-            if (!output[i].role || !output[i].content) {
-                free_chat_messages(output, history.size());
+            const auto role = Chorus::message_role_name(history[i].message.role);
+            const auto content = Chorus::joined_text(history[i].message.content);
+            output[i].id = history[i].id;
+            output[i].role = to_c_role(history[i].message.role);
+            output[i].content = content ? copy_owned_string(*content) : nullptr;
+            if (!content || !output[i].content) {
+                free_conversation_messages(output, history.size());
                 return unknown_exception(rt, "Unable to allocate the history snapshot.");
             }
         }
@@ -992,8 +1117,8 @@ chorus_error chorus_history_export(
     }
 }
 
-void chorus_chat_messages_free(chorus_chat_message* messages, size_t count) {
-    free_chat_messages(messages, count);
+void chorus_conversation_messages_free(chorus_conversation_message* messages, size_t count) {
+    free_conversation_messages(messages, count);
 }
 
 chorus_error chorus_history_clear(chorus_runtime* rt, const char* session) {
@@ -1015,14 +1140,14 @@ chorus_error chorus_history_clear(chorus_runtime* rt, const char* session) {
 }
 
 chorus_error chorus_history_edit_message(
-    chorus_runtime* rt, const char* session, int64_t index, const char* content
+    chorus_runtime* rt, const char* session, chorus_message_id message_id, const char* content
 ) {
     if (!rt)
         return CHORUS_ERR_INVALID_REQUEST;
-    if (!session || !content)
-        return invalid_request(rt, "session and content are required.");
+    if (!session || !content || message_id < 0)
+        return invalid_request(rt, "session, nonnegative message_id, and content are required.");
     try {
-        auto error = rt->value.edit_message(session, index, content);
+        auto error = rt->value.edit_message(session, message_id, Chorus::MessageContent::text(content));
         if (error)
             return runtime_result(rt, *error);
         clear_last_error(rt);
@@ -1110,40 +1235,35 @@ chorus_turn_outcome chorus_last_turn_outcome(const chorus_runtime* rt, const cha
     }
 }
 
-char* chorus_render_prompt(
-    const chorus_runtime* rt, const char* session, const chorus_request* req
+chorus_error chorus_render_prompt(
+    chorus_runtime* rt, const chorus_request* req, chorus_render_result* out_result
 ) {
+    initialize_render_result(out_result);
     if (!rt)
-        return nullptr;
-    if (!session) {
-        invalid_request(rt, "session is required.");
-        return nullptr;
-    }
+        return CHORUS_ERR_INVALID_REQUEST;
+    clear_result_storage(rt);
+    if (!req || !out_result)
+        return invalid_request(rt, "request and out_result are required.");
     try {
-        const auto rendered = req ? rt->value.render_prompt(
-                                        session,
-                                        req->value.chat_template,
-                                        req->value.inject,
-                                        req->value.overrides
-                                    )
-                                  : rt->value.render_prompt(session);
-        if (!rendered) {
-            replace_last_error(rt, "Prompt rendering is unavailable.");
-            return nullptr;
-        }
-        char* output = copy_owned_string(*rendered);
-        if (!output) {
-            unknown_exception(rt, "Unable to allocate the rendered prompt.");
-            return nullptr;
-        }
+        const auto rendered = rt->value.render_prompt(req->value);
+        rt->result_strings.push_back(rendered.text);
+        rt->result_strings.push_back(rendered.message);
+        rt->result_omitted_message_ids.assign(
+            rendered.omitted_message_ids.begin(), rendered.omitted_message_ids.end()
+        );
+        *out_result = {
+            rt->result_strings[0].empty() ? nullptr : rt->result_strings[0].c_str(),
+            rt->result_omitted_message_ids.empty() ? nullptr : rt->result_omitted_message_ids.data(),
+            rt->result_omitted_message_ids.size(),
+            to_c_error(rendered.error),
+            rt->result_strings[1].empty() ? nullptr : rt->result_strings[1].c_str(),
+        };
         clear_last_error(rt);
-        return output;
+        return CHORUS_OK;
     } catch (const std::exception& error) {
-        unknown_exception(rt, error.what());
-        return nullptr;
+        return unknown_exception(rt, error.what());
     } catch (...) {
-        unknown_exception(rt, "Unknown exception while rendering the prompt.");
-        return nullptr;
+        return unknown_exception(rt, "Unknown exception while rendering a prompt.");
     }
 }
 

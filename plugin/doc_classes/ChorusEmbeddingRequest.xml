@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusEmbeddingRequest" inherits="ChorusInferenceRequest" api_type="extension">
+	<brief_description>Mutable typed embedding resource.</brief_description>
+	<description>Use [method create] for stateless or session-correlated embedding input.</description>
+	<methods>
+		<method name="create" qualifiers="static"><return type="ChorusEmbeddingRequest"/><param index="0" name="content" type="String"/><param index="1" name="session" type="StringName" default="&quot;&quot;"/></method>
+	</methods>
+	<members></members>
+	<constants></constants>
+</class>

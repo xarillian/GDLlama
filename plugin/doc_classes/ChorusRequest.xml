@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusRequest" inherits="ChorusInferenceRequest" api_type="extension">
+	<brief_description>Mutable typed generation resource.</brief_description>
+	<description>Value properties do not activate an override. Use the set, clear, and inherit methods to select an override state.</description>
+	<methods>
+		<method name="chat" qualifiers="static"><return type="ChorusRequest"/><param index="0" name="session" type="StringName"/><param index="1" name="content" type="String"/></method>
+		<method name="stateless" qualifiers="static"><return type="ChorusRequest"/><param index="0" name="content" type="String"/></method>
+		<method name="regeneration" qualifiers="static"><return type="ChorusRequest"/><param index="0" name="session" type="StringName"/></method>
+		<method name="set_max_tokens"><param index="0" name="value" type="int"/></method><method name="clear_max_tokens"/><method name="inherit_max_tokens"/>
+		<method name="set_temperature"><param index="0" name="value" type="float"/></method><method name="clear_temperature"/><method name="inherit_temperature"/>
+		<method name="set_top_k"><param index="0" name="value" type="int"/></method><method name="clear_top_k"/><method name="inherit_top_k"/>
+		<method name="set_top_p"><param index="0" name="value" type="float"/></method><method name="clear_top_p"/><method name="inherit_top_p"/>
+		<method name="set_seed"><param index="0" name="value" type="int"/></method><method name="clear_seed"/><method name="inherit_seed"/>
+		<method name="set_frequency_penalty"><param index="0" name="value" type="float"/></method><method name="clear_frequency_penalty"/><method name="inherit_frequency_penalty"/>
+		<method name="set_presence_penalty"><param index="0" name="value" type="float"/></method><method name="clear_presence_penalty"/><method name="inherit_presence_penalty"/>
+		<method name="set_stop"><param index="0" name="value" type="PackedStringArray"/></method><method name="clear_stop"/><method name="inherit_stop"/>
+		<method name="set_constraint"><param index="0" name="format" type="int" enum="ChorusConstraintFormat.Value"/><param index="1" name="source" type="String"/></method><method name="clear_constraint"/><method name="inherit_constraint"/>
+		<method name="set_show_thinking"><param index="0" name="value" type="bool"/></method><method name="clear_show_thinking"/><method name="inherit_show_thinking"/>
+	</methods>
+	<members>
+		<member name="stream" type="bool"/>
+		<member name="max_tokens_state" type="int" enum="ChorusOverrideState.Value"/><member name="max_tokens" type="int"/>
+		<member name="temperature_state" type="int" enum="ChorusOverrideState.Value"/><member name="temperature" type="float"/>
+		<member name="top_k_state" type="int" enum="ChorusOverrideState.Value"/><member name="top_k" type="int"/>
+		<member name="top_p_state" type="int" enum="ChorusOverrideState.Value"/><member name="top_p" type="float"/>
+		<member name="seed_state" type="int" enum="ChorusOverrideState.Value"/><member name="seed" type="int"/>
+		<member name="frequency_penalty_state" type="int" enum="ChorusOverrideState.Value"/><member name="frequency_penalty" type="float"/>
+		<member name="presence_penalty_state" type="int" enum="ChorusOverrideState.Value"/><member name="presence_penalty" type="float"/>
+		<member name="stop_state" type="int" enum="ChorusOverrideState.Value"/><member name="stop" type="PackedStringArray"/>
+		<member name="constraint_state" type="int" enum="ChorusOverrideState.Value"/><member name="constraint_format" type="int" enum="ChorusConstraintFormat.Value"/><member name="constraint_source" type="String"/>
+		<member name="show_thinking_state" type="int" enum="ChorusOverrideState.Value"/><member name="show_thinking" type="bool"/>
+		<member name="provider_options" type="Dictionary"/><member name="provider_option_erasures" type="PackedStringArray"/>
+		<member name="inject" type="Array[ChorusInjectedMessage]"/><member name="chat_template" type="String"/>
+	</members>
+	<constants></constants>
+</class>

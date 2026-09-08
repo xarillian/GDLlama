@@ -277,16 +277,14 @@ class ChorusRuntime {
     import_conversation_history(const SessionId& session, std::vector<ConversationMessage> history);
 
     /*
-     * Rewrites one stored message without changing its recorded turn outcome.
-     *
-     * Negative indexes count backward from the newest message.
+     * Rewrites one stored message identified by its nonnegative durable ID.
      *
      * Returns:
      *  - `std::nullopt`: the message was changed.
      *  - `Chorus::ChorusError`: the change was rejected.
      *
      * Errors:
-     *  - `Chorus::ChorusError::InvalidRequest`: the session or index does not exist.
+     *  - `Chorus::ChorusError::InvalidRequest`: the session or message ID does not exist.
      *  - `Chorus::ChorusError::SessionBusy`: the session has an active request.
      */
     std::optional<ChorusError> edit_message(const SessionId& session, MessageId message_id, MessageContent content);
@@ -321,8 +319,8 @@ class ChorusRuntime {
      * Renders the fitted prompt that generation would consume without submitting work.
      *
      * Returns:
-     *  - `std::string`: the rendered prompt.
-     *  - `std::nullopt`: the engine, stored session, prompt fit, or chat renderer is unavailable.
+     *  - `Chorus::RenderPromptResult`: the rendered prompt, omitted durable message IDs,
+     *    and any diagnostic from fitting or rendering.
      */
     RenderPromptResult render_prompt(const GenerationRequest& request) const;
 
@@ -391,7 +389,6 @@ class ChorusRuntime {
         std::optional<MessageId> pending_user_id;
         std::optional<MessageId> reserved_assistant_id;
         std::optional<ConversationMessage> replaced_reply;
-        bool history_existed_before = false;
     };
 
     std::unique_ptr<InferenceEngine> _engine;

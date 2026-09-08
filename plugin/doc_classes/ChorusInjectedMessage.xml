@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusInjectedMessage" inherits="Resource" api_type="extension">
+	<brief_description>Ephemeral request message without a durable identity.</brief_description>
+	<description>Use [method create] to assemble a message for [member ChorusRequest.inject].</description>
+	<methods>
+		<method name="create" qualifiers="static"><return type="ChorusInjectedMessage"/><param index="0" name="role" type="int" enum="ChorusRole.Value"/><param index="1" name="content" type="String"/><param index="2" name="depth" type="int" default="0"/></method>
+	</methods>
+	<members>
+		<member name="role" type="int" enum="ChorusRole.Value"/><member name="content" type="String"/><member name="depth" type="int"/>
+	</members>
+	<constants></constants>
+</class>

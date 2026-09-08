@@ -1,5 +1,7 @@
 #include "godot_chorus/chorus_generation_defaults.hpp"
 
+#include <cstdint>
+#include <limits>
 #include <utility>
 
 #include <godot_cpp/core/class_db.hpp>
@@ -7,25 +9,6 @@
 #include "godot_chorus/option_conversion.hpp"
 
 using namespace godot;
-
-// The Godot-facing enum casts directly to the core one; a reorder on either
-// side must fail the build rather than silently miscast.
-static_assert(
-    (int)ChorusGenerationDefaults::CONSTRAINT_FORMAT_GBNF == (int)Chorus::ConstraintFormat::Gbnf,
-    "ConstraintFormat enums out of sync"
-);
-static_assert(
-    (int)ChorusGenerationDefaults::CONSTRAINT_FORMAT_JSON_SCHEMA == (int)Chorus::ConstraintFormat::JsonSchema,
-    "ConstraintFormat enums out of sync"
-);
-static_assert(
-    (int)ChorusGenerationDefaults::CONSTRAINT_FORMAT_REGEX == (int)Chorus::ConstraintFormat::Regex,
-    "ConstraintFormat enums out of sync"
-);
-static_assert(
-    (int)ChorusGenerationDefaults::CONSTRAINT_FORMAT_LARK == (int)Chorus::ConstraintFormat::Lark,
-    "ConstraintFormat enums out of sync"
-);
 
 namespace {
 
@@ -52,6 +35,17 @@ ChorusGenerationDefaults::ChorusGenerationDefaults() {
 
 std::optional<Chorus::GenerationConfigPatch> ChorusGenerationDefaults::to_patch() const {
     Chorus::GenerationConfigPatch patch = _patch;
+    if (patch.seed.action == Chorus::PatchAction::Set && patch.seed.value > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+        return std::nullopt;
+    if (patch.constraint.action == Chorus::PatchAction::Set) {
+        switch (patch.constraint.value.format) {
+        case Chorus::ConstraintFormat::Gbnf:
+        case Chorus::ConstraintFormat::JsonSchema:
+        case Chorus::ConstraintFormat::Regex:
+        case Chorus::ConstraintFormat::Lark: break;
+        default: return std::nullopt;
+        }
+    }
     if (!_provider_options.is_empty()) {
         auto converted = godot_chorus::variant_to_option_value(_provider_options);
         if (!converted || !std::holds_alternative<Chorus::ProviderOptionMap>(*converted))
@@ -171,11 +165,11 @@ void ChorusGenerationDefaults::set_override_constraint(bool enabled) {
 bool ChorusGenerationDefaults::get_override_constraint() const {
     return _patch.constraint.action == Chorus::PatchAction::Set;
 }
-void ChorusGenerationDefaults::set_constraint_format(ConstraintFormat format) {
+void ChorusGenerationDefaults::set_constraint_format(ChorusConstraintFormat::Value format) {
     _patch.constraint.value.format = (Chorus::ConstraintFormat)format;
 }
-ChorusGenerationDefaults::ConstraintFormat ChorusGenerationDefaults::get_constraint_format() const {
-    return (ConstraintFormat)_patch.constraint.value.format;
+ChorusConstraintFormat::Value ChorusGenerationDefaults::get_constraint_format() const {
+    return (ChorusConstraintFormat::Value)_patch.constraint.value.format;
 }
 void ChorusGenerationDefaults::set_constraint_source(const String& source) {
     _patch.constraint.value.source = std::string(source.utf8().get_data());
@@ -205,10 +199,6 @@ Dictionary ChorusGenerationDefaults::get_provider_options() const {
 }
 
 void ChorusGenerationDefaults::_bind_methods() {
-    BIND_ENUM_CONSTANT(CONSTRAINT_FORMAT_GBNF);
-    BIND_ENUM_CONSTANT(CONSTRAINT_FORMAT_JSON_SCHEMA);
-    BIND_ENUM_CONSTANT(CONSTRAINT_FORMAT_REGEX);
-    BIND_ENUM_CONSTANT(CONSTRAINT_FORMAT_LARK);
 
     ClassDB::bind_method(
         D_METHOD("set_override_max_tokens", "enabled"), &ChorusGenerationDefaults::set_override_max_tokens
@@ -311,7 +301,7 @@ void ChorusGenerationDefaults::_bind_methods() {
         PropertyInfo(Variant::BOOL, "override_constraint"), "set_override_constraint", "get_override_constraint"
     );
     ADD_PROPERTY(
-        PropertyInfo(Variant::INT, "constraint_format", PROPERTY_HINT_ENUM, "GBNF,JSON Schema,Regex,Lark"),
+        PropertyInfo(Variant::INT, "constraint_format", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT, "ChorusConstraintFormat.Value"),
         "set_constraint_format",
         "get_constraint_format"
     );

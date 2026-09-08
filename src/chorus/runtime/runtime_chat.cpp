@@ -266,7 +266,6 @@ void ChorusRuntime::finish_turn(const LiveRequest& live, TurnOutcome outcome, co
         if (pending != history.messages.end())
             history.messages.erase(pending);
     }
-
 }
 
 } // namespace Chorus

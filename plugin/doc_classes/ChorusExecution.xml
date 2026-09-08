@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusExecution" inherits="RefCounted" api_type="extension">
+	<brief_description>Inference execution modes.</brief_description>
+	<description>Inference execution modes.</description>
+	<methods></methods>
+	<members></members>
+	<constants>
+		<constant name="SHARED" value="0" enum="ChorusExecution.Value" />
+		<constant name="EXCLUSIVE" value="1" enum="ChorusExecution.Value" />
+	</constants>
+</class>

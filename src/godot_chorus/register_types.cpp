@@ -1,5 +1,6 @@
 #include "godot_chorus/register_types.hpp"
 #include "godot_chorus/chorus_generation_defaults.hpp"
+#include "godot_chorus/chorus_types.hpp"
 #include "godot_chorus/godot_chorus.hpp"
 
 #include <gdextension_interface.h>
@@ -13,6 +14,18 @@ void initialize_chorus_module(ModuleInitializationLevel p_level) {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
         return;
     }
+    GDREGISTER_ABSTRACT_CLASS(ChorusRole);
+    GDREGISTER_ABSTRACT_CLASS(ChorusOverrideState);
+    GDREGISTER_ABSTRACT_CLASS(ChorusExecution);
+    GDREGISTER_ABSTRACT_CLASS(ChorusConstraintFormat);
+    GDREGISTER_ABSTRACT_CLASS(ChorusInferenceRequest);
+    GDREGISTER_CLASS(ChorusInjectedMessage);
+    GDREGISTER_CLASS(ChorusMessage);
+    GDREGISTER_CLASS(ChorusRequest);
+    GDREGISTER_CLASS(ChorusEmbeddingRequest);
+    GDREGISTER_CLASS(ChorusSubmitResult);
+    GDREGISTER_CLASS(ChorusResult);
+    GDREGISTER_CLASS(ChorusRenderResult);
     GDREGISTER_CLASS(ChorusGenerationDefaults);
     GDREGISTER_CLASS(GodotChorus);
     GodotChorus::register_project_settings();

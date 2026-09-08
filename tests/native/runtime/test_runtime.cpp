@@ -91,6 +91,58 @@ TEST(Runtime, Runtime_poll_on_idle_runtime_returns_empty) {
     ASSERT_EQ(runtime.poll().size(), 0);
 }
 
+TEST(Runtime, Runtime_preview_matches_the_prompt_submitted_without_mutation) {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    engine->supports_render = true;
+    engine->mock_per_request_context = 32;
+    auto* observed = engine.get();
+    ASSERT_FALSE(runtime.load_engine(std::move(engine), make_config()).has_value());
+
+    Chorus::GenerationRequest request;
+    request.session_id = "preview";
+    request.prompt = "new turn";
+    request.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(8);
+    const auto preview = runtime.render_prompt(request);
+    ASSERT_TRUE(preview.ok());
+    const auto submitted = runtime.submit(request);
+    ASSERT_TRUE(submitted.ok());
+    runtime.poll();
+    const auto rendered_submission = observed->render_chat_prompt(
+        observed->last_messages, observed->last_chat_template, observed->last_config.show_thinking.value_or(true)
+    );
+    ASSERT_TRUE(rendered_submission.has_value());
+    ASSERT_EQ(preview.text, rendered_submission->text);
+}
+
+TEST(Runtime, Runtime_truncation_event_reports_durable_ids_in_history_order) {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    engine->supports_render = true;
+    engine->mock_per_request_context = 4;
+    ASSERT_FALSE(runtime.load_engine(std::move(engine), make_config()).has_value());
+    ASSERT_FALSE(runtime.import_conversation_history("npc", {
+        {7, {Chorus::MessageRole::System, Chorus::MessageContent::text("persona")}},
+        {0, {Chorus::MessageRole::User, Chorus::MessageContent::text("old")}},
+        {1, {Chorus::MessageRole::Assistant, Chorus::MessageContent::text("answer")}},
+        {2, {Chorus::MessageRole::User, Chorus::MessageContent::text("again")}},
+    }).has_value());
+
+    Chorus::GenerationRequest request;
+    request.session_id = "npc";
+    request.prompt = "new";
+    request.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(0);
+    const auto submitted = runtime.submit(request);
+    ASSERT_TRUE(submitted.ok());
+    const auto events = runtime.poll();
+    ASSERT_EQ(events.size(), 2U);
+    ASSERT_EQ(events[0].kind, Chorus::RuntimeEvent::Kind::HistoryTruncated);
+    ASSERT_EQ(events[0].request_id, submitted.request_id);
+    ASSERT_EQ(events[0].omitted_message_ids, (std::vector<Chorus::MessageId>{0, 1, 2}));
+    ASSERT_EQ(events[1].kind, Chorus::RuntimeEvent::Kind::Complete);
+    ASSERT_EQ(runtime.export_conversation_history("npc").size(), 6U);
+}
+
 TEST(Runtime, Runtime_non_streaming_yields_only_Complete) {
     Chorus::ChorusRuntime runtime;
     runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
@@ -296,6 +348,7 @@ TEST(Runtime, Runtime_mismatched_embedding_rolls_back_the_generation_turn) {
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Unknown);
     ASSERT_TRUE(runtime.export_conversation_history("session").empty());
+    ASSERT_EQ(runtime.list_conversations().size(), 1U);
     ASSERT_TRUE(runtime.last_turn_outcome("session") == Chorus::TurnOutcome::Errored);
     ASSERT_TRUE(!runtime.active_request_for_session("session").has_value());
 }

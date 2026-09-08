@@ -64,7 +64,7 @@ std::variant<FitResult, ChorusError> fit_messages_to_budget(
         if (*count <= budget) {
             std::vector<MessageId> omitted;
             for (size_t i = pin; i < pin + drop; ++i)
-                if (history[i].id)
+                if (history[i].id.has_value())
                     omitted.push_back(*history[i].id);
             return FitResult{std::move(messages), std::move(omitted)};
         }

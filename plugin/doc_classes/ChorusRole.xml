@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusRole" inherits="RefCounted" api_type="extension">
+	<brief_description>Typed message roles.</brief_description>
+	<description>Typed message roles.</description>
+	<methods></methods>
+	<members></members>
+	<constants>
+		<constant name="SYSTEM" value="0" enum="ChorusRole.Value" />
+		<constant name="USER" value="1" enum="ChorusRole.Value" />
+		<constant name="ASSISTANT" value="2" enum="ChorusRole.Value" />
+	</constants>
+</class>

@@ -32,6 +32,13 @@ typedef struct chorus_options chorus_options;
 typedef struct chorus_request chorus_request;
 
 typedef int64_t chorus_request_id;
+typedef int64_t chorus_message_id;
+
+typedef enum chorus_message_role {
+    CHORUS_ROLE_SYSTEM = 0,
+    CHORUS_ROLE_USER = 1,
+    CHORUS_ROLE_ASSISTANT = 2,
+} chorus_message_role;
 
 typedef enum chorus_error {
     CHORUS_OK = 0,
@@ -101,12 +108,13 @@ typedef enum chorus_log_field_type {
     CHORUS_FIELD_STRING = 3,
 } chorus_log_field_type;
 
-typedef struct chorus_chat_message {
-    const char* role;
+typedef struct chorus_conversation_message {
+    chorus_message_id id;
+    chorus_message_role role;
     const char* content;
-} chorus_chat_message;
+} chorus_conversation_message;
 
-/* Runtime-owned pointers remain valid until the next chorus_poll or free. */
+/* Runtime-owned pointers remain valid until the next chorus_poll or runtime destruction. */
 typedef struct chorus_event {
     chorus_event_kind kind;
     chorus_request_id request_id;
@@ -114,7 +122,9 @@ typedef struct chorus_event {
     const char* text;
     chorus_error error;
     const char* reasoning;
-    int32_t dropped;
+    chorus_message_id message_id;
+    const chorus_message_id* omitted_message_ids;
+    size_t omitted_message_id_count;
     const float* embedding;
     size_t embedding_count;
 } chorus_event;
@@ -207,17 +217,42 @@ CHORUS_API chorus_error chorus_request_set_provider_option_bool(
 CHORUS_API chorus_error chorus_request_set_provider_option_string(
     chorus_request* req, const char* provider, const char* key, const char* value
 );
-CHORUS_API chorus_error
-chorus_request_add_inject(chorus_request* req, chorus_chat_message message, int32_t depth);
+CHORUS_API chorus_error chorus_request_add_inject(
+    chorus_request* req, chorus_message_role role, const char* content, int32_t depth
+);
 CHORUS_API chorus_error chorus_request_set_chat_template(chorus_request* req, const char* chat_template);
 
-CHORUS_API chorus_error
-chorus_generate(chorus_runtime* rt, const chorus_request* req, chorus_request_id* out_request_id);
-CHORUS_API chorus_error chorus_embed(
-    chorus_runtime* rt, const char* prompt, int32_t priority, chorus_execution_mode execution, chorus_request_id* out_request_id
+typedef struct chorus_submit_result {
+    chorus_request_id request_id;
+    chorus_message_id request_message_id;
+    chorus_message_id response_message_id;
+    chorus_error error;
+    const char* message;
+} chorus_submit_result;
+
+typedef struct chorus_embedding_request {
+    const char* content;
+    const char* session;
+    int32_t priority;
+    chorus_execution_mode execution;
+} chorus_embedding_request;
+
+/* Result strings remain valid until the next submission, render, poll, or runtime destruction. */
+CHORUS_API chorus_error chorus_generate(
+    chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result
 );
-CHORUS_API chorus_error
-chorus_regenerate(chorus_runtime* rt, const chorus_request* req, chorus_request_id* out_request_id);
+CHORUS_API chorus_error chorus_generate_batch(
+    chorus_runtime* rt, const chorus_request* const* reqs, size_t count, chorus_submit_result* out_results
+);
+CHORUS_API chorus_error chorus_embed(
+    chorus_runtime* rt, const chorus_embedding_request* req, chorus_submit_result* out_result
+);
+CHORUS_API chorus_error chorus_embed_batch(
+    chorus_runtime* rt, const chorus_embedding_request* reqs, size_t count, chorus_submit_result* out_results
+);
+CHORUS_API chorus_error chorus_regenerate(
+    chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result
+);
 CHORUS_API bool chorus_cancel(chorus_runtime* rt, chorus_request_id request_id);
 CHORUS_API bool chorus_is_request_active(const chorus_runtime* rt, chorus_request_id request_id);
 CHORUS_API chorus_request_id chorus_active_request_for_session(const chorus_runtime* rt, const char* session);
@@ -228,24 +263,35 @@ CHORUS_API const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count
 CHORUS_API const chorus_log_record* chorus_poll_logs(chorus_runtime* rt, size_t* out_count);
 
 CHORUS_API chorus_error chorus_history_import(
-    chorus_runtime* rt, const char* session, const chorus_chat_message* history, size_t count
+    chorus_runtime* rt, const char* session, const chorus_conversation_message* history, size_t count
 );
-/* Caller-owned deep snapshot; free with chorus_chat_messages_free. */
+/* Caller-owned deep snapshot; free with chorus_conversation_messages_free. */
 CHORUS_API chorus_error chorus_history_export(
-    const chorus_runtime* rt, const char* session, chorus_chat_message** out_messages, size_t* out_count
+    const chorus_runtime* rt, const char* session, chorus_conversation_message** out_messages, size_t* out_count
 );
-CHORUS_API void chorus_chat_messages_free(chorus_chat_message* messages, size_t count);
+CHORUS_API void chorus_conversation_messages_free(chorus_conversation_message* messages, size_t count);
 CHORUS_API chorus_error chorus_history_clear(chorus_runtime* rt, const char* session);
-CHORUS_API chorus_error
-chorus_history_edit_message(chorus_runtime* rt, const char* session, int64_t index, const char* content);
+CHORUS_API chorus_error chorus_history_edit_message(
+    chorus_runtime* rt, const char* session, chorus_message_id message_id, const char* content
+);
 /* Caller-owned string array; free with chorus_string_list_free. */
 CHORUS_API chorus_error
 chorus_list_conversations(const chorus_runtime* rt, char*** out_sessions, size_t* out_count);
 CHORUS_API void chorus_string_list_free(char** strings, size_t count);
 CHORUS_API chorus_error chorus_reset_context(chorus_runtime* rt);
 CHORUS_API chorus_turn_outcome chorus_last_turn_outcome(const chorus_runtime* rt, const char* session);
-/* Caller owns the returned string and frees it with chorus_string_free. */
-CHORUS_API char* chorus_render_prompt(const chorus_runtime* rt, const char* session, const chorus_request* req);
+typedef struct chorus_render_result {
+    const char* text;
+    const chorus_message_id* omitted_message_ids;
+    size_t omitted_message_id_count;
+    chorus_error error;
+    const char* message;
+} chorus_render_result;
+
+/* Result strings and arrays remain valid until the next submission, render, poll, or runtime destruction. */
+CHORUS_API chorus_error chorus_render_prompt(
+    chorus_runtime* rt, const chorus_request* req, chorus_render_result* out_result
+);
 
 #ifdef __cplusplus
 }

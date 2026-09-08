@@ -4,6 +4,12 @@ extends RefCounted
 const ChorusNodeScene := preload("res://tests_gdscript/chorus_node.tscn")
 
 
+static func _temperature_request() -> ChorusRequest:
+	var request := ChorusRequest.stateless("hello")
+	request.set_temperature(0.5)
+	return request
+
+
 static func run_tests(parent: Node) -> void:
 	var chorus: GodotChorus = ChorusNodeScene.instantiate()
 	chorus.provider = GodotChorus.PROVIDER_ECHO
@@ -11,7 +17,7 @@ static func run_tests(parent: Node) -> void:
 	chorus.load_model()
 
 	await TestReport.run("structured log records reach Godot unchanged", func():
-		var request_id := chorus.generate({"prompt": "hello", "temperature": 0.5})
+		var request_id := chorus.generate(_temperature_request()).request_id
 		TestReport.check(request_id >= 0, "expected generate() to accept the request")
 
 		var record: Array = await chorus.log_record

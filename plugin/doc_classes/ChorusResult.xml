@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusResult" inherits="RefCounted" api_type="extension">
+	<brief_description>Immutable result of a history operation.</brief_description>
+	<description>Immutable result of a history operation.</description>
+	<methods></methods>
+	<members>
+		<member name="error" type="int" enum="GodotChorus.ErrorCode">Read-only result value.</member>
+		<member name="message" type="String">Read-only result value.</member>
+		<member name="ok" type="bool">Read-only result value.</member>
+	</members>
+	<constants>
+	</constants>
+</class>

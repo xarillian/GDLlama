@@ -207,8 +207,6 @@ SubmitResult ChorusRuntime::submit_engine_request(
     live.pending_user_id = user_id;
     live.reserved_assistant_id = regenerating ? std::nullopt : assistant_id;
     live.replaced_reply = replaced_reply;
-    if (sessioned)
-        live.history_existed_before = _histories.contains(*request.session_id);
     _live_requests.emplace(id, std::move(live));
 
     if (sessioned) {
