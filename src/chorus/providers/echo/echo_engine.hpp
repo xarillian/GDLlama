@@ -41,7 +41,7 @@ class EchoEngine : public InferenceEngine {
 
   private:
     void worker_loop();
-    static const std::string& select_echo_text(const Chorus::ChorusRequest& request);
+    static std::string select_echo_text(const Chorus::ChorusRequest& request);
     void emit_echo_tokens(const Chorus::ChorusRequest& request, const std::string& text);
 
     std::deque<Chorus::ChorusRequest> _queue;

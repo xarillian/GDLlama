@@ -98,10 +98,14 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         Chorus::RenderedPrompt rendered;
         int32_t count = 0;
         for (const auto& message : messages) {
-            rendered.text += "<" + message.role + ">" + message.content + "\n";
+            const auto role = Chorus::message_role_name(message.role);
+            const auto content = Chorus::joined_text(message.content);
+            if (!role || !content)
+                return std::nullopt;
+            rendered.text += "<" + std::string(*role) + ">" + *content + "\n";
             count += 1; // per-message overhead
             bool in_word = false;
-            for (char c : message.content) {
+            for (char c : *content) {
                 if (c == ' ') {
                     in_word = false;
                 } else if (!in_word) {
@@ -169,8 +173,8 @@ class SyncMockEngine : public Chorus::InferenceEngine {
             // setting `tokens = {}` (a non-empty `tokens` knob always wins).
             std::string reply;
             for (auto it = req.messages.rbegin(); it != req.messages.rend(); ++it) {
-                if (it->role == "user") {
-                    reply = it->content;
+                if (it->role == Chorus::MessageRole::User) {
+                    reply = *Chorus::joined_text(it->content);
                     break;
                 }
             }

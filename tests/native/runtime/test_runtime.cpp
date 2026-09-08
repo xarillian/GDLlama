@@ -31,7 +31,9 @@ static size_t terminal_count(const std::vector<Chorus::RuntimeEvent>& events, Ch
 }
 
 static Chorus::EmbeddingRequest make_embedding_request(const std::string& prompt) {
-    return Chorus::EmbeddingRequest{{prompt, 0}};
+    Chorus::EmbeddingRequest request;
+    request.prompt = prompt;
+    return request;
 }
 
 TEST(Runtime, Runtime_submit_before_load_returns_EngineNotReady) {
@@ -485,7 +487,7 @@ TEST(Runtime, Runtime_engine_death_yields_one_EngineFailed_once) {
     ASSERT_EQ(events[0].text, "The engine has failed.");
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::EngineNotReady);
     ASSERT_TRUE(events[0].reasoning.empty());
-    ASSERT_EQ(events[0].dropped, 0);
+    ASSERT_TRUE(events[0].omitted_message_ids.empty());
     ASSERT_TRUE(!events[0].session_id.has_value());
     ASSERT_TRUE(runtime.poll().empty());
     ASSERT_TRUE(runtime.poll().empty());

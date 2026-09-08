@@ -8,10 +8,16 @@
 namespace Chorus {
 namespace {
 
-common_chat_msg to_common(const ChatMessage& message) {
+std::variant<common_chat_msg, RequestRejection> to_common(const ChatMessage& message) {
+    const auto role = message_role_name(message.role);
+    if (!role)
+        return RequestRejection{ChorusError::InvalidRequest, "Chat message role is invalid."};
+    const auto content = joined_text(message.content);
+    if (!content)
+        return RequestRejection{ChorusError::UnsupportedFeature, "Llama accepts text-only chat content."};
     common_chat_msg out;
-    out.role = message.role;
-    out.content = message.content;
+    out.role = std::string(*role);
+    out.content = *content;
     return out;
 }
 
@@ -39,8 +45,12 @@ std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
 
     common_chat_templates_inputs inputs;
     inputs.messages.reserve(messages.size());
-    for (const auto& message : messages)
-        inputs.messages.push_back(to_common(message));
+    for (const auto& message : messages) {
+        auto converted = to_common(message);
+        if (const auto* rejection = std::get_if<RequestRejection>(&converted))
+            return *rejection;
+        inputs.messages.push_back(std::get<common_chat_msg>(std::move(converted)));
+    }
     inputs.add_generation_prompt = true;
     inputs.use_jinja = true;
     inputs.enable_thinking = enable_thinking;

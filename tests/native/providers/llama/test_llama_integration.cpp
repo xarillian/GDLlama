@@ -1791,7 +1791,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_returns_a_normalized_embe
     const auto capabilities = runtime.capabilities();
     ASSERT_TRUE(capabilities.has_value() && capabilities->embeddings);
 
-    const auto submitted = runtime.submit(Chorus::EmbeddingRequest{{"The cat sat on the mat.", 0}});
+    const auto submitted = runtime.submit(Chorus::EmbeddingRequest{"The cat sat on the mat.", std::nullopt, 0});
     ASSERT_TRUE(submitted.ok());
     std::optional<Chorus::RuntimeEvent> terminal;
     for (int waited_ms = 0; waited_ms < 60000 && !terminal; waited_ms += 50) {
@@ -1816,7 +1816,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_returns_a_normalized_embe
     std::string oversized_prompt;
     for (int i = 0; i < 200; ++i)
         oversized_prompt += "word ";
-    const auto oversized = runtime.submit(Chorus::EmbeddingRequest{{oversized_prompt, 0}});
+    const auto oversized = runtime.submit(Chorus::EmbeddingRequest{oversized_prompt, std::nullopt, 0});
     ASSERT_TRUE(!oversized.ok());
     ASSERT_TRUE(oversized.error == Chorus::ChorusError::InvalidRequest);
 }
@@ -1830,7 +1830,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_none_pooling_uses_normali
     ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), config).has_value());
 
     const auto submit = [&](const std::string& prompt) {
-        const auto result = runtime.submit(Chorus::EmbeddingRequest{{prompt, 0}});
+        const auto result = runtime.submit(Chorus::EmbeddingRequest{prompt, std::nullopt, 0});
         if (!result.ok())
             return std::optional<std::vector<float>>{};
         return drain_embedding(runtime, result.request_id);
@@ -1861,14 +1861,14 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_messages_render_and_generate) {
     ASSERT_TRUE(!engine.initialize(make_chat_config(), {}).has_value());
 
     // Render hook: gemma's embedded template must produce its role scaffolding.
-    auto rendered = engine.render_chat_prompt({{"system", "You are terse."}, {"user", "Say hi."}}, "", true);
+    auto rendered = engine.render_chat_prompt({{Chorus::MessageRole::System, Chorus::MessageContent::text("You are terse.")}, {Chorus::MessageRole::User, Chorus::MessageContent::text("Say hi.")}}, "", true);
     ASSERT_TRUE(rendered.has_value());
     ASSERT_TRUE(rendered->text.find("<start_of_turn>user") != std::string::npos);
     ASSERT_TRUE(rendered->token_count > 0);
 
     // A custom override changes the rendering.
     auto overridden = engine.render_chat_prompt(
-        {{"user", "Say hi."}}, "{%- for m in messages -%}[[{{ m.role }}]]{{ m.content }}{%- endfor -%}", true
+        {{Chorus::MessageRole::User, Chorus::MessageContent::text("Say hi.")}}, "{%- for m in messages -%}[[{{ m.role }}]]{{ m.content }}{%- endfor -%}", true
     );
     ASSERT_TRUE(overridden.has_value());
     ASSERT_TRUE(overridden->text.find("[[user]]") != std::string::npos);
@@ -1880,7 +1880,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_messages_render_and_generate) {
     std::atomic<bool> stopped{false};
     Chorus::ChorusRequest request;
     request.id = 901;
-    request.messages = {{"user", "Reply with the single word: hello"}};
+    request.messages = {{Chorus::MessageRole::User, Chorus::MessageContent::text("Reply with the single word: hello")}};
     request.gen_config.max_tokens = 16;
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -1946,19 +1946,23 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_truncation_preserves_system) {
         Chorus::ProviderOptionMap{{"context_size", int64_t{512}}, {"max_concurrent_requests", int64_t{1}}, {"use_gpu", false}};
     ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), config).has_value());
 
-    std::vector<Chorus::ChatMessage> history{{"system", "You are Brunn the blacksmith."}};
+    std::vector<Chorus::ConversationMessage> history{{0, {Chorus::MessageRole::System, Chorus::MessageContent::text("You are Brunn the blacksmith.")}}};
     for (int i = 0; i < 30; ++i) {
-        history.push_back({"user", "Filler question number " + std::to_string(i) + " about the weather."});
-        history.push_back({"assistant", "A filler answer about the weather, number " + std::to_string(i) + "."});
+        history.push_back({static_cast<Chorus::MessageId>(1 + i * 2), {Chorus::MessageRole::User, Chorus::MessageContent::text("Filler question number " + std::to_string(i) + " about the weather.")}});
+        history.push_back({static_cast<Chorus::MessageId>(2 + i * 2), {Chorus::MessageRole::Assistant, Chorus::MessageContent::text("A filler answer about the weather, number " + std::to_string(i) + ".")}});
     }
     ASSERT_TRUE(!runtime.import_conversation_history("npc_1", std::move(history)).has_value());
 
     Chorus::GenerationConfigPatch gen;
     gen.max_tokens = Chorus::ConfigPatch<int32_t>::set(64);
-    auto fitted = runtime.render_prompt("npc_1", "", {}, gen);
-    ASSERT_TRUE(fitted.has_value());
-    ASSERT_TRUE(fitted->find("Brunn the blacksmith") != std::string::npos); // system pinned
-    ASSERT_TRUE(fitted->find("number 0 ") == std::string::npos);            // oldest dropped
+    Chorus::GenerationRequest preview;
+    preview.session_id = "npc_1";
+    preview.prompt = "Who are you?";
+    preview.overrides = gen;
+    auto fitted = runtime.render_prompt(preview);
+    ASSERT_TRUE(fitted.ok());
+    ASSERT_TRUE(fitted.text.find("Brunn the blacksmith") != std::string::npos); // system pinned
+    ASSERT_TRUE(fitted.text.find("number 0 ") == std::string::npos);            // oldest dropped
 
     Chorus::GenerationRequest turn;
     turn.prompt = "Who are you?";

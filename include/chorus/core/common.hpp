@@ -3,6 +3,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -46,10 +47,23 @@ struct ChorusConfig {
     LogLevel log_level = log_level_default;
 };
 
-struct ChatMessage {
-    std::string role;
-    std::string content;
+enum class MessageRole { System, User, Assistant };
+
+using MessagePart = std::variant<std::string>;
+
+struct MessageContent {
+    std::vector<MessagePart> parts;
+
+    static MessageContent text(std::string text) { return {{std::move(text)}}; }
 };
+
+struct ChatMessage {
+    MessageRole role = MessageRole::User;
+    MessageContent content;
+};
+
+std::optional<std::string_view> message_role_name(MessageRole role);
+std::optional<std::string> joined_text(const MessageContent& content);
 
 struct RenderedPrompt {
     std::string text;
@@ -71,17 +85,6 @@ struct InitializationFailure {
 inline bool operator==(ChorusError value, const InitializationFailure& failure) {
     return failure == value;
 }
-
-/*
- * A message spliced into a conversation at a fixed distance from its end.
- *
- * `InjectedMessage::depth == 0` indicates it should go after the last message;
- * larger values move it that many messages toward the front.
- */
-struct InjectedMessage {
-    ChatMessage message;
-    int32_t depth = 0;
-};
 
 /*
  * An accepted request may emit any number of `ChorusSignal::Token` or

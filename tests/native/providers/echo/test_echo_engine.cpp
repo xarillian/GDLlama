@@ -763,7 +763,12 @@ TEST(EchoEngine, Echo_messages_echoes_last_user_message) {
     size_t terminals = 0;
     Chorus::ChorusRequest request;
     request.id = 1;
-    request.messages = {{"system", "persona"}, {"user", "first"}, {"assistant", "reply"}, {"user", "second question"}};
+    request.messages = {
+        {Chorus::MessageRole::System, Chorus::MessageContent::text("persona")},
+        {Chorus::MessageRole::User, Chorus::MessageContent::text("first")},
+        {Chorus::MessageRole::Assistant, Chorus::MessageContent::text("reply")},
+        {Chorus::MessageRole::User, Chorus::MessageContent::text("second question")},
+    };
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))

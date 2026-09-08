@@ -18,8 +18,24 @@ namespace Chorus {
 
 enum class TurnOutcome { None, Completed, Cancelled, Errored };
 
+/*
+ * A message spliced into a conversation at a fixed distance from its end.
+ *
+ * `InjectedMessage::depth == 0` indicates it should go after the last message.
+ */
+struct InjectedMessage {
+    ChatMessage message;
+    int32_t depth = 0;
+};
+
+struct ConversationMessage {
+    MessageId id = -1;
+    ChatMessage message;
+};
+
 struct InferenceRequest {
     std::string prompt;
+    std::optional<SessionId> session_id;
     int priority = 0; // Higher values indicate higher scheduling priority.
     ExecutionMode execution = ExecutionMode::Shared;
 };
@@ -28,9 +44,6 @@ struct EmbeddingRequest : InferenceRequest {};
 
 /// Describes one stateless generation or sessioned chat turn.
 struct GenerationRequest : InferenceRequest {
-    // `std::nullopt` selects stateless generation. An empty `Chorus::SessionId` is invalid.
-    std::optional<SessionId> session_id;
-
     // Whether to emit `Chorus::RuntimeEvent::Kind::StreamedToken` and
     // `Chorus::RuntimeEvent::Kind::StreamedReasoningToken` events.
     bool stream = false;
@@ -91,8 +104,11 @@ struct RuntimeEvent {
     // Normalized vector on `Chorus::RuntimeEvent::Kind::Embedding`.
     std::vector<float> embedding;
 
-    // History messages omitted from the fitted prompt by a truncation event.
-    int32_t dropped = 0;
+    // Present only on successful sessioned generation completion.
+    std::optional<MessageId> message_id;
+
+    // Stored history message identities omitted from the fitted prompt.
+    std::vector<MessageId> omitted_message_ids;
 };
 
 /*
@@ -104,10 +120,23 @@ struct SubmitResult {
     // Nonnegative for an accepted request; `-1` for rejection.
     RequestId request_id = -1;
 
+    // Present for an accepted new chat turn and its reserved reply respectively.
+    std::optional<MessageId> request_message_id;
+    std::optional<MessageId> response_message_id;
+
     // `Chorus::ChorusError::None` on acceptance; the rejection reason otherwise.
     ChorusError error = ChorusError::None;
 
     // Empty on acceptance; supplied by the rejecting layer otherwise.
+    std::string message;
+
+    bool ok() const { return error == ChorusError::None; }
+};
+
+struct RenderPromptResult {
+    std::string text;
+    std::vector<MessageId> omitted_message_ids;
+    ChorusError error = ChorusError::None;
     std::string message;
 
     bool ok() const { return error == ChorusError::None; }
@@ -145,7 +174,8 @@ class ChorusRuntime {
      *  - `Chorus::ChorusError::UnsupportedOption`: a load option is unsupported.
      *  - `Chorus::ChorusError::Unknown`: the provider could not classify the failure.
      */
-    std::optional<InitializationFailure> load_engine(std::unique_ptr<InferenceEngine> engine, const ChorusConfig& config);
+    std::optional<InitializationFailure>
+    load_engine(std::unique_ptr<InferenceEngine> engine, const ChorusConfig& config);
 
     // Whether an initialized engine is ready to accept work.
     bool is_loaded() const;
@@ -175,6 +205,8 @@ class ChorusRuntime {
 
     /// Submits a stateless embedding request.
     [[nodiscard]] SubmitResult submit(const EmbeddingRequest& request);
+    [[nodiscard]] std::vector<SubmitResult> submit_batch(const std::vector<GenerationRequest>& requests);
+    [[nodiscard]] std::vector<SubmitResult> submit_batch(const std::vector<EmbeddingRequest>& requests);
 
     /*
      * Regenerates the latest assistant reply in a session.
@@ -225,7 +257,7 @@ class ChorusRuntime {
     std::vector<SessionId> list_conversations() const;
 
     /// Copies stored history. Unknown and empty sessions both return an empty vector.
-    std::vector<ChatMessage> export_conversation_history(const SessionId& session) const;
+    std::vector<ConversationMessage> export_conversation_history(const SessionId& session) const;
 
     /// Returns `Chorus::TurnOutcome::None` for an unknown session or one with no recorded turn.
     TurnOutcome last_turn_outcome(const SessionId& session) const;
@@ -241,7 +273,8 @@ class ChorusRuntime {
      *  - `Chorus::ChorusError::InvalidRequest`: the supplied session ID is empty.
      *  - `Chorus::ChorusError::SessionBusy`: the session has an active request.
      */
-    std::optional<ChorusError> import_conversation_history(const SessionId& session, std::vector<ChatMessage> history);
+    std::optional<ChorusError>
+    import_conversation_history(const SessionId& session, std::vector<ConversationMessage> history);
 
     /*
      * Rewrites one stored message without changing its recorded turn outcome.
@@ -256,7 +289,7 @@ class ChorusRuntime {
      *  - `Chorus::ChorusError::InvalidRequest`: the session or index does not exist.
      *  - `Chorus::ChorusError::SessionBusy`: the session has an active request.
      */
-    std::optional<ChorusError> edit_message(const SessionId& session, int64_t index, std::string content);
+    std::optional<ChorusError> edit_message(const SessionId& session, MessageId message_id, MessageContent content);
 
     /*
      * Removes one session's stored history and turn outcome.
@@ -291,12 +324,7 @@ class ChorusRuntime {
      *  - `std::string`: the rendered prompt.
      *  - `std::nullopt`: the engine, stored session, prompt fit, or chat renderer is unavailable.
      */
-    std::optional<std::string> render_prompt(
-        const SessionId& session,
-        const std::string& template_override = "",
-        const std::vector<InjectedMessage>& inject = {},
-        const GenerationConfigPatch& overrides = {}
-    ) const;
+    RenderPromptResult render_prompt(const GenerationRequest& request) const;
 
     /// Drains buffered engine signals into host-facing events.
     std::vector<RuntimeEvent> poll();
@@ -337,18 +365,21 @@ class ChorusRuntime {
     [[nodiscard]] SubmitResult submit_engine_request(
         const ResolvedRequest& resolved,
         ChorusRequest engine_request,
-        int32_t dropped = 0,
-        std::optional<ChatMessage> replaced_reply = std::nullopt
+        std::vector<MessageId> omitted_message_ids = {},
+        std::optional<ConversationMessage> replaced_reply = std::nullopt
     );
     void finish_turn(const LiveRequest& live, TurnOutcome outcome, const std::string& text);
 
     struct FittedTurn {
         std::vector<ChatMessage> messages;
-        int32_t dropped = 0;
+        std::vector<MessageId> omitted_message_ids;
         std::optional<std::string> rendered_text;
     };
-    std::variant<FittedTurn, SubmitResult>
-    fit_turn_messages(const ResolvedRequest& resolved, std::vector<ChatMessage> prospective) const;
+    std::variant<FittedTurn, SubmitResult> fit_turn_messages(
+        const ResolvedRequest& resolved,
+        std::vector<ConversationMessage> history,
+        std::optional<ChatMessage> pending = std::nullopt
+    ) const;
 
     struct LiveRequest {
         RequestType type = RequestType::Generate;
@@ -357,7 +388,10 @@ class ChorusRuntime {
         std::optional<SessionId> session_id;
         std::string accumulated_reasoning;
         std::optional<std::vector<float>> embedding;
-        std::optional<ChatMessage> replaced_reply;
+        std::optional<MessageId> pending_user_id;
+        std::optional<MessageId> reserved_assistant_id;
+        std::optional<ConversationMessage> replaced_reply;
+        bool history_existed_before = false;
     };
 
     std::unique_ptr<InferenceEngine> _engine;
@@ -378,10 +412,12 @@ class ChorusRuntime {
     std::unordered_map<SessionId, RequestId> _request_by_session;
 
     struct ConversationHistory {
-        std::vector<ChatMessage> messages;
+        std::vector<ConversationMessage> messages;
         TurnOutcome last_turn_outcome = TurnOutcome::None;
     };
     std::unordered_map<SessionId, ConversationHistory> _histories;
+
+    std::optional<MessageId> _next_message_id = 0;
 
     std::vector<RuntimeEvent> _host_events;
 

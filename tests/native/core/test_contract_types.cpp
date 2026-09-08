@@ -19,6 +19,13 @@ TEST(ContractTypes, EngineCapabilities_conservative_defaults) {
     ASSERT_TRUE(!caps.prompt_rendering);
 }
 
+TEST(ContractTypes, Typed_messages_validate_roles_and_join_text_parts) {
+    ASSERT_EQ(Chorus::message_role_name(Chorus::MessageRole::System), "system");
+    ASSERT_FALSE(Chorus::message_role_name(static_cast<Chorus::MessageRole>(99)).has_value());
+    const Chorus::MessageContent content{{std::string("a"), std::string(""), std::string("b")}};
+    ASSERT_EQ(Chorus::joined_text(content), "ab");
+}
+
 TEST(ContractTypes, InitialModelSpec_defaults) {
     Chorus::InitialModelSpec spec;
     ASSERT_TRUE(spec.format == Chorus::ModelFormat::Auto);

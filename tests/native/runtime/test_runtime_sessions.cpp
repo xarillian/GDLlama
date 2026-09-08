@@ -21,6 +21,13 @@ static Chorus::GenerationRequest stateless(const char* prompt, bool stream = fal
     return req;
 }
 
+static Chorus::EmbeddingRequest embedding(const char* prompt, const char* session) {
+    Chorus::EmbeddingRequest req;
+    req.prompt = prompt;
+    req.session_id = std::string(session);
+    return req;
+}
+
 TEST(RuntimeSessions, Runtime_session_ids_monotonic_across_sessioned_and_stateless) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
@@ -227,6 +234,34 @@ TEST(RuntimeSessions, Runtime_session_two_sessions_concurrently_live) {
     auto s2_again = runtime.submit(sessioned("d", "s2"));
     ASSERT_TRUE(s1_again.ok());
     ASSERT_TRUE(s2_again.ok());
+}
+
+TEST(RuntimeSessions, Runtime_sessioned_embedding_owns_lane_until_terminal_delivery) {
+    Chorus::ChorusRuntime runtime;
+    auto mock = std::make_unique<SyncMockEngine>();
+    mock->hold_requests = true;
+    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    const auto submitted = runtime.submit(embedding("memory", "s1"));
+    ASSERT_TRUE(submitted.ok());
+    ASSERT_EQ(runtime.active_request_for_session("s1"), submitted.request_id);
+    ASSERT_EQ(runtime.submit(sessioned("chat", "s1")).error, Chorus::ChorusError::SessionBusy);
+    runtime.stop_all();
+    const auto events = runtime.poll();
+    ASSERT_EQ(events.size(), 1U);
+    ASSERT_EQ(events[0].session_id, std::optional<Chorus::SessionId>{"s1"});
+    ASSERT_TRUE(runtime.export_conversation_history("s1").empty());
+}
+
+TEST(RuntimeSessions, Runtime_batches_follow_singular_input_order) {
+    Chorus::ChorusRuntime runtime;
+    auto mock = std::make_unique<SyncMockEngine>();
+    mock->hold_requests = true;
+    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    const auto results = runtime.submit_batch(std::vector<Chorus::GenerationRequest>{sessioned("one", "s"), sessioned("two", "s"), stateless("three")});
+    ASSERT_EQ(results.size(), 3U);
+    ASSERT_TRUE(results[0].ok());
+    ASSERT_EQ(results[1].error, Chorus::ChorusError::SessionBusy);
+    ASSERT_TRUE(results[2].ok());
 }
 
 TEST(RuntimeSessions, Runtime_cancel_status_preserves_session_until_terminal_drain) {

@@ -673,7 +673,7 @@ TEST(LlamaGeneration, Llama_request_rejects_chat_controls_without_messages) {
 
 TEST(LlamaGeneration, Llama_request_accepts_chat_controls_with_messages) {
     Chorus::ChorusRequest request;
-    request.messages = {{"user", "hello"}};
+    request.messages = {{Chorus::MessageRole::User, Chorus::MessageContent::text("hello")}};
     request.chat_template = "{{ messages }}";
     request.gen_config.show_thinking = false;
     ASSERT_TRUE(!Chorus::validate_llama_request(request).has_value());

@@ -147,6 +147,12 @@ std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest
             return RequestRejection{ChorusError::InvalidRequest, "Embedding prompts must not be empty."};
         return std::nullopt;
     }
+    for (const auto& message : request.messages) {
+        if (!message_role_name(message.role))
+            return RequestRejection{ChorusError::InvalidRequest, "Chat message role is invalid."};
+        if (!joined_text(message.content))
+            return RequestRejection{ChorusError::UnsupportedFeature, "EchoEngine accepts text-only chat content."};
+    }
     const auto& c = request.gen_config;
     if (c.max_tokens && *c.max_tokens < -1)
         return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine max_tokens must be -1 or greater."};
@@ -344,7 +350,7 @@ void EchoEngine::worker_loop() {
                 req.on_event(embedding);
             }
         } else {
-            const std::string& text = select_echo_text(req);
+            const std::string text = select_echo_text(req);
             emit_echo_tokens(req, text);
         }
 
@@ -363,15 +369,14 @@ void EchoEngine::worker_loop() {
     }
 }
 
-const std::string& EchoEngine::select_echo_text(const ChorusRequest& request) {
+std::string EchoEngine::select_echo_text(const ChorusRequest& request) {
     if (request.messages.empty())
         return request.prompt;
-
     for (auto it = request.messages.rbegin(); it != request.messages.rend(); ++it) {
-        if (it->role == "user")
-            return it->content;
+        if (it->role == MessageRole::User)
+            return *joined_text(it->content);
     }
-    return request.messages.back().content;
+    return *joined_text(request.messages.back().content);
 }
 
 void EchoEngine::emit_echo_tokens(const ChorusRequest& request, const std::string& text) {

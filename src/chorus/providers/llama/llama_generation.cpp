@@ -23,6 +23,12 @@ resolve_constraint(common_params_sampling& sampling, const std::optional<OutputC
 } // namespace
 
 std::optional<RequestRejection> validate_llama_request(const ChorusRequest& request) {
+    for (const auto& message : request.messages) {
+        if (!message_role_name(message.role))
+            return RequestRejection{ChorusError::InvalidRequest, "Chat message role is invalid."};
+        if (!joined_text(message.content))
+            return RequestRejection{ChorusError::UnsupportedFeature, "Llama accepts text-only chat content."};
+    }
     if (request.messages.empty()) {
         if (!request.chat_template.empty()) {
             return RequestRejection{

@@ -41,7 +41,7 @@ TEST_F(LlamaReasoningModelTest, LlamaReasoning_channels_split) {
     std::atomic<bool> stopped{false};
     Chorus::ChorusRequest request;
     request.id = 1001;
-    request.messages = {{"user", "What is 2+2? Answer with just the number."}};
+    request.messages = {{Chorus::MessageRole::User, Chorus::MessageContent::text("What is 2+2? Answer with just the number.")}};
     request.gen_config.max_tokens = 512; // room for the think block
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -81,7 +81,7 @@ TEST_F(LlamaReasoningModelTest, LlamaReasoning_show_thinking_off_no_reasoning) {
     std::atomic<bool> stopped{false};
     Chorus::ChorusRequest request;
     request.id = 1002;
-    request.messages = {{"user", "Say hello."}};
+    request.messages = {{Chorus::MessageRole::User, Chorus::MessageContent::text("Say hello.")}};
     request.gen_config.show_thinking = false;
     request.gen_config.max_tokens = 64;
     request.on_event = [&](Chorus::ChorusSignal& sig) {
