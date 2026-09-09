@@ -60,6 +60,8 @@ class LlamaScheduler {
     std::optional<Chorus::RequestRejection> validate_embedding(const Chorus::ChorusRequest& request) const;
 #ifdef TEST_BUILD
     void set_batch_observer(std::function<void(const Chorus::LlamaBatchRecord&)> observer);
+    void set_admission_observer(std::function<void(Chorus::RequestId)> observer);
+    uint64_t worker_iterations() const { return _worker_iterations.load(); }
 #endif
     std::optional<Chorus::RenderedPrompt> render_chat_prompt(
         const std::vector<Chorus::ChatMessage>& messages, const std::string& template_override, bool enable_thinking
@@ -141,6 +143,7 @@ class LlamaScheduler {
     bool load_model_from_file(const Chorus::LlamaLoadConfig& config);
     bool init_context(const Chorus::LlamaLoadConfig& config);
     void worker_loop();
+    void run_worker();
     bool process_control_requests();
     bool take_cancellation(Chorus::RequestId id, bool& stopped);
     void admit_available();
@@ -164,9 +167,17 @@ class LlamaScheduler {
     void emit_signals(std::vector<PendingSignal> pending);
     void emit_token(Sequence& sequence, std::string text, Chorus::TokenChannel channel = Chorus::TokenChannel::Content);
     void complete_sequence(int sequence_id, bool flush_pending_text);
-    void fail_all(Chorus::ChorusError code, const std::string& message);
+    void fail_all(Chorus::ChorusError code);
 
     std::priority_queue<PendingRequestPtr, std::vector<PendingRequestPtr>, PendingRequestCompare> request_queue;
+    struct TerminalDelivery {
+        decltype(Chorus::ChorusRequest::on_event) on_event;
+        Chorus::ChorusSignal failure;
+        int priority;
+        uint64_t submission_sequence;
+    };
+    // Delivery ownership outlives preparation and sequence retirement, including stack unwinding.
+    std::map<Chorus::RequestId, TerminalDelivery> _terminal_deliveries;
     std::unordered_set<Chorus::RequestId> _cancel_requested;
     std::mutex queue_mutex;
     std::condition_variable queue_cv;
@@ -197,6 +208,8 @@ class LlamaScheduler {
 #ifdef TEST_BUILD
     std::mutex _batch_observer_mutex;
     std::function<void(const Chorus::LlamaBatchRecord&)> _batch_observer;
+    std::function<void(Chorus::RequestId)> _admission_observer;
+    std::atomic<uint64_t> _worker_iterations{0};
 #endif
     common_chat_templates_ptr _model_default_chat_templates;
     mutable std::mutex _template_mutex;

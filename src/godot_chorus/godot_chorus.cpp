@@ -297,10 +297,13 @@ bool GodotChorus::load_model() {
     const Chorus::Provider provider = to_chorus_provider(_provider);
     Chorus::ChorusConfig config;
     config.log_level = effective_log_level();
+    const String filesystem_path = _model_path.begins_with("res://") || _model_path.begins_with("user://")
+        ? ProjectSettings::get_singleton()->globalize_path(_model_path)
+        : _model_path;
     config.model = Chorus::make_initial_model_spec(
         provider,
         std::string(_model_path.get_file().get_basename().utf8().get_data()),
-        std::string(ProjectSettings::get_singleton()->globalize_path(_model_path).utf8().get_data())
+        std::string(filesystem_path.utf8().get_data())
     );
     // Echo accepts an empty `Chorus::InitialModelSpec` and declares no load
     // options, so this generic path contributes nothing without a special case.
@@ -346,8 +349,9 @@ String GodotChorus::get_last_load_error_message() const { return _last_load_erro
 
 Ref<ChorusSubmitResult> GodotChorus::generate(const Ref<ChorusRequest>& request) {
     Ref<ChorusInferenceRequest> source = request;
-    if (!push_host_defaults())
-        return rejected_submit(source, "generation_defaults contains an unsupported value.");
+    std::string error;
+    if (!push_host_defaults(error))
+        return rejected_submit(source, to_godot_string(error));
     auto converted = godot_chorus::generation_request_from_resource(request);
     if (std::holds_alternative<std::string>(converted))
         return rejected_submit(source, to_godot_string(std::get<std::string>(converted)));
@@ -356,8 +360,9 @@ Ref<ChorusSubmitResult> GodotChorus::generate(const Ref<ChorusRequest>& request)
 
 Ref<ChorusSubmitResult> GodotChorus::regenerate(const Ref<ChorusRequest>& request) {
     Ref<ChorusInferenceRequest> source = request;
-    if (!push_host_defaults())
-        return rejected_submit(source, "generation_defaults contains an unsupported value.");
+    std::string error;
+    if (!push_host_defaults(error))
+        return rejected_submit(source, to_godot_string(error));
     auto converted = godot_chorus::generation_request_from_resource(request);
     if (std::holds_alternative<std::string>(converted))
         return rejected_submit(source, to_godot_string(std::get<std::string>(converted)));
@@ -374,9 +379,10 @@ Ref<ChorusSubmitResult> GodotChorus::embed(const Ref<ChorusEmbeddingRequest>& re
 
 TypedArray<ChorusSubmitResult> GodotChorus::generate_batch(const TypedArray<ChorusRequest>& requests) {
     TypedArray<ChorusSubmitResult> out;
-    auto patch = effective_generation_defaults()->to_patch();
+    std::string error;
+    auto patch = effective_generation_defaults()->to_patch(error);
     if (!patch) {
-        const String message = "generation_defaults contains an unsupported value.";
+        const String message = to_godot_string("generation_defaults." + error);
         for (int i = 0; i < requests.size(); ++i) {
             Ref<ChorusRequest> request = requests[i];
             Ref<ChorusInferenceRequest> source = request;
@@ -484,8 +490,9 @@ GodotChorus::TurnOutcomeCode GodotChorus::last_turn_outcome(const String& sessio
 Ref<ChorusRenderResult> GodotChorus::render_prompt(const Ref<ChorusRequest>& request) {
     Ref<ChorusRenderResult> value;
     value.instantiate();
-    if (!push_host_defaults())
-        return Ref<ChorusRenderResult>(memnew(ChorusRenderResult(String(), PackedInt64Array(), ERR_INVALID_REQUEST, "generation_defaults contains an unsupported value.")));
+    std::string error;
+    if (!push_host_defaults(error))
+        return Ref<ChorusRenderResult>(memnew(ChorusRenderResult(String(), PackedInt64Array(), ERR_INVALID_REQUEST, to_godot_string(error))));
     auto converted = godot_chorus::generation_request_from_resource(request);
     if (std::holds_alternative<std::string>(converted))
         return Ref<ChorusRenderResult>(memnew(ChorusRenderResult(String(), PackedInt64Array(), ERR_INVALID_REQUEST, to_godot_string(std::get<std::string>(converted)))));
@@ -653,15 +660,14 @@ int64_t GodotChorus::get_log_level() const {
     return _log_level;
 }
 
-bool GodotChorus::push_host_defaults() {
+bool GodotChorus::push_host_defaults(std::string& error) {
     // Rebuild on every call because scripts can mutate the assigned
     // `ChorusGenerationDefaults` resource in place without notifying this
     // node.
-    auto patch = effective_generation_defaults()->to_patch();
+    auto patch = effective_generation_defaults()->to_patch(error);
     if (!patch) {
-        UtilityFunctions::push_error(
-            "[Chorus] generation_defaults contains an unsupported value."
-        );
+        error = "generation_defaults." + error;
+        UtilityFunctions::push_error("[Chorus] " + to_godot_string(error));
         return false;
     }
     _runtime.set_host_defaults(

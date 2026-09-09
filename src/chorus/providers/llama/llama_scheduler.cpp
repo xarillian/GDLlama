@@ -92,6 +92,9 @@ void LlamaScheduler::shutdown() {
     queue_cv.notify_all();
     if (worker_thread.joinable())
         worker_thread.join();
+    request_queue = {};
+    _terminal_deliveries.clear();
+    _cancel_requested.clear();
     batch.reset();
     _active_sequences.clear();
     _sequence_ids.reset();
@@ -154,7 +157,19 @@ bool LlamaScheduler::push_request(const Chorus::ChorusRequest& req) {
         if (!is_running)
             return false;
         pending->submission_sequence = _next_submission_sequence++;
-        request_queue.push(std::move(pending));
+        auto [delivery, inserted] = _terminal_deliveries.emplace(req.id, TerminalDelivery{
+            req.on_event,
+            {req.id, Chorus::ChorusSignal::Error{Chorus::ChorusError::Unknown, "Inference worker failed."}},
+            req.priority, pending->submission_sequence,
+        });
+        if (!inserted)
+            return false;
+        try {
+            request_queue.push(std::move(pending));
+        } catch (...) {
+            _terminal_deliveries.erase(delivery);
+            throw;
+        }
     }
     queue_cv.notify_one();
     return true;
@@ -163,7 +178,7 @@ bool LlamaScheduler::push_request(const Chorus::ChorusRequest& req) {
 void LlamaScheduler::cancel_request(Chorus::RequestId id) {
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
-        if (!is_running)
+        if (!is_running || !_terminal_deliveries.contains(id))
             return;
         _cancel_requested.insert(id);
     }
@@ -289,6 +304,12 @@ void LlamaScheduler::admit_available() {
                 continue;
             }
         }
+#ifdef TEST_BUILD
+        std::function<void(Chorus::RequestId)> observer;
+        { std::lock_guard<std::mutex> lock(_batch_observer_mutex); observer = _admission_observer; }
+        if (observer)
+            observer(pending->request.id);
+#endif
         if (auto terminal = resolve_pending_request(*pending)) {
             bool stopped = false;
             if (take_cancellation(pending->request.id, stopped))
@@ -642,7 +663,18 @@ bool LlamaScheduler::recover_decode(const BatchPlan& failed) {
 }
 
 void LlamaScheduler::worker_loop() {
+    try {
+        run_worker();
+    } catch (...) {
+        fail_all(Chorus::ChorusError::Unknown);
+    }
+}
+
+void LlamaScheduler::run_worker() {
     while (true) {
+#ifdef TEST_BUILD
+        ++_worker_iterations;
+#endif
         if (process_control_requests())
             return;
         admit_available();
@@ -668,9 +700,8 @@ void LlamaScheduler::worker_loop() {
         }
         if (rc == 1 && recover_decode(*plan))
             continue;
-        fail_all(Chorus::ChorusError::Decode, "Inference decode failed.");
-        { std::lock_guard<std::mutex> lock(queue_mutex); is_running = false; }
-        queue_cv.notify_all();
+        fail_all(Chorus::ChorusError::Decode);
+        return;
     }
 }
 
@@ -720,14 +751,41 @@ void LlamaScheduler::complete_sequence(int sequence_id, bool flush_pending_text)
     emit_signals(std::move(signals));
 }
 
-void LlamaScheduler::fail_all(Chorus::ChorusError code, const std::string& message) {
-    std::vector<PendingSignal> signals;
-    for (int id : ordered_active_sequence_ids())
-        retire_sequence(id, Chorus::ChorusSignal::Error{code, message}, signals);
-    emit_signals(std::move(signals));
+void LlamaScheduler::fail_all(Chorus::ChorusError code) {
+    decltype(_terminal_deliveries) deliveries;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        is_running = false;
+        deliveries.swap(_terminal_deliveries);
+        _cancel_requested.clear();
+    }
+    queue_cv.notify_all();
+    // Do not attempt KV cleanup or resume inference after an unexpected worker failure.
+    while (!deliveries.empty()) {
+        auto next = std::max_element(deliveries.begin(), deliveries.end(), [](const auto& left, const auto& right) {
+            if (left.second.priority != right.second.priority)
+                return left.second.priority < right.second.priority;
+            return left.second.submission_sequence > right.second.submission_sequence;
+        });
+        auto delivery = deliveries.extract(next);
+        std::get<Chorus::ChorusSignal::Error>(delivery.mapped().failure.event).code = code;
+        try {
+            if (delivery.mapped().on_event)
+                delivery.mapped().on_event(delivery.mapped().failure);
+        } catch (...) {
+            // A contract-violating sink must not suppress other requests' terminal callbacks.
+        }
+    }
 }
 
 void LlamaScheduler::emit_signal(PendingSignal pending) {
+    if (std::holds_alternative<Chorus::ChorusSignal::Stop>(pending.event) ||
+        std::holds_alternative<Chorus::ChorusSignal::Error>(pending.event)) {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        if (!_terminal_deliveries.erase(pending.request.id))
+            return;
+        _cancel_requested.erase(pending.request.id);
+    }
     if (!pending.request.on_event)
         return;
     Chorus::ChorusSignal signal{pending.request.id, std::move(pending.event)};
@@ -747,5 +805,9 @@ void LlamaScheduler::emit_token(Sequence& sequence, std::string text, Chorus::To
 void LlamaScheduler::set_batch_observer(std::function<void(const Chorus::LlamaBatchRecord&)> observer) {
     std::lock_guard<std::mutex> lock(_batch_observer_mutex);
     _batch_observer = std::move(observer);
+}
+void LlamaScheduler::set_admission_observer(std::function<void(Chorus::RequestId)> observer) {
+    std::lock_guard<std::mutex> lock(_batch_observer_mutex);
+    _admission_observer = std::move(observer);
 }
 #endif

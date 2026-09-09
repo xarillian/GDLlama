@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 #include <godot_cpp/classes/resource.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -36,9 +37,9 @@ class ChorusGenerationDefaults : public godot::Resource {
      *
      * Returns:
      *  - `Chorus::GenerationConfigPatch`: the completed generation overlay.
-     *  - `std::nullopt`: the `provider_options` property contains an unsupported value or non-string key.
+     *  - `std::nullopt`: invalid defaults, with a diagnostic in `error`.
      */
-    std::optional<Chorus::GenerationConfigPatch> to_patch() const;
+    std::optional<Chorus::GenerationConfigPatch> to_patch(std::string& error) const;
 
     void set_override_max_tokens(bool enabled);
     bool get_override_max_tokens() const;

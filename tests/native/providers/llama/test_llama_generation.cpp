@@ -194,6 +194,37 @@ TEST(LlamaGeneration, Llama_generation_rejects_nonfinite_scalars) {
     );
 }
 
+TEST(LlamaGeneration, Repeat_penalty_requires_a_positive_float_with_finite_reciprocal) {
+    const float reciprocal_boundary = 1.0f / std::numeric_limits<float>::max();
+    for (double value : {0.0, -0.0, -1.0, std::numeric_limits<double>::denorm_min(),
+                         static_cast<double>(std::numeric_limits<float>::denorm_min()),
+                         static_cast<double>(reciprocal_boundary)}) {
+        const auto rejection = rejection_for("repeat_penalty", value);
+        EXPECT_EQ(rejection.error, Chorus::ChorusError::UnsupportedOption);
+        EXPECT_NE(rejection.message.find("finite float reciprocal"), std::string::npos);
+    }
+    for (float value : {std::nextafter(reciprocal_boundary, 1.0f), std::numeric_limits<float>::min(),
+                        0.5f, 1.0f, std::numeric_limits<float>::max()}) {
+        check_provider_resolution("repeat_penalty", static_cast<double>(value), [value](const auto& resolved) {
+            EXPECT_EQ(resolved.sampling.penalty_repeat, value);
+        });
+    }
+}
+
+TEST_F(LlamaGenerationModelTest, Sampler_invalid_argument_is_request_local_and_model_remains_usable) {
+    LlamaModelFixture fixture;
+    ASSERT_TRUE(fixture.load());
+    Chorus::ResolvedLlamaGeneration malformed;
+    malformed.sampling.penalty_repeat = 0.0f;
+    auto rejected = Chorus::make_llama_sampler(fixture.model, std::move(malformed));
+    ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(rejected));
+    EXPECT_EQ(std::get<Chorus::RequestRejection>(rejected).error, Chorus::ChorusError::InvalidRequest);
+    EXPECT_NE(std::get<Chorus::RequestRejection>(rejected).message.find("penalty_repeat"), std::string::npos);
+    auto valid = Chorus::make_llama_sampler(fixture.model, Chorus::ResolvedLlamaGeneration{});
+    ASSERT_TRUE(std::holds_alternative<common_sampler_ptr>(valid));
+    EXPECT_NE(std::get<common_sampler_ptr>(valid), nullptr);
+}
+
 TEST(LlamaGeneration, Llama_sampler_order_resolves_canonical_stages) {
     Chorus::ProviderOptionList order{
         "penalties",

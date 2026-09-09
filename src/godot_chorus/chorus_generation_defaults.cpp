@@ -33,23 +33,30 @@ ChorusGenerationDefaults::ChorusGenerationDefaults() {
     _patch.max_tokens = Chorus::ConfigPatch<int32_t>::set(128);
 }
 
-std::optional<Chorus::GenerationConfigPatch> ChorusGenerationDefaults::to_patch() const {
+std::optional<Chorus::GenerationConfigPatch> ChorusGenerationDefaults::to_patch(std::string& error) const {
+    error.clear();
     Chorus::GenerationConfigPatch patch = _patch;
-    if (patch.seed.action == Chorus::PatchAction::Set && patch.seed.value > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+    if (patch.seed.action == Chorus::PatchAction::Set && patch.seed.value > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        error = "seed must be nonnegative when set.";
         return std::nullopt;
+    }
     if (patch.constraint.action == Chorus::PatchAction::Set) {
         switch (patch.constraint.value.format) {
         case Chorus::ConstraintFormat::Gbnf:
         case Chorus::ConstraintFormat::JsonSchema:
         case Chorus::ConstraintFormat::Regex:
         case Chorus::ConstraintFormat::Lark: break;
-        default: return std::nullopt;
+        default:
+            error = "constraint_format is invalid.";
+            return std::nullopt;
         }
     }
     if (!_provider_options.is_empty()) {
-        auto converted = godot_chorus::variant_to_option_value(_provider_options);
-        if (!converted || !std::holds_alternative<Chorus::ProviderOptionMap>(*converted))
+        auto converted = godot_chorus::variant_to_option_value(_provider_options, error);
+        if (!converted) {
+            error = "provider_options " + error;
             return std::nullopt;
+        }
         patch.provider_options = std::get<Chorus::ProviderOptionMap>(std::move(*converted));
     }
     return patch;

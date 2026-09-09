@@ -118,6 +118,10 @@ make_llama_sampler(const llama_model* model, ResolvedLlamaGeneration resolved) {
 
     try {
         return common_sampler_ptr(common_sampler_init(model, resolved.sampling));
+    } catch (const std::invalid_argument& error) {
+        return RequestRejection{
+            ChorusError::InvalidRequest, "Invalid sampler configuration: " + std::string(error.what())
+        };
     } catch (const std::runtime_error& error) {
         std::string constraint_name = "sampler configuration";
         if (resolved.sampling.grammar.type == COMMON_GRAMMAR_TYPE_USER)

@@ -12,7 +12,12 @@ namespace Chorus {
  *
  * Callers invoke engine methods from their confined thread. An engine may
  * invoke request callbacks from any of its worker threads, so every callback
- * must be thread-safe. Engine workers never invoke these methods.
+ * must be thread-safe and must not throw. Engine workers never invoke these methods.
+ * Expected request-local construction failures become terminal errors. An
+ * unexpected worker exception must stop admission and terminate every still-owned
+ * request, including preparing work, before the worker exits; the engine remains
+ * unhealthy until reinitialized. Successful delivery cannot be guaranteed to a
+ * callback that throws.
  */
 class InferenceEngine {
   public:

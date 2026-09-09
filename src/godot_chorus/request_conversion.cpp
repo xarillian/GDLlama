@@ -125,8 +125,8 @@ std::optional<Chorus::GenerationConfigPatch> generation_patch_from_request(const
         if (!format) { error = "constraint_format is invalid."; return std::nullopt; }
         patch.constraint.value = {*format, std::string(request.get_constraint_source().utf8().get_data())};
     }
-    const auto converted = variant_to_option_value(request.get_provider_options());
-    if (!converted || !std::holds_alternative<Chorus::ProviderOptionMap>(*converted)) { error = "provider_options contains an unsupported value."; return std::nullopt; }
+    auto converted = variant_to_option_value(request.get_provider_options(), error);
+    if (!converted) { error = "provider_options " + error; return std::nullopt; }
     patch.provider_options = std::get<Chorus::ProviderOptionMap>(std::move(*converted));
     const auto erasures = request.get_provider_option_erasures();
     patch.provider_option_erasures.reserve(erasures.size());

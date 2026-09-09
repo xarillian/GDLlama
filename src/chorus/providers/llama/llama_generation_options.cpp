@@ -22,6 +22,7 @@ enum class IntegerRange {
 enum class FloatRange {
     Probability,
     Finite,
+    RepeatPenalty,
     Nonnegative,
     DryBase,
     AdaptiveTarget,
@@ -81,7 +82,7 @@ const std::array<OptionDescriptor, 23> kProviderOptions{{
     {"dynamic_temperature_exponent",
      FloatOption{FloatRange::Finite, &common_params_sampling::dynatemp_exponent}},
     {"penalty_last_n", IntegerOption{IntegerRange::SentinelInt32, &common_params_sampling::penalty_last_n}},
-    {"repeat_penalty", FloatOption{FloatRange::Finite, &common_params_sampling::penalty_repeat}},
+    {"repeat_penalty", FloatOption{FloatRange::RepeatPenalty, &common_params_sampling::penalty_repeat}},
     {"ignore_eos", BoolOption{&common_params_sampling::ignore_eos}},
     {"mirostat", IntegerOption{IntegerRange::Mirostat, &common_params_sampling::mirostat}},
     {"mirostat_tau", FloatOption{FloatRange::Finite, &common_params_sampling::mirostat_tau}},
@@ -162,6 +163,8 @@ const char* allowed_range(FloatRange range) {
         return "[0.0, 1.0]";
     case FloatRange::Finite:
         return "finite float range";
+    case FloatRange::RepeatPenalty:
+        return "positive finite float with finite float reciprocal";
     case FloatRange::Nonnegative:
         return "[0.0, finite float maximum]";
     case FloatRange::DryBase:
@@ -358,6 +361,8 @@ bool double_in_range(double value, FloatRange range) {
         return value >= 0.0 && value <= 1.0;
     case FloatRange::Finite:
         return true;
+    case FloatRange::RepeatPenalty:
+        return static_cast<float>(value) > 0.0f && std::isfinite(1.0f / static_cast<float>(value));
     case FloatRange::Nonnegative:
         return value >= 0.0;
     case FloatRange::DryBase:

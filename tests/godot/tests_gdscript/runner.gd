@@ -16,6 +16,8 @@ func _ready() -> void:
 	await TestModelLoading.run_tests(self)
 	print("TEST: Basic Generation")
 	await TestGenerate.run_tests(self)
+	print("TEST: Option Conversion")
+	await TestOptionConversion.run_tests(self)
 	print("TEST: Cancellation")
 	await TestCancellation.run_tests(self)
 	print("TEST: Chat History")

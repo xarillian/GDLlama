@@ -112,6 +112,180 @@ static Chorus::ChorusConfig make_gguf_config(const std::string& path) {
     return config;
 }
 
+TEST_F(LlamaSchedulerModelTest, Malformed_sampler_requests_terminate_and_engine_remains_usable) {
+    auto config = make_gguf_config(MODEL_PATH);
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
+    SchedulerObservation state;
+    Chorus::LlamaEngine engine;
+    ASSERT_FALSE(engine.initialize(config, {}).has_value());
+
+    auto malformed = make_scheduler_generation(1, 0);
+    malformed.on_event = [&](const auto& signal) { state.handle(signal); };
+    malformed.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"repeat_penalty", 0.0}};
+    auto rejection = engine.validate_request(malformed);
+    ASSERT_TRUE(rejection);
+    EXPECT_EQ(rejection->error, Chorus::ChorusError::UnsupportedOption);
+    engine.submit_request(malformed);
+    ASSERT_TRUE(state.wait_for_terminals({1}));
+    EXPECT_TRUE(engine.is_initialized());
+
+    auto grammar = make_scheduler_generation(2, 0);
+    grammar.on_event = malformed.on_event;
+    grammar.gen_config.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "not a grammar"};
+    ASSERT_FALSE(engine.validate_request(grammar));
+    engine.submit_request(grammar);
+    ASSERT_TRUE(state.wait_for_terminals({2}));
+    EXPECT_TRUE(engine.is_initialized());
+
+    auto valid = make_scheduler_generation(3, 0);
+    valid.on_event = malformed.on_event;
+    engine.submit_request(valid);
+    ASSERT_TRUE(state.wait_for_terminals({3}));
+    engine.shutdown();
+    ASSERT_EQ(state.terminals[1].size(), size_t{1});
+    EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[1][0].event).code,
+              Chorus::ChorusError::UnsupportedOption);
+    ASSERT_EQ(state.terminals[2].size(), size_t{1});
+    EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[2][0].event).code,
+              Chorus::ChorusError::InvalidRequest);
+    ASSERT_EQ(state.terminals[3].size(), size_t{1});
+    EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[3][0].event));
+}
+
+TEST_F(LlamaSchedulerModelTest, Unexpected_batch_exception_fences_admission_and_drains_active_and_queued) {
+    auto config = make_gguf_config(MODEL_PATH);
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
+    SchedulerObservation state;
+    state.gate_request_id = 1;
+    LlamaScheduler scheduler;
+    ASSERT_FALSE(scheduler.initialize(config, {}).has_value());
+    scheduler.set_batch_observer([&](const auto& record) {
+        state.observe(record);
+        throw std::logic_error("injected batch failure");
+    });
+    auto active = make_scheduler_generation(1, 10);
+    active.on_event = [&](const auto& signal) { state.handle(signal); };
+    ASSERT_TRUE(scheduler.push_request(active));
+    const bool gated = state.wait_for_gate();
+    if (!gated) {
+        state.release();
+        FAIL() << "Worker did not reach batch gate";
+    }
+    auto queued = make_scheduler_generation(2, 0);
+    queued.on_event = active.on_event;
+    EXPECT_TRUE(scheduler.push_request(queued));
+    auto throwing_sink = make_scheduler_generation(3, 20);
+    throwing_sink.on_event = [&](const auto& signal) {
+        state.handle(signal);
+        throw std::runtime_error("contract-violating sink");
+    };
+    EXPECT_TRUE(scheduler.push_request(throwing_sink));
+    state.release();
+    ASSERT_TRUE(state.wait_for_terminals({1, 2, 3}));
+    EXPECT_FALSE(scheduler.is_healthy());
+    EXPECT_FALSE(scheduler.push_request(make_scheduler_generation(4, 0)));
+    scheduler.shutdown();
+    EXPECT_EQ(state.batches.size(), size_t{1});
+    for (int id : {1, 2, 3}) {
+        ASSERT_EQ(state.terminals[id].size(), size_t{1});
+        EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[id][0].event).code,
+                  Chorus::ChorusError::Unknown);
+    }
+}
+
+TEST_F(LlamaSchedulerModelTest, Unexpected_admission_exception_retains_preparing_and_buffered_terminal_ownership) {
+    auto config = make_gguf_config(MODEL_PATH);
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
+    SchedulerObservation state;
+    state.gate_request_id = 1;
+    LlamaScheduler scheduler;
+    ASSERT_FALSE(scheduler.initialize(config, {}).has_value());
+    scheduler.set_batch_observer([&](const auto& record) { state.observe(record); });
+    scheduler.set_admission_observer([](Chorus::RequestId id) {
+        if (id == 3)
+            throw 42;
+    });
+    auto blocker = make_scheduler_generation(1, 0);
+    blocker.on_event = [&](const auto& signal) { state.handle(signal); };
+    ASSERT_TRUE(scheduler.push_request(blocker));
+    const bool gated = state.wait_for_gate();
+    if (!gated) {
+        state.release();
+        FAIL() << "Worker did not reach batch gate";
+    }
+    auto zero = make_scheduler_generation(2, 0);
+    zero.gen_config.max_tokens = 0;
+    zero.on_event = blocker.on_event;
+    auto preparing = make_scheduler_generation(3, 0);
+    preparing.on_event = blocker.on_event;
+    auto queued = make_scheduler_generation(4, 0);
+    queued.on_event = blocker.on_event;
+    EXPECT_TRUE(scheduler.push_request(zero));
+    EXPECT_TRUE(scheduler.push_request(preparing));
+    EXPECT_TRUE(scheduler.push_request(queued));
+    state.release();
+    ASSERT_TRUE(state.wait_for_terminals({1, 2, 3, 4}));
+    EXPECT_FALSE(scheduler.is_healthy());
+    scheduler.shutdown();
+    ASSERT_EQ(state.terminals[1].size(), size_t{1});
+    EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[1][0].event));
+    for (int id : {2, 3, 4}) {
+        ASSERT_EQ(state.terminals[id].size(), size_t{1});
+        EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[id][0].event).code,
+                  Chorus::ChorusError::Unknown);
+    }
+}
+
+TEST_F(LlamaSchedulerModelTest, Preparing_cancellation_is_consumed_and_late_or_unknown_ids_leave_worker_idle) {
+    auto config = make_gguf_config(MODEL_PATH);
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
+    SchedulerObservation state;
+    state.gate_request_id = 1;
+    LlamaScheduler scheduler;
+    ASSERT_FALSE(scheduler.initialize(config, {}).has_value());
+    scheduler.set_admission_observer([&](Chorus::RequestId id) {
+        state.observe({Chorus::RequestType::Generate, 0, {id}, {}});
+    });
+    auto preparing = make_scheduler_generation(1, 0);
+    preparing.on_event = [&](const auto& signal) { state.handle(signal); };
+    ASSERT_TRUE(scheduler.push_request(preparing));
+    const bool gated = state.wait_for_gate();
+    if (!gated) {
+        state.release();
+        FAIL() << "Worker did not reach admission gate";
+    }
+    scheduler.cancel_request(preparing.id);
+    state.release();
+    ASSERT_TRUE(state.wait_for_terminals({1}));
+    auto zero = make_scheduler_generation(2, 0);
+    zero.gen_config.max_tokens = 0;
+    zero.on_event = [&](const auto& signal) {
+        state.handle(signal);
+        scheduler.cancel_request(signal.request_id);
+    };
+    ASSERT_TRUE(scheduler.push_request(zero));
+    ASSERT_TRUE(state.wait_for_terminals({2}));
+    scheduler.cancel_request(preparing.id);
+    scheduler.cancel_request(zero.id);
+    scheduler.cancel_request(9999);
+    const uint64_t before = scheduler.worker_iterations();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_LT(scheduler.worker_iterations() - before, uint64_t{50});
+    EXPECT_TRUE(scheduler.is_healthy());
+    auto valid = make_scheduler_generation(3, 0);
+    valid.on_event = preparing.on_event;
+    ASSERT_TRUE(scheduler.push_request(valid));
+    ASSERT_TRUE(state.wait_for_terminals({3}));
+    scheduler.shutdown();
+    ASSERT_EQ(state.terminals[1].size(), size_t{1});
+    EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[1][0].event).code,
+              Chorus::ChorusError::Cancelled);
+    for (int id : {2, 3}) {
+        ASSERT_EQ(state.terminals[id].size(), size_t{1});
+        EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[id][0].event));
+    }
+}
+
 TEST(LlamaScheduler, sequence_ids_allocate_reuse_and_reject_invalid_release) {
     Chorus::LlamaSequenceIdPool pool(2);
     ASSERT_EQ(pool.acquire(), std::optional<int>{0});

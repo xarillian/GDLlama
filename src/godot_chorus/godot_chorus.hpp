@@ -190,7 +190,7 @@ class GodotChorus : public godot::Node {
     // Sends the node's ambient settings to the runtime before every submission
     // and render operation, leaving the runtime to decide where each value
     // applies.
-    bool push_host_defaults();
+    bool push_host_defaults(std::string& error);
 
     void drain_logs();
     Chorus::LogLevel effective_log_level() const;
