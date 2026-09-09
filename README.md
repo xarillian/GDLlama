@@ -48,6 +48,8 @@ The staged addon is written to `plugin/addons/chorus`. To use it in a Godot proj
 4. Set its `model_path` to a compatible GGUF model. 
 5. Call `load_model()` and inspect `last_load_error` and `last_load_error_message` if it returns `false`.
 
+`model_path` accepts absolute paths and Godot `res://` or `user://` paths to loose GGUF files. A model packed inside a PCK must currently be extracted to the filesystem.
+
 ## Architecture
 See [Architecture](docs/ARCHITECTURE.md) for the dependency model, service
 contracts, provider boundaries, and threading invariants.

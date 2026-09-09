@@ -300,7 +300,7 @@ bool GodotChorus::load_model() {
     config.model = Chorus::make_initial_model_spec(
         provider,
         std::string(_model_path.get_file().get_basename().utf8().get_data()),
-        std::string(_model_path.utf8().get_data())
+        std::string(ProjectSettings::get_singleton()->globalize_path(_model_path).utf8().get_data())
     );
     // Echo accepts an empty `Chorus::InitialModelSpec` and declares no load
     // options, so this generic path contributes nothing without a special case.

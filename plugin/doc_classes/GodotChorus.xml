@@ -19,7 +19,7 @@
 		<method name="similarity_cos" qualifiers="const"><return type="float"/><param index="0" name="array1" type="PackedFloat32Array"/><param index="1" name="array2" type="PackedFloat32Array"/></method>
 	</methods>
 	<members>
-		<member name="model_path" type="String" setter="set_model_path" getter="get_model_path" default="&quot;&quot;"/><member name="effective_context_size" type="int" getter="get_effective_context_size"/><member name="last_load_error" type="int" getter="get_last_load_error"/><member name="last_load_error_message" type="String" getter="get_last_load_error_message"/>
+		<member name="model_path" type="String" setter="set_model_path" getter="get_model_path" default="&quot;&quot;">Path to a loose GGUF file. Accepts absolute filesystem paths and Godot [code]res://[/code] or [code]user://[/code] paths. Models inside a PCK must first be extracted to the filesystem.</member><member name="effective_context_size" type="int" getter="get_effective_context_size"/><member name="last_load_error" type="int" getter="get_last_load_error"/><member name="last_load_error_message" type="String" getter="get_last_load_error_message"/>
 		<member name="provider" type="int" setter="set_provider" getter="get_provider" enum="GodotChorus.ProviderChoice" default="0"/><member name="generation_defaults" type="ChorusGenerationDefaults" setter="set_generation_defaults" getter="get_generation_defaults"/><member name="chat_template" type="String" setter="set_chat_template" getter="get_chat_template" default="&quot;&quot;"/>
 		<member name="override_log_level" type="bool" setter="set_override_log_level" getter="get_override_log_level" default="false"/><member name="log_level" type="int" setter="set_log_level" getter="get_log_level" default="2"/>
 	</members>

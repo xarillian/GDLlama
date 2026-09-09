@@ -20,7 +20,16 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(chorus.is_loaded(), "expected is_loaded() == true after a successful load")
 	)
 
+	await TestReport.run("load_model() resolves a Godot resource path without changing the property", func():
+		var resource_path := "res://../" + ModelPaths.VALID_GGUF
+		chorus.model_path = resource_path
+		TestReport.check(chorus.load_model(), "expected a resource-relative GGUF to load")
+		TestReport.check(chorus.is_loaded(), "expected the resolved model to be ready")
+		TestReport.check(chorus.model_path == resource_path, "expected model_path to retain its Godot spelling")
+	)
+
 	await TestReport.run("load_model() replaces cleanly on a second valid load", func():
+		chorus.model_path = ModelPaths.valid_gguf()
 		TestReport.check(chorus.load_model(), "expected reload to return true")
 		TestReport.check(chorus.is_loaded(), "expected is_loaded() == true after reload")
 	)
