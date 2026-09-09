@@ -83,6 +83,26 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(not chorus.generate(request).accepted, "expected invalid execution rejection")
 	)
 
+	await TestReport.run("inactive integer overrides ignore stored out-of-range values", func():
+		for state in [ChorusOverrideState.INHERIT, ChorusOverrideState.CLEAR]:
+			var request := ChorusRequest.stateless("inactive integers")
+			request.max_tokens = 1 << 40
+			request.max_tokens_state = state
+			request.top_k = 1 << 40
+			request.top_k_state = state
+			var result := chorus.generate(request)
+			TestReport.check(result.accepted, "expected inactive out-of-range integers not to affect admission")
+			if result.accepted:
+				await chorus.generation_complete
+
+		var max_tokens := ChorusRequest.stateless("active max tokens")
+		max_tokens.set_max_tokens(1 << 40)
+		TestReport.check(not chorus.generate(max_tokens).accepted, "expected an active out-of-range max_tokens value to reject admission")
+		var top_k := ChorusRequest.stateless("active top k")
+		top_k.set_top_k(1 << 40)
+		TestReport.check(not chorus.generate(top_k).accepted, "expected an active out-of-range top_k value to reject admission")
+	)
+
 	await TestReport.run("batches isolate entries and preserve positions", func():
 		var first := ChorusRequest.chat(&"batch-a", "first")
 		var invalid := ChorusRequest.stateless("bad")
@@ -118,6 +138,23 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(results.size() == 2 and not results[0].accepted and not results[1].accepted, "expected no batch dispatch when shared defaults fail")
 		TestReport.check(results[0].request == first and results[1].request == second, "expected rejected batch source identity")
 		chorus.generation_defaults = null
+	)
+
+	await TestReport.run("provider option dictionaries require string keys recursively", func():
+		var top_level := ChorusRequest.stateless("top-level provider key")
+		top_level.provider_options = {1: {"x": true}}
+		TestReport.check(not chorus.generate(top_level).accepted, "expected a non-string provider namespace to reject admission")
+
+		var nested := ChorusRequest.stateless("nested provider key")
+		nested.provider_options = {"foreign": {1: true}}
+		TestReport.check(not chorus.generate(nested).accepted, "expected a nested non-string provider option key to reject admission")
+
+		var valid := ChorusRequest.stateless("string provider keys")
+		valid.provider_options = {"foreign": {"x": true}}
+		var result := chorus.generate(valid)
+		TestReport.check(result.accepted, "expected recursively string-keyed provider options to remain valid")
+		if result.accepted:
+			await chorus.generation_complete
 	)
 
 	await TestReport.run("typed numeric overrides reject non-finite and out-of-range floats", func():

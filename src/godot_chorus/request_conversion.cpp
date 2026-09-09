@@ -54,6 +54,20 @@ bool set_action(Chorus::ConfigPatch<T>& target, ChorusOverrideState::Value state
     return true;
 }
 
+bool set_int32_action(Chorus::ConfigPatch<int32_t>& target, ChorusOverrideState::Value state, int64_t value, const char* name, std::string& error) {
+    const auto action = patch_action(state);
+    if (!action) { error = std::string(name) + "_state is invalid."; return false; }
+    if (*action == Chorus::PatchAction::Set &&
+        (value < std::numeric_limits<int32_t>::min() || value > std::numeric_limits<int32_t>::max())) {
+        error = std::string(name) + " is outside the supported int32 range.";
+        return false;
+    }
+    target.action = *action;
+    if (*action == Chorus::PatchAction::Set)
+        target.value = static_cast<int32_t>(value);
+    return true;
+}
+
 bool set_float_action(Chorus::ConfigPatch<float>& target, ChorusOverrideState::Value state, double value, const char* name, std::string& error) {
     const auto action = patch_action(state);
     if (!action) { error = std::string(name) + "_state is invalid."; return false; }
@@ -95,18 +109,10 @@ bool copy_common(const ChorusInferenceRequest& source, Chorus::InferenceRequest&
 
 std::optional<Chorus::GenerationConfigPatch> generation_patch_from_request(const ChorusRequest& request, std::string& error) {
     Chorus::GenerationConfigPatch patch;
-    if (request.get_max_tokens() < std::numeric_limits<int32_t>::min() || request.get_max_tokens() > std::numeric_limits<int32_t>::max()) {
-        error = "max_tokens is outside the supported int32 range.";
+    if (!set_int32_action(patch.max_tokens, request.get_max_tokens_state(), request.get_max_tokens(), "max_tokens", error))
         return std::nullopt;
-    }
-    if (!set_action(patch.max_tokens, request.get_max_tokens_state(), static_cast<int32_t>(request.get_max_tokens()), "max_tokens", error))
-        return std::nullopt;
-    if (request.get_top_k() < std::numeric_limits<int32_t>::min() || request.get_top_k() > std::numeric_limits<int32_t>::max()) {
-        error = "top_k is outside the supported int32 range.";
-        return std::nullopt;
-    }
     if (!set_float_action(patch.temperature, request.get_temperature_state(), request.get_temperature(), "temperature", error) ||
-        !set_action(patch.top_k, request.get_top_k_state(), static_cast<int32_t>(request.get_top_k()), "top_k", error) ||
+        !set_int32_action(patch.top_k, request.get_top_k_state(), request.get_top_k(), "top_k", error) ||
         !set_float_action(patch.top_p, request.get_top_p_state(), request.get_top_p(), "top_p", error))
         return std::nullopt;
     if (request.get_seed_state() == ChorusOverrideState::SET && request.get_seed() < 0) { error = "seed must be nonnegative when set."; return std::nullopt; }

@@ -36,7 +36,7 @@ class ChorusGenerationDefaults : public godot::Resource {
      *
      * Returns:
      *  - `Chorus::GenerationConfigPatch`: the completed generation overlay.
-     *  - `std::nullopt`: the `provider_options` property contains an unsupported value.
+     *  - `std::nullopt`: the `provider_options` property contains an unsupported value or non-string key.
      */
     std::optional<Chorus::GenerationConfigPatch> to_patch() const;
 

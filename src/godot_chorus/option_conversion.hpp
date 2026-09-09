@@ -28,8 +28,9 @@ inline godot::String to_godot_string(const std::string& text) {
 /*
  * Converts a `godot::Variant` tree to `Chorus::ProviderOptionValue`.
  *
- * Arrays and dictionaries are converted recursively. An unsupported value
- * makes the entire conversion fail so callers can reject it explicitly.
+ * Arrays and dictionaries are converted recursively. Dictionary keys must be
+ * strings. An unsupported value or key makes the entire conversion fail so
+ * callers can reject it explicitly.
  *
  * Returns:
  *  - `std::optional<Chorus::ProviderOptionValue>`: the converted value.
@@ -66,10 +67,13 @@ inline std::optional<Chorus::ProviderOptionValue> variant_to_option_value(const 
         Dictionary dict = value;
         Array keys = dict.keys();
         for (int i = 0; i < keys.size(); ++i) {
-            auto item = variant_to_option_value(dict[keys[i]]);
+            const Variant key = keys[i];
+            if (key.get_type() != Variant::STRING)
+                return std::nullopt;
+            auto item = variant_to_option_value(dict[key]);
             if (!item)
                 return std::nullopt;
-            map[std::string(((String)keys[i]).utf8().get_data())] = std::move(*item);
+            map[std::string(((String)key).utf8().get_data())] = std::move(*item);
         }
         return Chorus::ProviderOptionValue{std::move(map)};
     }
