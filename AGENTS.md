@@ -86,6 +86,8 @@ This project uses `GoogleTest`.
 
 Tests should not be tautologies. Ensure tests are written where the effect immediately follows the causes; tests should mimic how we speak in natural language.
 
+Unit tests should be tight and verify units. They should also be few: unit tests that show a bugfix or correct behaviour are acceptable. Funtional tests, happy path, and unhappy path tests are more accepted.
+
 ## Workflow Docs
 
 Specs, plans, process ledgers, and any other agent-workflow files go into a `.gitignored` location. One of:
