@@ -86,7 +86,7 @@ This project uses `GoogleTest`.
 
 Tests should not be tautologies. Ensure tests are written where the effect immediately follows the causes; tests should mimic how we speak in natural language.
 
-Unit tests should be tight and verify units. They should also be few: unit tests that show a bugfix or correct behaviour are acceptable. Funtional tests, happy path, and unhappy path tests are more accepted.
+Not every change needs a unit test, and too many unit tests is a lousy signal. Prefer functional and end-to-end tests. Cover both the happy and the unhappy paths. If a bug would slip past those, an additional unit test is justified. A unit test is also justified for regressions or TDD. Do not blindly add tests. If coverage already exists for a changed piece of code, a test is _very like_ not necessary.
 
 ## Workflow Docs
 
