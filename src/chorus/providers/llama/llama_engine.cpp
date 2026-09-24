@@ -18,6 +18,7 @@ EngineCapabilities llama_provider_capabilities() {
     capabilities.cancellation = true;
     capabilities.embeddings = true;
     capabilities.prompt_rendering = true;
+    capabilities.message_token_counting = true;
     capabilities.common_generation_options = llama_common_generation_option_names();
     capabilities.provider_generation_options = llama_provider_generation_option_names();
     capabilities.load_options = llama_load_option_descriptors();
@@ -93,36 +94,42 @@ std::optional<RenderedPrompt> LlamaEngine::render_chat_prompt(
     auto current_scheduler = scheduler_snapshot();
     if (!current_scheduler || !current_scheduler->is_healthy())
         return std::nullopt;
-    return current_scheduler->render_chat_prompt(messages, template_override, enable_thinking);
+    auto result = current_scheduler->render_chat_prompt(messages, template_override, enable_thinking);
+    if (auto* rendered = std::get_if<RenderedPrompt>(&result))
+        return std::move(*rendered);
+    return std::nullopt;
 }
 
 std::optional<RequestRejection> LlamaEngine::validate_request(const ChorusRequest& request) const {
     auto current_scheduler = scheduler_snapshot();
     if (!current_scheduler || !current_scheduler->is_healthy())
         return RequestRejection{ChorusError::EngineNotReady, "LlamaEngine is not initialized."};
-    if (request.type == RequestType::Embedding)
-        return current_scheduler->validate_embedding(request);
-    if (!current_scheduler->capabilities().streaming)
-        return RequestRejection{ChorusError::UnsupportedFeature, "The loaded model cannot generate text."};
-    return validate_llama_request(request);
+    return current_scheduler->validate_request(request);
 }
 
-void LlamaEngine::submit_request(const ChorusRequest& chorus_request) {
+std::shared_ptr<RequestPreparation> LlamaEngine::request_preparation() const {
+    return scheduler_snapshot();
+}
+
+void LlamaEngine::submit_request(ChorusRequest chorus_request) {
+    const auto id = chorus_request.id;
+    const auto session = chorus_request.session_id;
+    const auto on_event = chorus_request.on_event;
     bool accepted = false;
     {
         std::lock_guard<std::mutex> lock(_lifecycle_mutex);
         if (_scheduler && _scheduler->is_healthy())
-            accepted = _scheduler->push_request(chorus_request);
+            accepted = _scheduler->push_request(std::move(chorus_request));
     }
     if (!accepted) {
-        _log.for_request(chorus_request.id, chorus_request.session_id).error("Request submitted to a stopped engine");
+        _log.for_request(id, session).error("Request submitted to a stopped engine");
 
-        if (chorus_request.on_event) {
+        if (on_event) {
             ChorusSignal error_sig{
-                chorus_request.id,
+                id,
                 ChorusSignal::Error{ChorusError::EngineNotReady, "Engine not initialized"},
             };
-            chorus_request.on_event(error_sig);
+            on_event(error_sig);
         }
     }
 }

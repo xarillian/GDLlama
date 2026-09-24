@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <optional>
+#include <limits>
 #include <vector>
 
 namespace Chorus {
@@ -114,6 +116,27 @@ tokenize(llama_context* ctx, const std::string& text, bool add_special, bool par
 
     result.resize(n_tokens);
     return result;
+}
+
+inline std::optional<std::vector<llama_token>> tokenize_vocabulary(
+    const llama_vocab* vocab, const std::string& text, bool add_special, bool parse_special = false
+) {
+    if (!vocab || text.size() > static_cast<size_t>(INT32_MAX))
+        return std::nullopt;
+    if (text.empty() && !add_special)
+        return std::vector<llama_token>{};
+    const auto length = static_cast<int32_t>(text.size());
+    int32_t needed = llama_tokenize(vocab, text.data(), length, nullptr, 0, add_special, parse_special);
+    if (needed == INT32_MIN || needed > 0)
+        return std::nullopt;
+    if (needed == 0)
+        return std::vector<llama_token>{};
+    std::vector<llama_token> tokens(static_cast<size_t>(-needed));
+    const int32_t count = llama_tokenize(vocab, text.data(), length, tokens.data(), -needed, add_special, parse_special);
+    if (count < 0 || count > -needed)
+        return std::nullopt;
+    tokens.resize(static_cast<size_t>(count));
+    return tokens;
 }
 
 inline std::string token_to_piece(llama_context* ctx, llama_token token) {

@@ -104,6 +104,7 @@ class GodotChorus : public godot::Node {
     void stop_all();
     bool is_loaded() const;
     bool supports_embeddings() const;
+    bool supports_message_token_counting() const;
     int64_t get_effective_context_size() const;
     int get_last_load_error() const;
     godot::String get_last_load_error_message() const;
@@ -137,7 +138,8 @@ class GodotChorus : public godot::Node {
      */
     godot::Ref<ChorusResult> reset_context();
     TurnOutcomeCode last_turn_outcome(const godot::String& session) const;
-    godot::Ref<ChorusRenderResult> render_prompt(const godot::Ref<ChorusRequest>& request);
+    godot::Ref<ChorusSubmitResult> render_prompt(const godot::Ref<ChorusRequest>& request);
+    godot::Ref<ChorusSubmitResult> count_message_tokens(const godot::String& content);
 
     void _process(double delta) override;
 

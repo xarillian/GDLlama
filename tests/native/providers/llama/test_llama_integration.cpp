@@ -4,6 +4,7 @@
 #include "chorus/providers/llama/llama_generation_options.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
 #include "chorus/runtime/runtime.hpp"
+#include "support/runtime_test_utils.hpp"
 #include "collecting_log.hpp"
 #include "process_test.hpp"
 #include "gtest_utils.hpp"
@@ -1817,8 +1818,11 @@ TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_returns_a_normalized_embe
     for (int i = 0; i < 200; ++i)
         oversized_prompt += "word ";
     const auto oversized = runtime.submit(Chorus::EmbeddingRequest{oversized_prompt, std::nullopt, 0});
-    ASSERT_TRUE(!oversized.ok());
-    ASSERT_TRUE(oversized.error == Chorus::ChorusError::InvalidRequest);
+    ASSERT_TRUE(oversized.ok());
+    const auto oversized_events = drain_runtime_events(runtime);
+    ASSERT_EQ(oversized_events.back().request_id, oversized.request_id);
+    ASSERT_EQ(oversized_events.back().kind, Chorus::RuntimeEvent::Kind::Error);
+    ASSERT_EQ(oversized_events.back().error, Chorus::ChorusError::InvalidRequest);
 }
 
 TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_none_pooling_uses_normalized_token_embeddings) {
@@ -1961,8 +1965,10 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_truncation_preserves_system) {
     preview.overrides = gen;
     auto fitted = runtime.render_prompt(preview);
     ASSERT_TRUE(fitted.ok());
-    ASSERT_TRUE(fitted.text.find("Brunn the blacksmith") != std::string::npos); // system pinned
-    ASSERT_TRUE(fitted.text.find("number 0 ") == std::string::npos);            // oldest dropped
+    const auto fitted_events = drain_runtime_events(runtime);
+    ASSERT_EQ(fitted_events.back().kind, Chorus::RuntimeEvent::Kind::PromptRendered);
+    ASSERT_TRUE(fitted_events.back().text.find("Brunn the blacksmith") != std::string::npos); // system pinned
+    ASSERT_TRUE(fitted_events.back().text.find("number 0 ") == std::string::npos);            // oldest dropped
 
     Chorus::GenerationRequest turn;
     turn.prompt = "Who are you?";

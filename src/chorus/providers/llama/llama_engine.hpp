@@ -49,7 +49,8 @@ class LlamaEngine : public InferenceEngine {
     ) const override;
 
     std::optional<RequestRejection> validate_request(const Chorus::ChorusRequest& request) const override;
-    void submit_request(const Chorus::ChorusRequest& chorus_request) override;
+    void submit_request(Chorus::ChorusRequest chorus_request) override;
+    std::shared_ptr<RequestPreparation> request_preparation() const override;
     void cancel_request(RequestId id) override;
     void shutdown() override;
 

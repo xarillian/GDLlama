@@ -25,7 +25,6 @@ void initialize_chorus_module(ModuleInitializationLevel p_level) {
     GDREGISTER_CLASS(ChorusEmbeddingRequest);
     GDREGISTER_CLASS(ChorusSubmitResult);
     GDREGISTER_CLASS(ChorusResult);
-    GDREGISTER_CLASS(ChorusRenderResult);
     GDREGISTER_CLASS(ChorusGenerationDefaults);
     GDREGISTER_CLASS(GodotChorus);
     GodotChorus::register_project_settings();

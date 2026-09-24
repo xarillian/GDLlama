@@ -252,6 +252,16 @@ void GodotChorus::_process(double /*delta*/) {
             emit_signal("history_truncated", event.request_id, session_name, omitted);
             break;
         }
+        case Chorus::RuntimeEvent::Kind::PromptRendered: {
+            PackedInt64Array omitted;
+            for (auto id : event.omitted_message_ids)
+                omitted.push_back(id);
+            emit_signal("prompt_rendered", event.request_id, session_name, to_godot_string(event.text), omitted);
+            break;
+        }
+        case Chorus::RuntimeEvent::Kind::MessageTokenCount:
+            emit_signal("message_token_counted", event.request_id, event.token_count);
+            break;
         case Chorus::RuntimeEvent::Kind::Complete:
             emit_signal(
                 "generation_complete",
@@ -337,6 +347,11 @@ bool GodotChorus::is_loaded() const {
 bool GodotChorus::supports_embeddings() const {
     const auto capabilities = _runtime.capabilities();
     return capabilities && capabilities->embeddings;
+}
+
+bool GodotChorus::supports_message_token_counting() const {
+    const auto capabilities = _runtime.capabilities();
+    return capabilities && capabilities->message_token_counting;
 }
 
 int64_t GodotChorus::get_effective_context_size() const {
@@ -487,21 +502,21 @@ GodotChorus::TurnOutcomeCode GodotChorus::last_turn_outcome(const String& sessio
     return static_cast<TurnOutcomeCode>(to_godot(_runtime.last_turn_outcome(std::string(session.utf8().get_data()))));
 }
 
-Ref<ChorusRenderResult> GodotChorus::render_prompt(const Ref<ChorusRequest>& request) {
-    Ref<ChorusRenderResult> value;
-    value.instantiate();
+Ref<ChorusSubmitResult> GodotChorus::render_prompt(const Ref<ChorusRequest>& request) {
+    Ref<ChorusInferenceRequest> source = request;
     std::string error;
     if (!push_host_defaults(error))
-        return Ref<ChorusRenderResult>(memnew(ChorusRenderResult(String(), PackedInt64Array(), ERR_INVALID_REQUEST, to_godot_string(error))));
+        return rejected_submit(source, to_godot_string(error));
     auto converted = godot_chorus::generation_request_from_resource(request);
     if (std::holds_alternative<std::string>(converted))
-        return Ref<ChorusRenderResult>(memnew(ChorusRenderResult(String(), PackedInt64Array(), ERR_INVALID_REQUEST, to_godot_string(std::get<std::string>(converted)))));
-    const auto rendered = _runtime.render_prompt(std::get<Chorus::GenerationRequest>(converted));
-    PackedInt64Array omitted;
-    omitted.resize(static_cast<int64_t>(rendered.omitted_message_ids.size()));
-    for (int64_t i = 0; i < omitted.size(); ++i)
-        omitted.set(i, rendered.omitted_message_ids[static_cast<size_t>(i)]);
-    return Ref<ChorusRenderResult>(memnew(ChorusRenderResult(to_godot_string(rendered.text), omitted, to_godot(rendered.error), to_godot_string(rendered.message))));
+        return rejected_submit(source, to_godot_string(std::get<std::string>(converted)));
+    return submit_result(source, _runtime.render_prompt(std::get<Chorus::GenerationRequest>(converted)));
+}
+
+Ref<ChorusSubmitResult> GodotChorus::count_message_tokens(const String& content) {
+    const CharString utf8 = content.utf8();
+    return submit_result({}, _runtime.count_message_tokens(Chorus::MessageContent::text(
+        std::string(utf8.get_data(), static_cast<size_t>(utf8.length())))));
 }
 
 // Properties
@@ -753,6 +768,12 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::FLOAT, "produced_at")
     ));
 
+    ADD_SIGNAL(MethodInfo("prompt_rendered", PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::STRING_NAME, "session"), PropertyInfo(Variant::STRING, "text"),
+        PropertyInfo(Variant::PACKED_INT64_ARRAY, "omitted_message_ids")));
+    ADD_SIGNAL(MethodInfo("message_token_counted", PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::INT, "token_count")));
+
     // `GodotChorus::ErrorCode`
     BIND_ENUM_CONSTANT(ERR_NONE);
     BIND_ENUM_CONSTANT(ERR_MODEL_LOAD);
@@ -808,6 +829,8 @@ void GodotChorus::_bind_methods() {
     ClassDB::bind_method(D_METHOD("reset_context"), &GodotChorus::reset_context);
     ClassDB::bind_method(D_METHOD("last_turn_outcome", "session"), &GodotChorus::last_turn_outcome);
     ClassDB::bind_method(D_METHOD("render_prompt", "request"), &GodotChorus::render_prompt);
+    ClassDB::bind_method(D_METHOD("count_message_tokens", "content"), &GodotChorus::count_message_tokens);
+    ClassDB::bind_method(D_METHOD("supports_message_token_counting"), &GodotChorus::supports_message_token_counting);
 
     // Utility methods
     ClassDB::bind_method(D_METHOD("similarity_cos", "array1", "array2"), &GodotChorus::similarity_cos);

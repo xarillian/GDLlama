@@ -2,6 +2,8 @@
 
 #include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
+#include "chorus/core/inference_engine.hpp"
+#include <shared_mutex>
 #include "chorus/providers/llama/llama_batch_planner.hpp"
 #include "chorus/providers/llama/llama_chat.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
@@ -45,12 +47,12 @@ struct LlamaBatchRecord;
 #endif
 } // namespace Chorus
 
-class LlamaScheduler {
+class LlamaScheduler : public Chorus::RequestPreparation {
   public:
     ~LlamaScheduler();
 
     std::optional<Chorus::InitializationFailure> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger);
-    bool push_request(const Chorus::ChorusRequest& req);
+    bool push_request(Chorus::ChorusRequest req);
     void cancel_request(Chorus::RequestId id);
     void shutdown();
     bool is_healthy() const;
@@ -63,7 +65,9 @@ class LlamaScheduler {
     void set_admission_observer(std::function<void(Chorus::RequestId)> observer);
     uint64_t worker_iterations() const { return _worker_iterations.load(); }
 #endif
-    std::optional<Chorus::RenderedPrompt> render_chat_prompt(
+    std::optional<Chorus::RequestRejection> validate_request(const Chorus::ChorusRequest& request) const override;
+    std::variant<int64_t, Chorus::RequestRejection> count_message_tokens(const std::string& text) const override;
+    std::variant<Chorus::RenderedPrompt, Chorus::RequestRejection> render_chat_prompt(
         const std::vector<Chorus::ChatMessage>& messages, const std::string& template_override, bool enable_thinking
     ) const;
 
@@ -213,4 +217,5 @@ class LlamaScheduler {
 #endif
     common_chat_templates_ptr _model_default_chat_templates;
     mutable std::mutex _template_mutex;
+    mutable std::shared_mutex _preparation_fence;
 };

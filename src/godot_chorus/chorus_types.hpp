@@ -194,16 +194,6 @@ class ChorusResult : public godot::RefCounted {
   private: int _error = 0; godot::String _message;
 };
 
-class ChorusRenderResult : public godot::RefCounted {
-    GDCLASS(ChorusRenderResult, godot::RefCounted);
-  protected:
-    static void _bind_methods();
-  public:
-    ChorusRenderResult() = default; ChorusRenderResult(const godot::String& text, const godot::PackedInt64Array& omitted, int error, const godot::String& message);
-    godot::String get_text() const; godot::PackedInt64Array get_omitted_message_ids() const; int get_error() const; godot::String get_message() const; bool get_ok() const;
-  private: godot::String _text; godot::PackedInt64Array _omitted; int _error = 0; godot::String _message;
-};
-
 VARIANT_ENUM_CAST(ChorusRole::Value);
 VARIANT_ENUM_CAST(ChorusOverrideState::Value);
 VARIANT_ENUM_CAST(ChorusExecution::Value);

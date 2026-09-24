@@ -35,7 +35,8 @@ class EchoEngine : public InferenceEngine {
     std::optional<LoadedModelInfo> loaded_model_info() const override;
 
     std::optional<RequestRejection> validate_request(const Chorus::ChorusRequest& request) const override;
-    void submit_request(const Chorus::ChorusRequest& chorus_request) override;
+    void submit_request(Chorus::ChorusRequest chorus_request) override;
+    std::shared_ptr<RequestPreparation> request_preparation() const override;
     void cancel_request(RequestId id) override;
     void shutdown() override;
 
@@ -54,6 +55,7 @@ class EchoEngine : public InferenceEngine {
     bool _running = false;
     bool _initialized = false;
     Chorus::Logger _log;
-    mutable std::atomic<bool> _warned_ignored_content_controls{false};
+    struct Preparation;
+    std::shared_ptr<Preparation> _preparation;
 };
 } // namespace Chorus

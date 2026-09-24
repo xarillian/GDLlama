@@ -80,7 +80,9 @@ struct RuntimeEvent {
         Embedding,              // Terminal success carrying a normalized embedding vector.
         Error,                  // Terminal request failure.
         HistoryTruncated,       // Prompt fitting omitted stored history messages; stored history is unchanged.
-        EngineFailed            // Engine-wide failure that does not terminate a request.
+        EngineFailed,           // Engine-wide failure that does not terminate a request.
+        PromptRendered,         // Terminal preview success, with text and omitted IDs.
+        MessageTokenCount       // Terminal literal-content count success.
     };
 
     // Accepted request ID, or `-1` for `Chorus::RuntimeEvent::Kind::EngineFailed`.
@@ -109,6 +111,8 @@ struct RuntimeEvent {
 
     // Stored history message identities omitted from the fitted prompt.
     std::vector<MessageId> omitted_message_ids;
+    // Literal content count, valid only for `Chorus::RuntimeEvent::Kind::MessageTokenCount`.
+    int64_t token_count = 0;
 };
 
 /*
@@ -133,15 +137,6 @@ struct SubmitResult {
     bool ok() const { return error == ChorusError::None; }
 };
 
-struct RenderPromptResult {
-    std::string text;
-    std::vector<MessageId> omitted_message_ids;
-    ChorusError error = ChorusError::None;
-    std::string message;
-
-    bool ok() const { return error == ChorusError::None; }
-};
-
 /*
  * Owns request lifecycle between hosts and an inference engine.
  *
@@ -150,7 +145,7 @@ struct RenderPromptResult {
  */
 class ChorusRuntime {
   public:
-    ChorusRuntime() = default;
+    ChorusRuntime();
     ~ChorusRuntime();
 
     ChorusRuntime(const ChorusRuntime&) = delete;
@@ -193,10 +188,13 @@ class ChorusRuntime {
      *
      * Rejection creates no request and emits no events. Every accepted request
      * later emits exactly one terminal event from `Chorus::ChorusRuntime::poll`.
+     * Provider validation, tokenization and fitting happen after admission and
+     * report failures asynchronously. Historical content is snapshotted without
+     * copying its strings; caller-owned new input is copied for lifetime safety.
      *
      * Errors:
      *  - `Chorus::ChorusError::EngineNotReady`: no initialized engine can accept work.
-     *  - `Chorus::ChorusError::InvalidRequest`: the request is invalid or cannot fit.
+     *  - `Chorus::ChorusError::InvalidRequest`: invalid shape or exhausted admission capacity.
      *  - `Chorus::ChorusError::SessionBusy`: the session has an active request.
      *  - `Chorus::ChorusError::UnsupportedFeature`: the provider lacks a requested capability.
      *  - `Chorus::ChorusError::UnsupportedOption`: the provider rejects a requested option.
@@ -316,13 +314,25 @@ class ChorusRuntime {
     std::optional<ChorusError> reset_context();
 
     /*
-     * Renders the fitted prompt that generation would consume without submitting work.
+     * Accepts a read-only preview of a frozen history and defaults snapshot.
      *
-     * Returns:
-     *  - `Chorus::RenderPromptResult`: the rendered prompt, omitted durable message IDs,
-     *    and any diagnostic from fitting or rendering.
+     * Does not occupy a session or change its history or turn outcome. Success
+     * arrives as `Chorus::RuntimeEvent::Kind::PromptRendered` from poll. Provider
+     * validation and fitting errors arrive asynchronously after admission.
+     * Deterministic templates select the same prompt as generation from the same
+     * snapshot; a changed provider rerender can fail generation's final fit check.
      */
-    RenderPromptResult render_prompt(const GenerationRequest& request) const;
+    [[nodiscard]] SubmitResult render_prompt(const GenerationRequest& request);
+
+    /*
+     * Accepts literal content counting without occupying a session.
+     *
+     * Parts are concatenated before tokenization, without automatic BOS/EOS or
+     * special-token parsing. Counts exclude role/template/response reservation
+     * and are not additive formatted costs. Success arrives as
+     * `Chorus::RuntimeEvent::Kind::MessageTokenCount` from poll.
+     */
+    [[nodiscard]] SubmitResult count_message_tokens(MessageContent content);
 
     /// Drains buffered engine signals into host-facing events.
     std::vector<RuntimeEvent> poll();
@@ -341,8 +351,14 @@ class ChorusRuntime {
 
   private:
     void assert_host_thread() const;
-    void enqueue_signal(const ChorusSignal& signal);
-    std::vector<ChorusSignal> drain_pending_signals();
+    struct Control;
+    struct PreparationJob;
+    struct PreparationState;
+    void enqueue_signal(const ChorusSignal& signal, const std::shared_ptr<Control>& control);
+    void preparation_loop();
+    void prepare(PreparationJob& job);
+    void publish_error(RequestId id, const std::shared_ptr<Control>& control, ChorusError error, std::string message);
+    void fail_preparation();
     void append_signal_events(const ChorusSignal& signal, std::vector<RuntimeEvent>& events);
     void append_engine_failure(std::vector<RuntimeEvent>& events);
     void unload_engine();
@@ -352,35 +368,32 @@ class ChorusRuntime {
     SubmitResult not_ready() const;
 
     struct ResolvedRequest {
-        const GenerationRequest& request;
+        GenerationRequest request;
         GenerationConfig config;
         std::string chat_template;
     };
     ResolvedRequest resolve_request(const GenerationRequest& request) const;
     static ChorusRequest make_engine_request(const ResolvedRequest& resolved);
 
-    struct LiveRequest;
-    [[nodiscard]] SubmitResult submit_engine_request(
-        const ResolvedRequest& resolved,
-        ChorusRequest engine_request,
-        std::vector<MessageId> omitted_message_ids = {},
-        std::optional<ConversationMessage> replaced_reply = std::nullopt
-    );
-    void finish_turn(const LiveRequest& live, TurnOutcome outcome, const std::string& text);
-
-    struct FittedTurn {
-        std::vector<ChatMessage> messages;
-        std::vector<MessageId> omitted_message_ids;
-        std::optional<std::string> rendered_text;
+    struct MessageNode {
+        ConversationMessage value;
+        uint64_t identity;
     };
-    std::variant<FittedTurn, SubmitResult> fit_turn_messages(
-        const ResolvedRequest& resolved,
-        std::vector<ConversationMessage> history,
-        std::optional<ChatMessage> pending = std::nullopt
-    ) const;
+    using MessageNodePtr = std::shared_ptr<const MessageNode>;
+    using HistoryNodes = std::vector<MessageNodePtr>;
+    using HistorySnapshot = std::shared_ptr<const HistoryNodes>;
+    MessageNodePtr make_node(ConversationMessage message);
+
+    enum class Operation { Generate, Embed, Preview, Count };
+    struct LiveRequest;
+    SubmitResult admit_generation(const GenerationRequest& request, Operation operation, bool regenerate = false);
+    SubmitResult admit(std::unique_ptr<PreparationJob> job, MessageNodePtr replaced_reply = {});
+    void finish_turn(const LiveRequest& live, TurnOutcome outcome, const std::string& text);
+    void fit_turn_messages(PreparationJob& job);
 
     struct LiveRequest {
-        RequestType type = RequestType::Generate;
+        Operation operation = Operation::Generate;
+        std::shared_ptr<Control> control;
         bool streaming = false;
         std::string accumulated_text;
         std::optional<SessionId> session_id;
@@ -388,7 +401,7 @@ class ChorusRuntime {
         std::optional<std::vector<float>> embedding;
         std::optional<MessageId> pending_user_id;
         std::optional<MessageId> reserved_assistant_id;
-        std::optional<ConversationMessage> replaced_reply;
+        MessageNodePtr replaced_reply;
     };
 
     std::unique_ptr<InferenceEngine> _engine;
@@ -400,23 +413,20 @@ class ChorusRuntime {
     HostDefaults _host_defaults;
 
     RequestId _next_request_id = 0;
-
-    std::mutex _pending_mutex;
-    std::vector<ChorusSignal> _pending_signals;
+    uint64_t _next_content_identity = 0;
+    std::unique_ptr<PreparationState> _preparation;
 
     std::unordered_map<RequestId, LiveRequest> _live_requests;
 
     std::unordered_map<SessionId, RequestId> _request_by_session;
 
     struct ConversationHistory {
-        std::vector<ConversationMessage> messages;
+        HistorySnapshot messages = std::make_shared<const HistoryNodes>();
         TurnOutcome last_turn_outcome = TurnOutcome::None;
     };
     std::unordered_map<SessionId, ConversationHistory> _histories;
 
     std::optional<MessageId> _next_message_id = 0;
-
-    std::vector<RuntimeEvent> _host_events;
 
     mutable std::atomic<std::thread::id> _host_thread{};
 };

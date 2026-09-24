@@ -1,4 +1,5 @@
 #include "chorus/runtime/runtime.hpp"
+#include "support/runtime_test_utils.hpp"
 #include "sync_mock_engine.hpp"
 #include "gtest_utils.hpp"
 
@@ -36,11 +37,11 @@ TEST(RuntimeSessions, Runtime_session_ids_monotonic_across_sessioned_and_statele
     // Inline mock completes at submit; poll() drains the terminal and frees the
     // session, so the same lane could be reused. Ids stay monotonic regardless.
     auto a = runtime.submit(sessioned("a", "s1"));
-    runtime.poll();
+    drain_runtime_events(runtime);
     auto b = runtime.submit(stateless("b"));
-    runtime.poll();
+    drain_runtime_events(runtime);
     auto c = runtime.submit(sessioned("c", "s2"));
-    runtime.poll();
+    drain_runtime_events(runtime);
 
     ASSERT_TRUE(a.ok());
     ASSERT_TRUE(b.ok());
@@ -59,7 +60,7 @@ TEST(RuntimeSessions, Runtime_session_id_present_on_all_event_kinds) {
     req.stream = true;
     auto result = runtime.submit(req);
     ASSERT_TRUE(result.ok());
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 3); // StreamedToken, StreamedToken, Complete
     for (const auto& ev : events) {
         ASSERT_TRUE(ev.session_id.has_value());
@@ -74,7 +75,7 @@ TEST(RuntimeSessions, Runtime_session_id_present_on_all_event_kinds) {
     auto held = runtime.submit(sessioned("still going", "s1"));
     ASSERT_TRUE(held.ok());
     runtime.stop_all();
-    auto cancelled = runtime.poll();
+    auto cancelled = drain_runtime_events(runtime);
     ASSERT_EQ(cancelled.size(), 1);
     ASSERT_TRUE(cancelled[0].kind == Chorus::RuntimeEvent::Kind::Error);
     ASSERT_TRUE(cancelled[0].error == Chorus::ChorusError::Cancelled);
@@ -96,6 +97,7 @@ TEST(RuntimeSessions, Runtime_session_second_live_request_rejected_SessionBusy) 
     ASSERT_TRUE(!second.ok());
     ASSERT_TRUE(second.error == Chorus::ChorusError::SessionBusy);
     ASSERT_TRUE(!second.message.empty());
+    forward_runtime_until(runtime, [&] { return mock_ptr->submitted_ids.size() == 1; });
     ASSERT_EQ(mock_ptr->submitted_ids.size(), 1); // engine never saw the second
 }
 
@@ -116,7 +118,7 @@ TEST(RuntimeSessions, Runtime_session_released_only_when_terminal_drained) {
     ASSERT_TRUE(!before_drain.ok());
     ASSERT_TRUE(before_drain.error == Chorus::ChorusError::SessionBusy);
 
-    auto events = runtime.poll(); // drains the Cancelled terminal, frees the lane
+    auto events = drain_runtime_events(runtime); // drains the Cancelled terminal, frees the lane
     ASSERT_EQ(events.size(), 1);
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Cancelled);
     ASSERT_TRUE(events[0].session_id.has_value());
@@ -134,20 +136,20 @@ TEST(RuntimeSessions, Runtime_session_reusable_after_complete_and_error) {
 
     auto first = runtime.submit(sessioned("a", "npc"));
     ASSERT_TRUE(first.ok());
-    auto done = runtime.poll();
+    auto done = drain_runtime_events(runtime);
     ASSERT_EQ(done.size(), 1);
     ASSERT_TRUE(done[0].kind == Chorus::RuntimeEvent::Kind::Complete);
 
     auto reuse = runtime.submit(sessioned("b", "npc"));
     ASSERT_TRUE(reuse.ok()); // Complete freed the lane
-    runtime.poll();
+    drain_runtime_events(runtime);
 
     // A request that validates but fails inside the engine still frees the lane
     // once its Error terminal drains.
     mock_ptr->fail_submit_with = Chorus::ChorusError::Decode;
     auto failing = runtime.submit(sessioned("c", "npc"));
     ASSERT_TRUE(failing.ok()); // validate passes; failure arrives as an event
-    auto err = runtime.poll();
+    auto err = drain_runtime_events(runtime);
     ASSERT_EQ(err.size(), 1);
     ASSERT_TRUE(err[0].kind == Chorus::RuntimeEvent::Kind::Error);
 
@@ -180,7 +182,7 @@ TEST(RuntimeSessions, Runtime_session_empty_string_is_invalid) {
     ASSERT_TRUE(mock_ptr->submitted_ids.empty());
 }
 
-TEST(RuntimeSessions, Runtime_session_validate_rejection_creates_no_state) {
+TEST(RuntimeSessions, Runtime_session_preparation_rejection_rolls_back_at_terminal_drain) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     auto* mock_ptr = mock.get();
@@ -188,14 +190,17 @@ TEST(RuntimeSessions, Runtime_session_validate_rejection_creates_no_state) {
     runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
 
     auto rejected = runtime.submit(sessioned("a", "npc"));
-    ASSERT_TRUE(!rejected.ok());
-    ASSERT_TRUE(rejected.error == Chorus::ChorusError::UnsupportedOption);
-    ASSERT_EQ(rejected.message, "nope");
+    ASSERT_TRUE(rejected.ok());
+    ASSERT_EQ(runtime.active_request_for_session("npc"), rejected.request_id);
+    const auto events = drain_runtime_events(runtime);
+    ASSERT_EQ(events.back().error, Chorus::ChorusError::UnsupportedOption);
+    ASSERT_EQ(events.back().text, "nope");
     ASSERT_TRUE(mock_ptr->submitted_ids.empty());
-    ASSERT_EQ(runtime.poll().size(), 0);
+    ASSERT_TRUE(runtime.export_conversation_history("npc").empty());
+    ASSERT_EQ(runtime.last_turn_outcome("npc"), Chorus::TurnOutcome::Errored);
 
     // The rejection left no live state, so the session is still free.
-    mock_ptr->reject_with = std::nullopt;
+    mock_ptr->set_rejection(std::nullopt);
     auto accepted = runtime.submit(sessioned("b", "npc"));
     ASSERT_TRUE(accepted.ok());
 }
@@ -216,7 +221,7 @@ TEST(RuntimeSessions, Runtime_session_two_sessions_concurrently_live) {
     std::map<int64_t, std::string> session_of_id{{s1.request_id, "s1"}, {s2.request_id, "s2"}};
 
     runtime.stop_all();
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
     // Per-id accumulation independence is covered by
     // test_interleaved_requests_accumulate_independently in test_runtime.cpp.
     ASSERT_EQ(events.size(), 2);
@@ -248,7 +253,7 @@ TEST(RuntimeSessions, Runtime_sessioned_embedding_owns_lane_until_terminal_deliv
     ASSERT_EQ(runtime.submit(sessioned("chat", "s1")).error, Chorus::ChorusError::SessionBusy);
     ASSERT_TRUE(runtime.cancel(submitted.request_id));
     ASSERT_EQ(runtime.submit(embedding("still busy", "s1")).error, Chorus::ChorusError::SessionBusy);
-    const auto events = runtime.poll();
+    const auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 1U);
     ASSERT_EQ(events[0].session_id, std::optional<Chorus::SessionId>{"s1"});
     ASSERT_TRUE(runtime.submit(embedding("reusable", "s1")).ok());
@@ -270,7 +275,7 @@ TEST(RuntimeSessions, Runtime_embedding_batch_cancellation_is_independent) {
     ASSERT_TRUE(results[1].ok());
     ASSERT_TRUE(runtime.cancel(results[0].request_id));
     ASSERT_TRUE(runtime.is_request_active(results[1].request_id));
-    const auto first_terminal = runtime.poll();
+    const auto first_terminal = drain_runtime_events(runtime);
     ASSERT_EQ(first_terminal.size(), 1U);
     ASSERT_EQ(first_terminal[0].request_id, results[0].request_id);
     ASSERT_TRUE(runtime.is_request_active(results[1].request_id));
@@ -303,7 +308,7 @@ TEST(RuntimeSessions, Runtime_cancel_status_preserves_session_until_terminal_dra
     ASSERT_TRUE(runtime.cancel(result.request_id));
     ASSERT_TRUE(runtime.active_request_for_session("npc") == result.request_id);
 
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 1);
     ASSERT_EQ(events[0].request_id, result.request_id);
     ASSERT_TRUE(events[0].session_id.has_value());

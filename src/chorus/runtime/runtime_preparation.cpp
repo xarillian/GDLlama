@@ -1,0 +1,281 @@
+#include "chorus/runtime/runtime_preparation.hpp"
+#include "chorus/runtime/prompt_fitting.hpp"
+
+#include <algorithm>
+#include <limits>
+
+namespace Chorus {
+namespace {
+void check_cancelled(const std::atomic<bool>& cancelled) {
+    if (cancelled)
+        throw RequestRejection{ChorusError::Cancelled, "Request cancelled."};
+}
+}
+
+int64_t ChorusRuntime::PreparationState::count_text(const std::string& text) {
+    const size_t hash = std::hash<std::string>{}(text);
+    auto found = std::find_if(content_counts.begin(), content_counts.end(), [&](const auto& entry) {
+        return entry.hash == hash && entry.text == text;
+    });
+    if (found != content_counts.end()) {
+        const int64_t count = found->count;
+        content_counts.splice(content_counts.begin(), content_counts, found);
+        return count;
+    }
+    auto result = service->count_message_tokens(text);
+    if (auto* failure = std::get_if<RequestRejection>(&result))
+        throw *failure;
+    const auto count = std::get<int64_t>(result);
+    if (count < 0)
+        throw RequestRejection{ChorusError::Tokenize, "Provider returned a negative message token count."};
+    if (text.size() <= kContentCountCacheBytes) {
+        while (!content_counts.empty() && (content_counts.size() >= kContentCountCacheEntries ||
+               content_bytes > kContentCountCacheBytes - text.size())) {
+            content_bytes -= content_counts.back().text.size();
+            content_counts.pop_back();
+        }
+        content_counts.push_front({hash, text, count});
+        content_bytes += text.size();
+    }
+    return count;
+}
+
+int64_t ChorusRuntime::PreparationState::count_node(const MessageNodePtr& node) {
+    if (auto found = node_counts.find(node->identity); found != node_counts.end()) {
+        node_lru.splice(node_lru.begin(), node_lru, found->second.position);
+        return found->second.count;
+    }
+    auto text = joined_text(node->value.message.content);
+    if (!text)
+        throw RequestRejection{ChorusError::UnsupportedFeature, "Message content must be text."};
+    // History entries retain only identities; arbitrary-text caching must not keep old history alive.
+    auto result = service->count_message_tokens(*text);
+    if (auto* failure = std::get_if<RequestRejection>(&result))
+        throw *failure;
+    const auto count = std::get<int64_t>(result);
+    if (count < 0)
+        throw RequestRejection{ChorusError::Tokenize, "Provider returned a negative message token count."};
+    if (node_counts.size() >= kMessageCountCacheEntries) {
+        node_counts.erase(node_lru.back());
+        node_lru.pop_back();
+    }
+    node_lru.push_front(node->identity);
+    node_counts.emplace(node->identity, NodeCount{count, node_lru.begin()});
+    return count;
+}
+
+void ChorusRuntime::PreparationState::clear_caches() {
+    node_counts.clear();
+    node_lru.clear();
+    content_counts.clear();
+    content_bytes = 0;
+}
+
+void ChorusRuntime::fit_turn_messages(PreparationJob& job) {
+    auto& state = *_preparation;
+    HistoryNodes nodes = *job.history;
+    if (job.pending)
+        nodes.push_back(job.pending);
+    size_t pin = 0;
+    while (pin < nodes.size() && nodes[pin]->value.message.role == MessageRole::System)
+        ++pin;
+    std::vector<size_t> boundaries{pin};
+    if (pin < nodes.size()) {
+        for (size_t start = pin + 1; start < nodes.size(); ++start)
+            if (nodes[start]->value.message.role == MessageRole::User || start == nodes.size() - 1)
+                boundaries.push_back(start);
+    }
+    const auto materialize = [&](size_t start) {
+        check_cancelled(job.control->cancelled);
+        std::vector<ChatMessage> messages;
+        messages.reserve(pin + nodes.size() - start);
+        for (size_t i = 0; i < pin; ++i)
+            messages.push_back(nodes[i]->value.message);
+        for (size_t i = start; i < nodes.size(); ++i)
+            messages.push_back(nodes[i]->value.message);
+        return place_injections(std::move(messages), job.resolved.request.inject);
+    };
+    if (!state.capabilities.prompt_rendering) {
+        job.request.messages = materialize(pin);
+        return;
+    }
+    std::optional<int64_t> budget;
+    if (state.model_info && state.model_info->per_request_context) {
+        const int64_t reservation = job.resolved.config.max_tokens && *job.resolved.config.max_tokens >= 0
+                                        ? *job.resolved.config.max_tokens : 512;
+        budget = static_cast<int64_t>(*state.model_info->per_request_context) - reservation;
+        if (*budget <= 0)
+            throw RequestRejection{ChorusError::InvalidRequest, "Response reservation leaves no prompt room in the per-request context."};
+        job.request.exact_prompt_budget = budget;
+    }
+    size_t selected = 0;
+    if (budget && state.capabilities.message_token_counting) {
+        int64_t estimate = 0;
+        const auto add = [&](int64_t count) {
+            estimate = estimate > *budget || count > *budget - estimate ? *budget + 1 : estimate + count;
+        };
+        for (size_t i = 0; i < pin; ++i) {
+            check_cancelled(job.control->cancelled);
+            add(state.count_node(nodes[i]));
+        }
+        for (const auto& injection : job.resolved.request.inject) {
+            check_cancelled(job.control->cancelled);
+            auto text = joined_text(injection.message.content);
+            if (!text)
+                throw RequestRejection{ChorusError::UnsupportedFeature, "Injected content must be text."};
+            add(state.count_text(*text));
+        }
+        if (pin < nodes.size()) {
+            check_cancelled(job.control->cancelled);
+            if (job.pending)
+                add(state.count_text(*joined_text(job.pending->value.message.content)));
+            else
+                add(state.count_node(nodes.back()));
+        }
+        selected = boundaries.size() - 1;
+        while (selected > 0 && estimate <= *budget) {
+            int64_t previous = estimate;
+            for (size_t i = boundaries[selected]; i > boundaries[selected - 1];) {
+                check_cancelled(job.control->cancelled);
+                add(state.count_node(nodes[--i]));
+                if (estimate > *budget)
+                    break;
+            }
+            if (estimate > *budget) {
+                estimate = previous;
+                break;
+            }
+            --selected;
+        }
+    }
+    const auto probe = [&](size_t index) {
+        auto messages = materialize(boundaries[index]);
+        check_cancelled(job.control->cancelled);
+        auto result = state.service->render_chat_prompt(messages, job.resolved.chat_template,
+                                                       job.resolved.config.show_thinking.value_or(true));
+        check_cancelled(job.control->cancelled);
+        if (auto* failure = std::get_if<RequestRejection>(&result))
+            throw *failure;
+        auto rendered = std::get<RenderedPrompt>(std::move(result));
+        if (rendered.token_count < 0)
+            throw RequestRejection{ChorusError::Tokenize, "Provider returned a negative rendered token count."};
+        if (budget && rendered.token_count > *budget)
+            return false;
+        job.request.messages = std::move(messages);
+        job.rendered = std::move(rendered.text);
+        for (size_t i = pin; i < boundaries[index]; ++i)
+            if (nodes[i]->value.id >= 0)
+                job.omitted.push_back(nodes[i]->value.id);
+        return true;
+    };
+    for (size_t i = selected; i < boundaries.size(); ++i)
+        if (probe(i))
+            return;
+    for (size_t i = 0; i < selected; ++i)
+        if (probe(i))
+            return;
+    throw RequestRejection{ChorusError::InvalidRequest, "Conversation does not fit the context window even after truncation."};
+}
+
+void ChorusRuntime::prepare(PreparationJob& job) {
+    auto& state = *_preparation;
+    check_cancelled(job.control->cancelled);
+    if (job.operation == Operation::Count) {
+        auto text = joined_text(job.content);
+        if (!text)
+            throw RequestRejection{ChorusError::UnsupportedFeature, "Message content must be text."};
+        job.token_count = state.count_text(*text);
+    } else {
+        if (job.operation != Operation::Embed) {
+            if (job.history)
+                fit_turn_messages(job);
+            else
+                job.request.prompt = std::move(job.resolved.request.prompt);
+            job.request.gen_config = std::move(job.resolved.config);
+            job.request.chat_template = std::move(job.resolved.chat_template);
+        }
+        check_cancelled(job.control->cancelled);
+        if (auto failure = state.service->validate_request(job.request))
+            throw *failure;
+        if (job.operation == Operation::Preview && !job.history)
+            job.rendered = std::move(job.request.prompt);
+    }
+    check_cancelled(job.control->cancelled);
+}
+
+void ChorusRuntime::preparation_loop() {
+    auto& state = *_preparation;
+    std::shared_ptr<Control> running;
+    try {
+        while (true) {
+            std::unique_ptr<PreparationJob> job;
+            {
+                std::unique_lock<std::mutex> lock(state.mutex);
+                state.cv.wait(lock, [&] { return state.closing || state.failed || !state.jobs.empty(); });
+                if (state.closing || state.failed)
+                    break;
+                job = std::move(state.jobs.front());
+                state.jobs.pop_front();
+                running = job->control;
+            }
+            try {
+                prepare(*job);
+                std::lock_guard<std::mutex> lock(state.mutex);
+                job->control->preparation_finished = true;
+                if (job->control->terminal || job->control->cancelled) {
+                    state.release_preparation(job->control);
+                } else if (job->operation == Operation::Count || job->operation == Operation::Preview) {
+                    RuntimeEvent event{job->request.id, job->request.session_id,
+                        job->operation == Operation::Count ? RuntimeEvent::Kind::MessageTokenCount : RuntimeEvent::Kind::PromptRendered};
+                    event.text = std::move(job->rendered);
+                    event.token_count = job->token_count;
+                    event.omitted_message_ids = std::move(job->omitted);
+                    state.output.emplace_back(std::move(event));
+                    job->control->terminal = true;
+                } else {
+                    state.output.emplace_back(std::move(job));
+                }
+            } catch (const RequestRejection& failure) {
+                publish_error(job->request.id, job->control, failure.error, failure.message);
+                std::lock_guard<std::mutex> lock(state.mutex);
+                job->control->preparation_finished = true;
+                state.release_preparation(job->control);
+            }
+            running.reset();
+        }
+    } catch (...) {
+        fail_preparation();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (running) {
+            running->preparation_finished = true;
+            state.release_preparation(running);
+        }
+    }
+    std::deque<std::unique_ptr<PreparationJob>> discarded;
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        discarded.swap(state.jobs);
+        for (const auto& job : discarded) {
+            job->control->preparation_finished = true;
+            state.release_preparation(job->control);
+        }
+    }
+}
+
+void ChorusRuntime::fail_preparation() {
+    auto& state = *_preparation;
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.failed = true;
+        for (const auto& [id, control] : state.controls) {
+            control->cancelled = true;
+            if (!control->provider_active && !control->terminal) {
+                state.output.emplace_back(ChorusSignal{id, ChorusSignal::Error{ChorusError::Unknown, "Preparation worker or provider failed."}});
+                control->terminal = true;
+            }
+        }
+    }
+    state.cv.notify_all();
+}
+
+} // namespace Chorus

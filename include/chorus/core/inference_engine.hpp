@@ -3,9 +3,36 @@
 #include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 
+#include <memory>
 #include <optional>
 
 namespace Chorus {
+
+/*
+ * Provider-owned preparation, independent of host-confined engine methods.
+ *
+ * One consumer thread may validate, render and count concurrently with inference
+ * and host control. Shutdown fences these operations before releasing resources;
+ * retained handles reject with `Chorus::ChorusError::EngineNotReady` afterward.
+ * Operations never invoke host callbacks. Expected failures are returned, while
+ * unexpected exceptions are handled by the consumer's worker failure boundary.
+ */
+class RequestPreparation {
+  public:
+    virtual ~RequestPreparation() = default;
+    virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
+    virtual std::variant<RenderedPrompt, RequestRejection> render_chat_prompt(
+        const std::vector<ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+    ) const = 0;
+
+    /*
+     * Counts joined literal content, excluding role, template and special tokens.
+     *
+     * No BOS/EOS is added and control-token spellings are literal text. Empty
+     * content succeeds with zero; a tokenizer failure is a rejection, not zero.
+     */
+    virtual std::variant<int64_t, RequestRejection> count_message_tokens(const std::string& text) const = 0;
+};
 
 /*
  * The service contract implemented by every inference provider.
@@ -107,7 +134,9 @@ class InferenceEngine {
      * request may outlive this call, so failures are signalled on
      * `ChorusRequest::on_event` and not returned.
      */
-    virtual void submit_request(const Chorus::ChorusRequest& chorus_request) = 0;
+    virtual void submit_request(Chorus::ChorusRequest chorus_request) = 0;
+
+    virtual std::shared_ptr<RequestPreparation> request_preparation() const = 0;
 
     /*
      * Requests cancellation of the request with `id` and returns immediately.

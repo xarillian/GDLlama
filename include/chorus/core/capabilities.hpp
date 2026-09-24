@@ -75,6 +75,7 @@ struct EngineCapabilities {
     bool speculative_decoding = false;
     bool dynamic_adapters = false;
     bool prompt_rendering = false;
+    bool message_token_counting = false;
 
     std::vector<std::string> common_generation_options;
     std::vector<std::string> provider_generation_options;

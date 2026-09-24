@@ -3,24 +3,6 @@
 #include <algorithm>
 
 namespace Chorus {
-namespace {
-
-size_t leading_system_run(const std::vector<FittingCandidate>& messages) {
-    size_t n = 0;
-    while (n < messages.size() && messages[n].message.role == MessageRole::System)
-        ++n;
-    return n;
-}
-
-std::vector<ChatMessage> messages_of(const std::vector<FittingCandidate>& candidates) {
-    std::vector<ChatMessage> messages;
-    messages.reserve(candidates.size());
-    for (const auto& candidate : candidates)
-        messages.push_back(candidate.message);
-    return messages;
-}
-
-} // namespace
 
 std::vector<ChatMessage> place_injections(std::vector<ChatMessage> base, const std::vector<InjectedMessage>& inject) {
     size_t pin = 0;
@@ -38,38 +20,6 @@ std::vector<ChatMessage> place_injections(std::vector<ChatMessage> base, const s
         base.insert(base.end() - static_cast<Difference>(from_end), injected.message);
     }
     return base;
-}
-
-std::variant<FitResult, ChorusError> fit_messages_to_budget(
-    const std::vector<FittingCandidate>& history,
-    const std::vector<InjectedMessage>& inject,
-    int32_t budget,
-    const RenderProbe& probe
-) {
-    const size_t pin = leading_system_run(history);
-    const size_t droppable = history.size() > pin ? history.size() - pin - 1 : 0;
-    for (size_t drop = 0; drop <= droppable; ++drop) {
-        while (drop > 0 && drop < droppable && history[pin + drop].message.role != MessageRole::User)
-            ++drop;
-
-        std::vector<FittingCandidate> candidate;
-        candidate.reserve(history.size() - drop);
-        candidate.insert(candidate.end(), history.begin(), history.begin() + static_cast<std::ptrdiff_t>(pin));
-        candidate.insert(candidate.end(), history.begin() + static_cast<std::ptrdiff_t>(pin + drop), history.end());
-        auto messages = place_injections(messages_of(candidate), inject);
-
-        auto count = probe(messages);
-        if (!count)
-            return FitResult{place_injections(messages_of(history), inject), {}};
-        if (*count <= budget) {
-            std::vector<MessageId> omitted;
-            for (size_t i = pin; i < pin + drop; ++i)
-                if (history[i].id.has_value())
-                    omitted.push_back(*history[i].id);
-            return FitResult{std::move(messages), std::move(omitted)};
-        }
-    }
-    return ChorusError::InvalidRequest;
 }
 
 } // namespace Chorus

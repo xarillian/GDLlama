@@ -2,6 +2,7 @@
 #include "gtest_utils.hpp"
 
 #include <cstring>
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -37,9 +38,30 @@ RequestPtr request_with_prompt(const char* prompt) {
     return request;
 }
 
-TEST(ChorusC, Header_is_pure_c_and_uses_abi_four) {
+struct EventSnapshot {
+    chorus_request_id id;
+    chorus_event_kind kind;
+    chorus_error error;
+    std::string text;
+};
+
+std::vector<EventSnapshot> wait_events(chorus_runtime* runtime, size_t expected = 1) {
+    std::vector<EventSnapshot> result;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (result.size() < expected && std::chrono::steady_clock::now() < deadline) {
+        size_t count = 0;
+        const auto* events = chorus_poll(runtime, &count);
+        for (size_t i = 0; i < count; ++i)
+            result.push_back({events[i].request_id, events[i].kind, events[i].error, events[i].text});
+        std::this_thread::yield();
+    }
+    EXPECT_EQ(result.size(), expected);
+    return result;
+}
+
+TEST(ChorusC, Header_is_pure_c_and_uses_abi_five) {
     ASSERT_EQ(chorus_c_header_smoke(), 0);
-    ASSERT_EQ(chorus_abi_version(), uint32_t{4});
+    ASSERT_EQ(chorus_abi_version(), uint32_t{5});
 }
 
 TEST(ChorusC, Typed_injection_rejects_unknown_roles) {
@@ -64,23 +86,26 @@ TEST(ChorusC, Generation_batch_initializes_every_slot_and_preserves_diagnostics)
     ASSERT_EQ(results[0].error, CHORUS_OK);
     ASSERT_TRUE(results[0].request_id >= 0);
     ASSERT_EQ(results[0].request_message_id, chorus_message_id{-1});
-    ASSERT_EQ(results[1].error, CHORUS_ERR_UNSUPPORTED_OPTION);
-    ASSERT_EQ(results[1].request_id, chorus_request_id{-1});
-    ASSERT_TRUE(results[1].message != nullptr);
+    ASSERT_EQ(results[1].error, CHORUS_OK);
+    ASSERT_TRUE(results[1].request_id >= 0);
     ASSERT_EQ(results[2].error, CHORUS_OK);
     ASSERT_TRUE(results[2].request_id >= 0);
+    const auto events = wait_events(runtime.get(), 3);
+    const auto failed = std::find_if(events.begin(), events.end(), [&](const auto& event) { return event.id == results[1].request_id; });
+    ASSERT_NE(failed, events.end());
+    ASSERT_EQ(failed->error, CHORUS_ERR_UNSUPPORTED_OPTION);
 }
 
 TEST(ChorusC, Batch_result_strings_survive_internal_singular_submissions) {
     RuntimePtr runtime = loaded_runtime();
     RequestPtr rejected = request_with_prompt("rejected");
-    ASSERT_EQ(chorus_request_set_provider_option_bool(rejected.get(), "echo", "unsupported", true), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_session(rejected.get(), ""), CHORUS_OK);
     RequestPtr accepted = request_with_prompt("accepted");
     const chorus_request* requests[] = {rejected.get(), accepted.get()};
     chorus_submit_result results[2] = {};
 
     ASSERT_EQ(chorus_generate_batch(runtime.get(), requests, 2, results), CHORUS_OK);
-    ASSERT_EQ(results[0].error, CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(results[0].error, CHORUS_ERR_INVALID_REQUEST);
     ASSERT_TRUE(results[0].message != nullptr);
     const std::string diagnostic = results[0].message;
     ASSERT_EQ(std::string(results[0].message), diagnostic);
@@ -107,22 +132,23 @@ TEST(ChorusC, Embedding_batch_preserves_positions_and_rejects_invalid_entries) {
 TEST(ChorusC, Result_storage_serves_each_submission_render_and_poll_boundary) {
     RuntimePtr runtime = loaded_runtime();
     RequestPtr rejected = request_with_prompt("rejected");
-    ASSERT_EQ(chorus_request_set_provider_option_bool(rejected.get(), "echo", "unsupported", true), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_session(rejected.get(), ""), CHORUS_OK);
     chorus_submit_result submission{};
     ASSERT_EQ(chorus_generate(runtime.get(), rejected.get(), &submission), CHORUS_OK);
-    ASSERT_EQ(submission.error, CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(submission.error, CHORUS_ERR_INVALID_REQUEST);
     ASSERT_NE(submission.message, nullptr);
     ASSERT_FALSE(std::string(submission.message).empty());
 
     RequestPtr rendered_request = request_with_prompt("rendered");
-    chorus_render_result rendered{};
+    chorus_submit_result rendered{};
     ASSERT_EQ(chorus_render_prompt(runtime.get(), rendered_request.get(), &rendered), CHORUS_OK);
     ASSERT_EQ(rendered.error, CHORUS_OK);
-    ASSERT_EQ(std::string(rendered.text), "rendered");
-
-    size_t count = 0;
-    ASSERT_NE(chorus_poll(runtime.get(), &count), nullptr);
-    ASSERT_EQ(count, size_t{0});
+    ASSERT_EQ(chorus_request_set_prompt(rendered_request.get(), "mutated"), CHORUS_OK);
+    rendered_request.reset();
+    const auto events = wait_events(runtime.get());
+    ASSERT_EQ(events.back().id, rendered.request_id);
+    ASSERT_EQ(events.back().kind, CHORUS_EVENT_PROMPT_RENDERED);
+    ASSERT_EQ(events.back().text, "rendered");
 }
 
 TEST(ChorusC, Typed_history_rejects_duplicate_and_negative_ids_atomically) {
@@ -218,13 +244,80 @@ TEST(ChorusC, Render_result_returns_rejection_as_initialized_value) {
     ASSERT_EQ(chorus_history_import(runtime.get(), "npc", nullptr, 0), CHORUS_OK);
     RequestPtr request = request_with_prompt("preview");
     ASSERT_EQ(chorus_request_set_session(request.get(), "npc"), CHORUS_OK);
-    chorus_render_result result{};
+    chorus_submit_result result{};
     ASSERT_EQ(chorus_render_prompt(runtime.get(), request.get(), &result), CHORUS_OK);
-    ASSERT_EQ(result.error, CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(result.error, CHORUS_ERR_UNSUPPORTED_FEATURE);
     ASSERT_TRUE(result.message != nullptr);
-    ASSERT_EQ(result.text, nullptr);
-    ASSERT_EQ(result.omitted_message_ids, nullptr);
-    ASSERT_EQ(result.omitted_message_id_count, size_t{0});
+    ASSERT_EQ(result.request_id, -1);
+    ASSERT_EQ(result.request_message_id, -1);
+    ASSERT_EQ(result.response_message_id, -1);
+}
+
+TEST(ChorusC, Count_rejection_initializes_outputs_and_echo_does_not_claim_a_tokenizer) {
+    chorus_submit_result result{99, 99, 99, CHORUS_OK, "stale"};
+    ASSERT_EQ(chorus_count_message_tokens(nullptr, "x", &result), CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(result.request_id, -1);
+    ASSERT_EQ(result.message, nullptr);
+    auto runtime = loaded_runtime();
+    chorus_capabilities caps{};
+    ASSERT_TRUE(chorus_get_capabilities(runtime.get(), &caps));
+    ASSERT_FALSE(caps.message_token_counting);
+    ASSERT_EQ(chorus_count_message_tokens(runtime.get(), "x", &result), CHORUS_OK);
+    ASSERT_EQ(result.error, CHORUS_ERR_UNSUPPORTED_FEATURE);
+    ASSERT_EQ(result.request_id, -1);
+}
+
+class ChorusCModelTest : public ChorusModelTest {};
+TEST_F(ChorusCModelTest, Async_count_copies_input_and_event_storage_survives_submission_and_log_polling) {
+    RuntimePtr runtime(chorus_runtime_new());
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_LLAMA, "tests/models/gemma-3-270m-it-F16.gguf", nullptr, CHORUS_LOG_OFF), CHORUS_OK);
+    chorus_capabilities caps{};
+    ASSERT_TRUE(chorus_get_capabilities(runtime.get(), &caps));
+    ASSERT_TRUE(caps.message_token_counting);
+    chorus_submit_result submitted{};
+    {
+        std::string content = "日本語 😀 <bos> literal content";
+        ASSERT_EQ(chorus_count_message_tokens(runtime.get(), content.c_str(), &submitted), CHORUS_OK);
+        content.assign("changed");
+    }
+    ASSERT_EQ(submitted.error, CHORUS_OK);
+    const chorus_event* events = nullptr;
+    size_t count = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!count && std::chrono::steady_clock::now() < deadline) {
+        events = chorus_poll(runtime.get(), &count);
+        std::this_thread::yield();
+    }
+    ASSERT_EQ(count, 1U);
+    ASSERT_EQ(events[0].kind, CHORUS_EVENT_MESSAGE_TOKEN_COUNT);
+    ASSERT_EQ(events[0].request_id, submitted.request_id);
+    const auto original_count = events[0].token_count;
+    ASSERT_GT(original_count, 0);
+    ASSERT_EQ(events[0].session, nullptr);
+    ASSERT_EQ(events[0].message_id, -1);
+    chorus_submit_result repeated{};
+    ASSERT_EQ(chorus_count_message_tokens(runtime.get(), "日本語 😀 <bos> literal content", &repeated), CHORUS_OK);
+    size_t logs = 0;
+    chorus_poll_logs(runtime.get(), &logs);
+    ASSERT_EQ(events[0].token_count, original_count);
+    ASSERT_EQ(events[0].request_id, submitted.request_id);
+    count = 0;
+    while (!count && std::chrono::steady_clock::now() < deadline) {
+        events = chorus_poll(runtime.get(), &count);
+        std::this_thread::yield();
+    }
+    ASSERT_EQ(count, 1U);
+    ASSERT_EQ(events[0].request_id, repeated.request_id);
+    ASSERT_EQ(events[0].token_count, original_count);
+    ASSERT_EQ(chorus_count_message_tokens(runtime.get(), "", &repeated), CHORUS_OK);
+    count = 0;
+    while (!count && std::chrono::steady_clock::now() < deadline) {
+        events = chorus_poll(runtime.get(), &count);
+        std::this_thread::yield();
+    }
+    ASSERT_EQ(count, 1U);
+    ASSERT_EQ(events[0].kind, CHORUS_EVENT_MESSAGE_TOKEN_COUNT);
+    ASSERT_EQ(events[0].token_count, 0);
 }
 
 } // namespace

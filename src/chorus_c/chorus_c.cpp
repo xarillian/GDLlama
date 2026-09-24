@@ -34,7 +34,6 @@ struct chorus_runtime {
     std::vector<chorus_event> events;
 
     std::deque<std::string> result_strings;
-    std::vector<chorus_message_id> result_omitted_message_ids;
 
     std::vector<Chorus::LogRecord> log_source;
     std::vector<std::vector<chorus_log_field>> log_fields;
@@ -43,7 +42,7 @@ struct chorus_runtime {
 
 namespace {
 
-constexpr uint32_t kAbiVersion = 4;
+constexpr uint32_t kAbiVersion = 5;
 
 std::optional<Chorus::MessageRole> to_cpp_role(chorus_message_role role) noexcept {
     switch (role) {
@@ -238,6 +237,10 @@ chorus_event_kind to_c_event_kind(Chorus::RuntimeEvent::Kind kind) noexcept {
         return CHORUS_EVENT_HISTORY_TRUNCATED;
     case Chorus::RuntimeEvent::Kind::EngineFailed:
         return CHORUS_EVENT_ENGINE_FAILED;
+    case Chorus::RuntimeEvent::Kind::PromptRendered:
+        return CHORUS_EVENT_PROMPT_RENDERED;
+    case Chorus::RuntimeEvent::Kind::MessageTokenCount:
+        return CHORUS_EVENT_MESSAGE_TOKEN_COUNT;
     }
     return CHORUS_EVENT_ERROR;
 }
@@ -334,17 +337,11 @@ void clear_result_storage(chorus_runtime* rt) noexcept {
     if (!rt)
         return;
     rt->result_strings.clear();
-    rt->result_omitted_message_ids.clear();
 }
 
 void initialize_submit_result(chorus_submit_result* result) noexcept {
     if (result)
         *result = {-1, -1, -1, CHORUS_ERR_INVALID_REQUEST, nullptr};
-}
-
-void initialize_render_result(chorus_render_result* result) noexcept {
-    if (result)
-        *result = {nullptr, nullptr, 0, CHORUS_ERR_INVALID_REQUEST, nullptr};
 }
 
 void store_submit_results(
@@ -518,6 +515,7 @@ bool chorus_get_capabilities(const chorus_runtime* rt, chorus_capabilities* out_
         out_capabilities->cancellation = capabilities->cancellation;
         out_capabilities->embeddings = capabilities->embeddings;
         out_capabilities->prompt_rendering = capabilities->prompt_rendering;
+        out_capabilities->message_token_counting = capabilities->message_token_counting;
         return true;
     } catch (...) {
         return false;
@@ -797,10 +795,10 @@ chorus_error chorus_embed(chorus_runtime* rt, const chorus_embedding_request* re
     clear_result_storage(rt);
     if (!req || !out_result)
         return invalid_request(rt, "request and out_result are required.");
-    const auto request = to_cpp_embedding_request(*req);
-    if (!request)
-        return invalid_request(rt, "embedding content and execution are required.");
     try {
+        const auto request = to_cpp_embedding_request(*req);
+        if (!request)
+            return invalid_request(rt, "embedding content and execution are required.");
         store_submit_results(rt, {rt->value.submit(*request)}, out_result);
         clear_last_error(rt);
         return CHORUS_OK;
@@ -935,6 +933,7 @@ const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count) {
                                   ? source.embedding.data()
                                   : nullptr;
             event.embedding_count = source.kind == Chorus::RuntimeEvent::Kind::Embedding ? source.embedding.size() : 0;
+            event.token_count = source.token_count;
         }
         *out_count = rt->events.size();
         clear_last_error(rt);
@@ -1236,34 +1235,40 @@ chorus_turn_outcome chorus_last_turn_outcome(const chorus_runtime* rt, const cha
 }
 
 chorus_error chorus_render_prompt(
-    chorus_runtime* rt, const chorus_request* req, chorus_render_result* out_result
+    chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result
 ) {
-    initialize_render_result(out_result);
+    initialize_submit_result(out_result);
     if (!rt)
         return CHORUS_ERR_INVALID_REQUEST;
     clear_result_storage(rt);
     if (!req || !out_result)
         return invalid_request(rt, "request and out_result are required.");
     try {
-        const auto rendered = rt->value.render_prompt(req->value);
-        rt->result_strings.push_back(rendered.text);
-        rt->result_strings.push_back(rendered.message);
-        rt->result_omitted_message_ids.assign(
-            rendered.omitted_message_ids.begin(), rendered.omitted_message_ids.end()
-        );
-        *out_result = {
-            rt->result_strings[0].empty() ? nullptr : rt->result_strings[0].c_str(),
-            rt->result_omitted_message_ids.empty() ? nullptr : rt->result_omitted_message_ids.data(),
-            rt->result_omitted_message_ids.size(),
-            to_c_error(rendered.error),
-            rt->result_strings[1].empty() ? nullptr : rt->result_strings[1].c_str(),
-        };
+        store_submit_results(rt, {rt->value.render_prompt(req->value)}, out_result);
         clear_last_error(rt);
         return CHORUS_OK;
     } catch (const std::exception& error) {
         return unknown_exception(rt, error.what());
     } catch (...) {
         return unknown_exception(rt, "Unknown exception while rendering a prompt.");
+    }
+}
+
+chorus_error chorus_count_message_tokens(chorus_runtime* rt, const char* text, chorus_submit_result* out_result) {
+    initialize_submit_result(out_result);
+    if (!rt)
+        return CHORUS_ERR_INVALID_REQUEST;
+    clear_result_storage(rt);
+    if (!text || !out_result)
+        return invalid_request(rt, "text and out_result are required.");
+    try {
+        store_submit_results(rt, {rt->value.count_message_tokens(Chorus::MessageContent::text(text))}, out_result);
+        clear_last_error(rt);
+        return CHORUS_OK;
+    } catch (const std::exception& error) {
+        return unknown_exception(rt, error.what());
+    } catch (...) {
+        return unknown_exception(rt, "Unknown exception while counting message tokens.");
     }
 }
 

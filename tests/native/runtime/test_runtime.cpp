@@ -1,4 +1,5 @@
 #include "chorus/runtime/runtime.hpp"
+#include "support/runtime_test_utils.hpp"
 #include "sync_mock_engine.hpp"
 #include "gtest_utils.hpp"
 
@@ -81,6 +82,7 @@ TEST(Runtime, Runtime_execution_mode_reaches_the_engine) {
     auto request = make_request("isolated");
     request.execution = Chorus::ExecutionMode::Exclusive;
     ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
     ASSERT_EQ(observed->last_execution, Chorus::ExecutionMode::Exclusive);
 }
 
@@ -105,14 +107,15 @@ TEST(Runtime, Runtime_preview_matches_the_prompt_submitted_without_mutation) {
     request.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(8);
     const auto preview = runtime.render_prompt(request);
     ASSERT_TRUE(preview.ok());
+    const auto preview_events = drain_runtime_events(runtime);
     const auto submitted = runtime.submit(request);
     ASSERT_TRUE(submitted.ok());
-    runtime.poll();
+    drain_runtime_events(runtime);
     const auto rendered_submission = observed->render_chat_prompt(
         observed->last_messages, observed->last_chat_template, observed->last_config.show_thinking.value_or(true)
     );
     ASSERT_TRUE(rendered_submission.has_value());
-    ASSERT_EQ(preview.text, rendered_submission->text);
+    ASSERT_EQ(preview_events.back().text, rendered_submission->text);
 }
 
 TEST(Runtime, Runtime_truncation_event_reports_durable_ids_in_history_order) {
@@ -134,7 +137,7 @@ TEST(Runtime, Runtime_truncation_event_reports_durable_ids_in_history_order) {
     request.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(0);
     const auto submitted = runtime.submit(request);
     ASSERT_TRUE(submitted.ok());
-    const auto events = runtime.poll();
+    const auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 2U);
     ASSERT_EQ(events[0].kind, Chorus::RuntimeEvent::Kind::HistoryTruncated);
     ASSERT_EQ(events[0].request_id, submitted.request_id);
@@ -149,7 +152,7 @@ TEST(Runtime, Runtime_non_streaming_yields_only_Complete) {
 
     auto result = runtime.submit(make_request("hi", /*stream=*/false));
     ASSERT_TRUE(result.ok());
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
 
     ASSERT_EQ(events.size(), 1);
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Complete);
@@ -164,7 +167,7 @@ TEST(Runtime, Runtime_streaming_yields_tokens_then_Complete) {
 
     auto result = runtime.submit(make_request("hi", /*stream=*/true));
     ASSERT_TRUE(result.ok());
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
 
     ASSERT_EQ(events.size(), 3);
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::StreamedToken);
@@ -182,7 +185,7 @@ TEST(Runtime, Runtime_interleaved_requests_accumulate_independently) {
 
     auto a = runtime.submit(make_request("a"));
     auto b = runtime.submit(make_request("b"));
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime, 2);
 
     ASSERT_EQ(events.size(), 2);
     ASSERT_EQ(events[0].request_id, a.request_id);
@@ -199,7 +202,7 @@ TEST(Runtime, Runtime_inline_rejection_delivered_on_next_poll) {
 
     auto result = runtime.submit(make_request("hi"));
     ASSERT_TRUE(result.ok()); // engine accepted the call; failure arrives as an event
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
 
     ASSERT_EQ(events.size(), 1);
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
@@ -216,7 +219,7 @@ TEST(Runtime, Runtime_error_after_tokens_discards_partial) {
 
     auto result = runtime.submit(make_request("hi", /*stream=*/false));
     ASSERT_TRUE(result.ok());
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
 
     ASSERT_EQ(events.size(), 1); // no Complete; the accumulated "Hello world" is discarded
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
@@ -254,7 +257,7 @@ TEST_P(RuntimeBrokenEventDefense, Surfaces_only_the_accepted_request_stream_and_
 
     const auto result = runtime.submit(make_request("hi", /*stream=*/true));
     ASSERT_TRUE(result.ok());
-    const auto events = runtime.poll();
+    const auto events = drain_runtime_events(runtime);
 
     ASSERT_EQ(events.size(), size_t{3});
     ASSERT_EQ(events[0].request_id, result.request_id);
@@ -291,7 +294,7 @@ TEST(Runtime, Runtime_embedding_waits_for_Stop_then_emits_its_vector) {
 
     const auto result = runtime.submit(make_embedding_request("hi"));
     ASSERT_TRUE(result.ok());
-    const auto events = runtime.poll();
+    const auto events = drain_runtime_events(runtime);
 
     ASSERT_EQ(events.size(), size_t{1});
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Embedding);
@@ -311,7 +314,7 @@ TEST(Runtime, Runtime_embedding_error_discards_a_pending_vector) {
 
     const auto result = runtime.submit(make_embedding_request("hi"));
     ASSERT_TRUE(result.ok());
-    const auto events = runtime.poll();
+    const auto events = drain_runtime_events(runtime);
 
     ASSERT_EQ(events.size(), size_t{1});
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
@@ -343,7 +346,7 @@ TEST(Runtime, Runtime_mismatched_embedding_rolls_back_the_generation_turn) {
     const auto submitted = runtime.submit(request);
     ASSERT_TRUE(submitted.ok());
 
-    const auto events = runtime.poll();
+    const auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), size_t{1});
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Unknown);
@@ -380,6 +383,7 @@ TEST(Runtime, Runtime_cancel_forwards_each_time_while_live) {
     engine->hold_requests = true;
     runtime.load_engine(std::move(engine), make_config());
     auto result = runtime.submit(make_request("held"));
+    forward_runtime_until(runtime, [&] { return seen->submitted_ids.size() == 1; });
 
     ASSERT_TRUE(runtime.cancel(result.request_id));
     ASSERT_TRUE(runtime.cancel(result.request_id));
@@ -397,13 +401,14 @@ TEST(Runtime, Runtime_cancelled_request_active_until_terminal_drain) {
     engine->emit_cancelled_on_cancel = true;
     runtime.load_engine(std::move(engine), make_config());
     auto result = runtime.submit(make_request("held"));
+    forward_runtime_until(runtime, [&] { return seen->submitted_ids.size() == 1; });
 
     ASSERT_TRUE(runtime.cancel(result.request_id));
     ASSERT_TRUE(runtime.is_request_active(result.request_id));
     ASSERT_TRUE(runtime.cancel(result.request_id));
     ASSERT_EQ(seen->cancelled_ids.size(), 2);
 
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 1);
     ASSERT_EQ(events[0].request_id, result.request_id);
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
@@ -419,13 +424,14 @@ TEST(Runtime, Runtime_cancel_forwards_after_terminal_enqueue_before_poll) {
     auto* seen = engine.get();
     runtime.load_engine(std::move(engine), make_config());
     auto result = runtime.submit(make_request("completing"));
+    forward_runtime_until(runtime, [&] { return seen->submitted_ids.size() == 1; });
 
     ASSERT_TRUE(runtime.is_request_active(result.request_id));
     ASSERT_TRUE(runtime.cancel(result.request_id));
     ASSERT_EQ(seen->cancelled_ids.size(), 1);
     ASSERT_EQ(seen->cancelled_ids[0], result.request_id);
 
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 1);
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Complete);
     ASSERT_TRUE(!runtime.is_request_active(result.request_id));
@@ -440,9 +446,10 @@ TEST(Runtime, Runtime_cancel_two_request_isolation) {
     runtime.load_engine(std::move(engine), make_config());
     auto cancelled = runtime.submit(make_request("cancelled"));
     auto untouched = runtime.submit(make_request("untouched"));
+    forward_runtime_until(runtime, [&] { return seen->submitted_ids.size() == 2; });
 
     ASSERT_TRUE(runtime.cancel(cancelled.request_id));
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
 
     ASSERT_EQ(events.size(), 1);
     ASSERT_EQ(events[0].request_id, cancelled.request_id);
@@ -466,7 +473,7 @@ TEST(Runtime, Runtime_stop_all_yields_one_Cancelled_per_live_request) {
     runtime.stop_all();
     ASSERT_TRUE(!runtime.is_loaded());
 
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 2);
     ASSERT_EQ(terminal_count(events, a.request_id), size_t{1});
     ASSERT_EQ(terminal_count(events, b.request_id), size_t{1});
@@ -496,7 +503,7 @@ TEST(Runtime, Runtime_replacing_engine_cancels_and_new_engine_works) {
 
     auto fresh = runtime.submit(make_request("fresh"));
     ASSERT_TRUE(fresh.ok());
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime, 2);
     ASSERT_EQ(events.size(), 2);
     ASSERT_EQ(events[0].request_id, held.request_id);
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Cancelled);
@@ -519,7 +526,7 @@ TEST(Runtime, Runtime_failed_replacement_cancels_and_unloads) {
     ASSERT_TRUE(err.has_value());
     ASSERT_TRUE(!runtime.is_loaded());
 
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 1);
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Cancelled);
 }
@@ -570,9 +577,10 @@ TEST(Runtime, Runtime_dying_terminal_precedes_EngineFailed) {
 
     auto held = runtime.submit(make_request("held"));
     ASSERT_TRUE(held.ok());
+    forward_runtime_until(runtime, [&] { return mock->submitted_ids.size() == 1; });
 
     mock->die();
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 2);
     ASSERT_EQ(events[0].request_id, held.request_id);
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
@@ -602,18 +610,20 @@ TEST(Runtime, Runtime_engine_error_during_stop_wins_over_Cancelled) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->hold_requests = true;
+    auto* observed = engine.get();
     engine->emit_error_during_shutdown = true;
     auto load_err = runtime.load_engine(std::move(engine), make_config());
     ASSERT_TRUE(!load_err.has_value());
 
     auto held = runtime.submit(make_request("held"));
     ASSERT_TRUE(held.ok());
+    forward_runtime_until(runtime, [&] { return observed->submitted_ids.size() == 1; });
     runtime.stop_all();
 
     // The engine's own Error (emitted inside shutdown(), before it returned) is
     // drained first; the synthesized Cancelled for the same id is then dropped
     // by the liveness rule. Exactly one terminal.
-    auto events = runtime.poll();
+    auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 1);
     ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Decode);

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="GodotChorus" inherits="Node" api_type="extension">
 	<brief_description>Local asynchronous LLM inference.</brief_description>
-	<description>Submit mutable typed request resources. Each accepted request emits exactly one terminal signal. Submission and render values are immutable snapshots; changing a source resource after submission does not change runtime work.</description>
+	<description>Submit mutable typed request resources. Each accepted request emits exactly one terminal signal. Admission freezes request values and history; provider validation and fitting failures are asynchronous. Preview and counts do not occupy sessions. Input values are immutable snapshots; changing a source resource after submission does not change runtime work.</description>
 	<methods>
 		<method name="load_model"><return type="bool"/></method><method name="stop_all"><return type="void"/></method><method name="is_loaded" qualifiers="const"><return type="bool"/></method><method name="supports_embeddings" qualifiers="const"><return type="bool"/></method>
 		<method name="generate"><return type="ChorusSubmitResult"/><param index="0" name="request" type="ChorusRequest"/></method>
@@ -15,7 +15,9 @@
 		<method name="clear_conversation_history"><return type="ChorusResult"/><param index="0" name="session" type="StringName"/></method>
 		<method name="edit_message"><return type="ChorusResult"/><param index="0" name="session" type="StringName"/><param index="1" name="message_id" type="int"/><param index="2" name="content" type="String"/></method>
 		<method name="list_conversations" qualifiers="const"><return type="PackedStringArray"/></method><method name="reset_context"><return type="ChorusResult"/></method><method name="last_turn_outcome" qualifiers="const"><return type="int" enum="GodotChorus.TurnOutcomeCode"/><param index="0" name="session" type="String"/></method>
-		<method name="render_prompt"><return type="ChorusRenderResult"/><param index="0" name="request" type="ChorusRequest"/></method>
+		<method name="render_prompt"><return type="ChorusSubmitResult"/><param index="0" name="request" type="ChorusRequest"/><description>Accepts a read-only, nonoccupying preview. The frozen snapshot completes through [signal prompt_rendered] or [signal generation_error]. Validation and fitting run off-thread.</description></method>
+		<method name="count_message_tokens"><return type="ChorusSubmitResult"/><param index="0" name="content" type="String"/><description>Counts literal content asynchronously. No BOS/EOS is added and control-token spellings are literal. Counts exclude role, template and response reservation; they are not additive formatted costs.</description></method>
+		<method name="supports_message_token_counting" qualifiers="const"><return type="bool"/></method>
 		<method name="similarity_cos" qualifiers="const"><return type="float"/><param index="0" name="array1" type="PackedFloat32Array"/><param index="1" name="array2" type="PackedFloat32Array"/></method>
 	</methods>
 	<members>
@@ -24,6 +26,8 @@
 		<member name="override_log_level" type="bool" setter="set_override_log_level" getter="get_override_log_level" default="false"/><member name="log_level" type="int" setter="set_log_level" getter="get_log_level" default="2"/>
 	</members>
 	<signals>
+		<signal name="prompt_rendered"><param index="0" name="request_id" type="int"/><param index="1" name="session" type="StringName"/><param index="2" name="text" type="String"/><param index="3" name="omitted_message_ids" type="PackedInt64Array"/></signal>
+		<signal name="message_token_counted"><param index="0" name="request_id" type="int"/><param index="1" name="token_count" type="int"/></signal>
 		<signal name="token_generated"><param index="0" name="request_id" type="int"/><param index="1" name="session" type="String"/><param index="2" name="token" type="String"/></signal><signal name="reasoning_token_generated"><param index="0" name="request_id" type="int"/><param index="1" name="session" type="String"/><param index="2" name="token" type="String"/></signal>
 		<signal name="generation_complete"><param index="0" name="request_id" type="int"/><param index="1" name="session" type="StringName"/><param index="2" name="message_id" type="int"/><param index="3" name="content" type="String"/><param index="4" name="reasoning" type="String"/></signal>
 		<signal name="embedding_complete"><param index="0" name="request_id" type="int"/><param index="1" name="session" type="StringName"/><param index="2" name="embedding" type="PackedFloat32Array"/></signal>

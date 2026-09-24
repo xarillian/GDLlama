@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ChorusSubmitResult" inherits="RefCounted" api_type="extension">
-	<brief_description>Immutable result of generation or embedding admission.</brief_description>
-	<description>Immutable result of generation or embedding admission.</description>
+	<brief_description>Immutable result of generation, embedding, preview or token-count admission.</brief_description>
+	<description>Immutable result of generation, embedding, preview or token-count admission.</description>
 	<methods></methods>
 	<members>
-		<member name="request" type="ChorusInferenceRequest">Read-only result value.</member>
+		<member name="request" type="ChorusInferenceRequest">Original request resource, or null for token counts.</member>
 		<member name="request_id" type="int">Read-only result value.</member>
 		<member name="request_message_id" type="int">Read-only result value.</member>
 		<member name="response_message_id" type="int">Read-only result value.</member>

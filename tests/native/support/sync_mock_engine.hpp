@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <functional>
 #include <optional>
+#include <mutex>
+#include <atomic>
 #include <string>
 #include <thread>
 #include <utility>
@@ -79,7 +81,12 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     std::optional<Chorus::RequestRejection> reject_with; // validate_request returns this
     std::optional<Chorus::LoadedModelInfo> mock_model_info;
 
-    Chorus::EngineCapabilities capabilities() const override { return declared_caps; }
+    Chorus::EngineCapabilities capabilities() const override {
+        auto caps = declared_caps;
+        caps.prompt_rendering = supports_render;
+        caps.message_token_counting = supports_render;
+        return caps;
+    }
     std::optional<Chorus::LoadedModelInfo> loaded_model_info() const override {
         if (mock_per_request_context.has_value()) {
             Chorus::LoadedModelInfo info = mock_model_info.value_or(Chorus::LoadedModelInfo{});
@@ -89,12 +96,12 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         return mock_model_info;
     }
     std::optional<Chorus::RenderedPrompt> render_chat_prompt(
-        const std::vector<Chorus::ChatMessage>& messages,
-        const std::string& /*template_override*/,
-        bool /*enable_thinking*/
+        const std::vector<Chorus::ChatMessage>& messages, const std::string&, bool
     ) const override {
-        if (!supports_render)
-            return std::nullopt;
+        return supports_render ? render(messages) : std::nullopt;
+    }
+
+    static std::optional<Chorus::RenderedPrompt> render(const std::vector<Chorus::ChatMessage>& messages) {
         Chorus::RenderedPrompt rendered;
         int32_t count = 0;
         for (const auto& message : messages) {
@@ -122,7 +129,57 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         return reject_with;
     }
 
-    void submit_request(const Chorus::ChorusRequest& req) override {
+    struct Preparation : Chorus::RequestPreparation {
+        std::atomic<bool> closed{false};
+        bool rendering = false;
+        mutable std::mutex mutex;
+        std::optional<Chorus::RequestRejection> rejection;
+        std::optional<Chorus::RequestRejection> validate_request(const Chorus::ChorusRequest&) const override {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (closed)
+                return Chorus::RequestRejection{Chorus::ChorusError::EngineNotReady, "mock closed"};
+            return rejection;
+        }
+        std::variant<Chorus::RenderedPrompt, Chorus::RequestRejection> render_chat_prompt(
+            const std::vector<Chorus::ChatMessage>& messages, const std::string&, bool
+        ) const override {
+            if (closed)
+                return Chorus::RequestRejection{Chorus::ChorusError::EngineNotReady, "mock closed"};
+            if (rendering) {
+                auto value = SyncMockEngine::render(messages);
+                if (value)
+                    return std::move(*value);
+            }
+            return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "mock render failed"};
+        }
+        std::variant<int64_t, Chorus::RequestRejection> count_message_tokens(const std::string& text) const override {
+            if (closed)
+                return Chorus::RequestRejection{Chorus::ChorusError::EngineNotReady, "mock closed"};
+            int64_t count = 0;
+            bool word = false;
+            for (char c : text) {
+                if (c == ' ') word = false;
+                else if (!word) { word = true; ++count; }
+            }
+            return count;
+        }
+    };
+    std::shared_ptr<Chorus::RequestPreparation> request_preparation() const override {
+        auto value = std::make_shared<Preparation>();
+        value->rendering = supports_render;
+        value->rejection = reject_with;
+        _preparation = value;
+        return value;
+    }
+    void set_rejection(std::optional<Chorus::RequestRejection> value) {
+        reject_with = value;
+        if (_preparation) {
+            std::lock_guard<std::mutex> lock(_preparation->mutex);
+            _preparation->rejection = std::move(value);
+        }
+    }
+
+    void submit_request(Chorus::ChorusRequest req) override {
         submitted_ids.push_back(req.id);
         last_messages = req.messages;
         last_chat_template = req.chat_template;
@@ -230,6 +287,8 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     }
 
     void shutdown() override {
+        if (_preparation)
+            _preparation->closed = true;
         shutdown_calls++;
         if (shutdown_count_sink)
             (*shutdown_count_sink)++;
@@ -280,6 +339,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         callback(signal);
     }
 
+    mutable std::shared_ptr<Preparation> _preparation;
     bool _initialized = false;
     Chorus::Logger _log;
     std::vector<Chorus::ChorusRequest> _held;

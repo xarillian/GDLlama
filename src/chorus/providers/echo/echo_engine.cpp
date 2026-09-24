@@ -94,6 +94,28 @@ std::vector<float> make_echo_embedding(const std::string& prompt) {
 }
 } // namespace
 
+struct EchoEngine::Preparation : RequestPreparation {
+    explicit Preparation(Logger logger) : _log(std::move(logger)) {}
+    mutable std::mutex mutex;
+    bool closed = false;
+    Logger _log;
+    mutable std::atomic<bool> _warned_ignored_content_controls{false};
+
+    std::optional<RequestRejection> validate_request(const ChorusRequest& request) const override;
+    std::variant<RenderedPrompt, RequestRejection> render_chat_prompt(
+        const std::vector<ChatMessage>&, const std::string&, bool
+    ) const override {
+        std::lock_guard<std::mutex> lock(mutex);
+        return RequestRejection{closed ? ChorusError::EngineNotReady : ChorusError::UnsupportedFeature,
+                                "Echo does not render chat prompts."};
+    }
+    std::variant<int64_t, RequestRejection> count_message_tokens(const std::string&) const override {
+        std::lock_guard<std::mutex> lock(mutex);
+        return RequestRejection{closed ? ChorusError::EngineNotReady : ChorusError::UnsupportedFeature,
+                                "Echo has no tokenizer."};
+    }
+};
+
 EchoEngine::~EchoEngine() {
     shutdown();
 }
@@ -112,6 +134,7 @@ std::optional<InitializationFailure> EchoEngine::initialize(const ChorusConfig& 
         return InitializationFailure{ChorusError::UnsupportedOption, "EchoEngine accepts no provider options."};
     }
 
+    _preparation = std::make_shared<Preparation>(_log);
     _running = true;
     _worker = std::thread(&EchoEngine::worker_loop, this);
     _initialized = true;
@@ -139,8 +162,19 @@ std::optional<LoadedModelInfo> EchoEngine::loaded_model_info() const {
     return std::nullopt;
 }
 
+std::shared_ptr<RequestPreparation> EchoEngine::request_preparation() const {
+    return _preparation;
+}
+
 std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest& request) const {
-    if (!_initialized)
+    if (!_preparation)
+        return RequestRejection{ChorusError::EngineNotReady, "EchoEngine is not initialized."};
+    return _preparation->validate_request(request);
+}
+
+std::optional<RequestRejection> EchoEngine::Preparation::validate_request(const ChorusRequest& request) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (closed)
         return RequestRejection{ChorusError::EngineNotReady, "EchoEngine is not initialized."};
     if (request.type == RequestType::Embedding) {
         if (request.prompt.empty())
@@ -202,12 +236,12 @@ std::optional<RequestRejection> EchoEngine::validate_request(const ChorusRequest
     return std::nullopt;
 }
 
-void EchoEngine::submit_request(const ChorusRequest& chorus_request) {
+void EchoEngine::submit_request(ChorusRequest chorus_request) {
     bool accepted = false;
     {
         std::lock_guard<std::mutex> lock(_queue_mutex);
         if (_initialized && _running) {
-            _queue.push_back(chorus_request);
+            _queue.push_back(std::move(chorus_request));
             accepted = true;
         }
     }
@@ -274,6 +308,10 @@ void EchoEngine::cancel_request(RequestId id) {
 }
 
 void EchoEngine::shutdown() {
+    if (_preparation) {
+        std::lock_guard<std::mutex> lock(_preparation->mutex);
+        _preparation->closed = true;
+    }
     size_t callbacks_on_this_thread = 0;
     for (auto* frame = current_queued_cancel_callback; frame; frame = frame->previous)
         callbacks_on_this_thread += frame->engine == this;

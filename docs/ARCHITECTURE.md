@@ -181,6 +181,16 @@ Two rules follow:
 - **Host-facing APIs are host-thread confined.** Everything a host adapter
   calls on the application layer happens on one thread, and the application
   layer may assume it.
+- **Preparation is off-thread.** Each loaded runtime owns one bounded FIFO
+  preparation worker. It consumes immutable history snapshots through the core
+  `Chorus::RequestPreparation` service, not host-confined engine methods. Cached
+  literal-content counts guide lazy selection; exact rendered checks determine
+  fit. Validation and fitting failures after admission are polled terminals.
+  Preview and count operations do not occupy inference sessions. Stop and reload
+  join preparation before provider resource teardown; an indivisible vendor call
+  may delay stop, but ordinary admission, cancellation and polling never wait for
+  that call. Provider shutdown also revokes independently retained preparation
+  handles before releasing their resources.
 - **Providers may be asynchronous internally.** A provider may run threads,
   and contract callbacks may arrive from any of them. Callback sinks
   supplied to providers must therefore be thread-safe.

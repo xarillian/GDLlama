@@ -74,6 +74,8 @@ typedef enum chorus_event_kind {
     CHORUS_EVENT_HISTORY_TRUNCATED = 4,
     CHORUS_EVENT_ENGINE_FAILED = 5,
     CHORUS_EVENT_EMBEDDING = 6,
+    CHORUS_EVENT_PROMPT_RENDERED = 7,
+    CHORUS_EVENT_MESSAGE_TOKEN_COUNT = 8,
 } chorus_event_kind;
 
 typedef enum chorus_turn_outcome {
@@ -127,6 +129,8 @@ typedef struct chorus_event {
     size_t omitted_message_id_count;
     const float* embedding;
     size_t embedding_count;
+    /* Valid only for CHORUS_EVENT_MESSAGE_TOKEN_COUNT. */
+    int64_t token_count;
 } chorus_event;
 
 typedef struct chorus_capabilities {
@@ -134,6 +138,7 @@ typedef struct chorus_capabilities {
     bool cancellation;
     bool embeddings;
     bool prompt_rendering;
+    bool message_token_counting;
 } chorus_capabilities;
 
 typedef struct chorus_log_field {
@@ -280,17 +285,13 @@ chorus_list_conversations(const chorus_runtime* rt, char*** out_sessions, size_t
 CHORUS_API void chorus_string_list_free(char** strings, size_t count);
 CHORUS_API chorus_error chorus_reset_context(chorus_runtime* rt);
 CHORUS_API chorus_turn_outcome chorus_last_turn_outcome(const chorus_runtime* rt, const char* session);
-typedef struct chorus_render_result {
-    const char* text;
-    const chorus_message_id* omitted_message_ids;
-    size_t omitted_message_id_count;
-    chorus_error error;
-    const char* message;
-} chorus_render_result;
-
-/* Result strings and arrays remain valid until the next submission, render, poll, or runtime destruction. */
+/* Read-only, nonoccupying preview. Success arrives through chorus_poll. */
 CHORUS_API chorus_error chorus_render_prompt(
-    chorus_runtime* rt, const chorus_request* req, chorus_render_result* out_result
+    chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result
+);
+/* Literal UTF-8 content count without BOS/EOS or control-token parsing. */
+CHORUS_API chorus_error chorus_count_message_tokens(
+    chorus_runtime* rt, const char* text, chorus_submit_result* out_result
 );
 
 #ifdef __cplusplus

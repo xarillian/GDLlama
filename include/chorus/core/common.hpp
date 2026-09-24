@@ -138,6 +138,9 @@ struct ChorusRequest {
 
     GenerationConfig gen_config;
 
+    // The provider must check its actual rendered prompt before prefill.
+    std::optional<int64_t> exact_prompt_budget;
+
     // Provider worker threads may invoke this callback; it must be thread-safe.
     std::function<void(ChorusSignal&)> on_event;
 };

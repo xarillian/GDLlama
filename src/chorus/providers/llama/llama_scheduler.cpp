@@ -92,6 +92,7 @@ void LlamaScheduler::shutdown() {
     queue_cv.notify_all();
     if (worker_thread.joinable())
         worker_thread.join();
+    std::unique_lock<std::shared_mutex> preparation_lock(_preparation_fence);
     request_queue = {};
     _terminal_deliveries.clear();
     _cancel_requested.clear();
@@ -111,18 +112,42 @@ void LlamaScheduler::shutdown() {
     _llama_log_bridge.reset();
 }
 
-std::optional<Chorus::RenderedPrompt> LlamaScheduler::render_chat_prompt(
+std::variant<Chorus::RenderedPrompt, Chorus::RequestRejection> LlamaScheduler::render_chat_prompt(
     const std::vector<Chorus::ChatMessage>& messages, const std::string& template_override, bool enable_thinking
 ) const {
-    if (!model)
-        return std::nullopt;
+    std::shared_lock<std::shared_mutex> resource_lock(_preparation_fence);
+    if (!is_healthy())
+        return Chorus::RequestRejection{Chorus::ChorusError::EngineNotReady, "Llama preparation is closed."};
     std::lock_guard<std::mutex> lock(_template_mutex);
     auto rendered = Chorus::render_llama_chat(model, _model_default_chat_templates.get(), template_override, messages, enable_thinking);
-    if (std::holds_alternative<Chorus::RequestRejection>(rendered))
-        return std::nullopt;
+    if (auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered))
+        return *rejection;
     auto& value = std::get<Chorus::LlamaChatRender>(rendered);
-    auto tokens = Chorus::LlamaUtils::tokenize(context, value.prompt, true, true);
-    return Chorus::RenderedPrompt{std::move(value.prompt), static_cast<int32_t>(tokens.size())};
+    auto tokens = Chorus::LlamaUtils::tokenize_vocabulary(llama_model_get_vocab(model), value.prompt, true, true);
+    if (!tokens)
+        return Chorus::RequestRejection{Chorus::ChorusError::Tokenize, "Rendered prompt tokenization failed."};
+    return Chorus::RenderedPrompt{std::move(value.prompt), static_cast<int32_t>(tokens->size())};
+}
+
+std::variant<int64_t, Chorus::RequestRejection> LlamaScheduler::count_message_tokens(const std::string& text) const {
+    std::shared_lock<std::shared_mutex> lock(_preparation_fence);
+    if (!is_healthy())
+        return Chorus::RequestRejection{Chorus::ChorusError::EngineNotReady, "Llama preparation is closed."};
+    auto tokens = Chorus::LlamaUtils::tokenize_vocabulary(llama_model_get_vocab(model), text, false, false);
+    if (!tokens)
+        return Chorus::RequestRejection{Chorus::ChorusError::Tokenize, "Message tokenization failed."};
+    return static_cast<int64_t>(tokens->size());
+}
+
+std::optional<Chorus::RequestRejection> LlamaScheduler::validate_request(const Chorus::ChorusRequest& request) const {
+    std::shared_lock<std::shared_mutex> lock(_preparation_fence);
+    if (!is_healthy())
+        return Chorus::RequestRejection{Chorus::ChorusError::EngineNotReady, "Llama preparation is closed."};
+    if (request.type == Chorus::RequestType::Embedding)
+        return validate_embedding(request);
+    if (!_has_decoder)
+        return Chorus::RequestRejection{Chorus::ChorusError::UnsupportedFeature, "The loaded model cannot generate text."};
+    return Chorus::validate_llama_request(request);
 }
 
 bool LlamaScheduler::is_healthy() const { return is_running.load(); }
@@ -141,17 +166,16 @@ std::optional<Chorus::RequestRejection> LlamaScheduler::validate_embedding(const
         return Chorus::RequestRejection{Chorus::ChorusError::UnsupportedFeature, "The loaded model cannot produce embeddings."};
     if (request.prompt.empty())
         return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "Embedding prompts must not be empty."};
-    const auto tokens = Chorus::LlamaUtils::tokenize(context, request.prompt, true);
-    if (tokens.empty())
+    const auto tokens = Chorus::LlamaUtils::tokenize_vocabulary(llama_model_get_vocab(model), request.prompt, true);
+    if (!tokens || tokens->empty())
         return Chorus::RequestRejection{Chorus::ChorusError::Tokenize, "Tokenization failed (empty result)."};
-    if (tokens.size() > static_cast<size_t>(_micro_batch_capacity))
+    if (tokens->size() > static_cast<size_t>(_micro_batch_capacity))
         return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "Embedding prompt exceeds the physical micro-batch capacity."};
     return std::nullopt;
 }
 
-bool LlamaScheduler::push_request(const Chorus::ChorusRequest& req) {
+bool LlamaScheduler::push_request(Chorus::ChorusRequest req) {
     auto pending = std::make_shared<PendingRequest>();
-    pending->request = req;
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
         if (!is_running)
@@ -165,6 +189,7 @@ bool LlamaScheduler::push_request(const Chorus::ChorusRequest& req) {
         if (!inserted)
             return false;
         try {
+            pending->request = std::move(req);
             request_queue.push(std::move(pending));
         } catch (...) {
             _terminal_deliveries.erase(delivery);
@@ -283,6 +308,9 @@ LlamaScheduler::PreparedRequestResult LlamaScheduler::prepare_request(PendingReq
         return *rejection;
     if (prepared.tokens.empty())
         return Chorus::RequestRejection{Chorus::ChorusError::Tokenize, "Tokenization failed (empty result)."};
+    if (pending.request.exact_prompt_budget &&
+        static_cast<int64_t>(prepared.tokens.size()) > *pending.request.exact_prompt_budget)
+        return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "Provider rendering exceeds the prepared prompt budget."};
     prepared.sampler = std::get<common_sampler_ptr>(std::move(sampler));
     return prepared;
 }

@@ -1,4 +1,5 @@
 #include "chorus/runtime/runtime.hpp"
+#include "support/runtime_test_utils.hpp"
 #include "support/gtest_utils.hpp"
 #include "support/sync_mock_engine.hpp"
 
@@ -40,7 +41,7 @@ TEST(ChatHistory, accepted_turn_reports_and_stores_reserved_ids) {
     ASSERT_TRUE(submitted.ok());
     ASSERT_EQ(submitted.request_message_id, 0);
     ASSERT_EQ(submitted.response_message_id, 1);
-    const auto events = runtime.poll();
+    const auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.back().message_id, 1);
     const auto history = runtime.export_conversation_history("npc");
     ASSERT_EQ(history.size(), 2U);
@@ -63,7 +64,7 @@ TEST(ChatHistory, imported_ids_advance_the_mint_and_exhaust_the_final_pair) {
     ASSERT_TRUE(final_pair.ok());
     ASSERT_EQ(final_pair.request_message_id, maximum - 1);
     ASSERT_EQ(final_pair.response_message_id, maximum);
-    runtime.poll();
+    drain_runtime_events(runtime);
 
     request.session_id = "exhausted";
     const auto exhausted = runtime.submit(request);
@@ -81,7 +82,7 @@ TEST(ChatHistory, failed_first_turn_keeps_empty_history_and_outcome) {
     request.session_id = "absent";
     request.prompt = "new";
     ASSERT_TRUE(runtime.submit(request).ok());
-    runtime.poll();
+    drain_runtime_events(runtime);
     const auto sessions = runtime.list_conversations();
     ASSERT_EQ(sessions.size(), 1U);
     ASSERT_EQ(sessions[0], "absent");
@@ -91,7 +92,7 @@ TEST(ChatHistory, failed_first_turn_keeps_empty_history_and_outcome) {
     ASSERT_FALSE(runtime.import_conversation_history("imported-empty", {}).has_value());
     request.session_id = "imported-empty";
     ASSERT_TRUE(runtime.submit(request).ok());
-    runtime.poll();
+    drain_runtime_events(runtime);
     ASSERT_TRUE(runtime.export_conversation_history("imported-empty").empty());
 }
 
@@ -108,7 +109,7 @@ TEST(ChatHistory, cancelled_first_turn_keeps_empty_history_and_outcome) {
     const auto submitted = runtime.submit(request);
     ASSERT_TRUE(submitted.ok());
     ASSERT_TRUE(runtime.cancel(submitted.request_id));
-    const auto events = runtime.poll();
+    const auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 1U);
     ASSERT_EQ(events[0].error, ChorusError::Cancelled);
     ASSERT_TRUE(runtime.export_conversation_history("cancelled").empty());
@@ -126,7 +127,7 @@ TEST(ChatHistory, failed_turn_erases_exact_pending_id) {
     request.session_id = "npc";
     request.prompt = "new";
     ASSERT_TRUE(runtime.submit(request).ok());
-    runtime.poll();
+    drain_runtime_events(runtime);
     const auto history = runtime.export_conversation_history("npc");
     ASSERT_EQ(history.size(), 1U);
     ASSERT_EQ(history[0].id, 77);
@@ -144,7 +145,7 @@ TEST(ChatHistory, regeneration_reuses_assistant_identity_and_restores_on_error) 
     ASSERT_TRUE(submitted.ok());
     ASSERT_FALSE(submitted.request_message_id.has_value());
     ASSERT_EQ(submitted.response_message_id, 5);
-    runtime.poll();
+    drain_runtime_events(runtime);
     const auto history = runtime.export_conversation_history("npc");
     ASSERT_EQ(history.back().id, 5);
     ASSERT_EQ(text(history.back()), "reply");
@@ -164,7 +165,7 @@ TEST(ChatHistory, successful_regeneration_replaces_content_without_changing_iden
     const auto submitted = runtime.regenerate(request);
     ASSERT_TRUE(submitted.ok());
     ASSERT_EQ(submitted.response_message_id, 5);
-    const auto events = runtime.poll();
+    const auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 1U);
     ASSERT_EQ(events[0].message_id, 5);
     const auto history = runtime.export_conversation_history("npc");
@@ -188,7 +189,7 @@ TEST(ChatHistory, regeneration_restores_the_exact_reply_after_cancellation) {
     const auto submitted = runtime.regenerate(request);
     ASSERT_TRUE(submitted.ok());
     ASSERT_TRUE(runtime.cancel(submitted.request_id));
-    const auto events = runtime.poll();
+    const auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events.size(), 1U);
     ASSERT_EQ(events[0].error, ChorusError::Cancelled);
     const auto history = runtime.export_conversation_history("npc");
