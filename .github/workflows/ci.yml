@@ -8,7 +8,12 @@ on:
       - '**/*.hpp'
       - '**/CMakeLists.txt'
       - 'CMakePresets.json'
-      - 'llama.cpp/**'
+      - 'third-party/llama.cpp'
+      - 'SConstruct'
+      - 'patches/**'
+      - '.gitattributes'
+      - 'tools/materialize_llama.py'
+      - '.gitmodules'
       - 'godot-cpp/**'
       - '.github/workflows/ci.yml'
   pull_request:

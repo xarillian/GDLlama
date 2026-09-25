@@ -1,1 +1,2 @@
 * text=auto
+patches/*.patch text eol=lf

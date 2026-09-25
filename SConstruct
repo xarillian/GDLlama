@@ -3,6 +3,8 @@ import os
 import sys
 import subprocess
 from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, Glob, SConscript, Value
+sys.dont_write_bytecode = True
+from tools.materialize_llama import materialize
 
 needs_googletest = any(target in COMMAND_LINE_TARGETS for target in ("test", "compiledb"))
 required_submodules = ["godot-cpp", "llama.cpp"]
@@ -35,9 +37,15 @@ llama_variant = "-".join(llama_variant_parts) or "cpu"
 llama_platform = str(env["platform"])
 llama_arch = str(env.get("arch", "unknown") or "unknown")
 llama_build_identity = f"{llama_platform}-{llama_arch}"
+try:
+    llama_source_dir, llama_revision, llama_patch_identity = materialize()
+except (OSError, subprocess.CalledProcessError, RuntimeError) as error:
+    raise SystemExit(f">>> [SCons] llama.cpp materialization failed: {error}")
 llama_build_dir = os.path.join(
-    "third-party", "llama.cpp", "build", "chorus", llama_build_identity, llama_variant
+    "bin", "vendor-build", "llama.cpp", llama_revision + "-" + llama_patch_identity,
+    llama_build_identity, llama_variant
 )
+print(f">>> [SCons] llama.cpp source: {llama_source_dir}")
 print(f">>> [SCons] llama.cpp variant: {os.path.abspath(llama_build_dir)}")
 
 if host_test:
@@ -115,12 +123,8 @@ env.Append(CPPPATH=["include", "src"])
 # Vendor headers are scoped to the llama provider and its tests. An include
 # from an inner layer or host adapter fails at compile time.
 llama_cpppath = [
-    "third-party/llama.cpp/include",
-    "third-party/llama.cpp/common",
-    "third-party/llama.cpp/src",
-    "third-party/llama.cpp/ggml/include",
-    "third-party/llama.cpp/ggml/src",
-    "third-party/llama.cpp/vendor",  # nlohmann/json, vendored inside llama.cpp
+    str(llama_source_dir / directory)
+    for directory in ("include", "common", "src", "ggml/include", "ggml/src", "vendor")
 ]
 
 googletest_cpppath = [
@@ -187,18 +191,8 @@ def make_chorus_c_build_env(base_env):
     return chorus_c_env
 
 # llama.cpp dependency
-def discover_llama_revision():
-    try:
-        return subprocess.check_output(
-            ["git", "-C", "third-party/llama.cpp", "rev-parse", "HEAD"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-    except (subprocess.CalledProcessError, OSError):
-        return "unknown"
-
 def build_llama_with_cmake(target, source, env):
-    source_dir = os.path.abspath("third-party/llama.cpp")
+    source_dir = str(llama_source_dir)
     build_dir = os.path.abspath(env["llama_build_dir"])
 
     cmake_config = [
@@ -211,7 +205,10 @@ def build_llama_with_cmake(target, source, env):
         "-DLLAMA_BUILD_EXAMPLES=OFF",
         "-DLLAMA_BUILD_SERVER=OFF",
         "-DLLAMA_CURL=OFF",
-        "-DGGML_NATIVE=ON"
+        "-DGGML_NATIVE=ON",
+        f"-DLLAMA_BUILD_COMMIT={llama_revision[:12]}-chorus-{llama_patch_identity}",
+        f"-DGGML_BUILD_COMMIT={llama_revision[:12]}-chorus-{llama_patch_identity}",
+        "-DLLAMA_BUILD_NUMBER=0",
     ]
 
     targets_to_build = ["llama", "llama-common"]
@@ -278,13 +275,12 @@ if use_metal and env["platform"] == "macos":
 if use_vulkan:
     llama_libs.append("ggml-vulkan")
 
-llama_revision = discover_llama_revision()
 llama_build_signature = Value(
-    f"revision={llama_revision};variant={llama_variant};platform={env['platform']};arch={env.get('arch', '')}"
+    f"revision={llama_revision};patch={llama_patch_identity};variant={llama_variant};platform={env['platform']};arch={env.get('arch', '')}"
 )
 cmake_target = env.Command(
     target=llama_lib_trigger,
-    source=[llama_build_signature],
+    source=[llama_build_signature, "patches/llama-resource-cleanup.patch", "tools/materialize_llama.py"],
     action=build_llama_with_cmake
 )
 

@@ -29,9 +29,9 @@ jobs:
       run: |
         cd third-party/llama.cpp
         git fetch
-        git reset --hard origin/master
+        git checkout --detach origin/master
 
-    - name: Build
+    - name: Build (fails if the maintained upload patch no longer applies)
       run: scons test -j4
 
     # Disabled test running.

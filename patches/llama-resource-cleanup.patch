@@ -1,0 +1,156 @@
+diff --git a/ggml/CMakeLists.txt b/ggml/CMakeLists.txt
+index 752dabbb6..2afe4e367 100644
+--- a/ggml/CMakeLists.txt
++++ b/ggml/CMakeLists.txt
+@@ -10,6 +10,7 @@ set(GGML_VERSION_BASE "${GGML_VERSION_MAJOR}.${GGML_VERSION_MINOR}.${GGML_VERSIO
+ 
+ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/")
+ 
++if(NOT DEFINED GGML_BUILD_COMMIT)
+ find_program(GIT_EXE NAMES git git.exe NO_CMAKE_FIND_ROOT_PATH)
+ if(GIT_EXE)
+     # Get current git commit hash
+@@ -28,6 +29,8 @@ if(GIT_EXE)
+     )
+ endif()
+ 
++endif()
++
+ set(GGML_VERSION "${GGML_VERSION_BASE}")
+ 
+ if(NOT GGML_BUILD_COMMIT)
+diff --git a/src/llama-batch.cpp b/src/llama-batch.cpp
+index 89a1f3f37..39c8b501a 100644
+--- a/src/llama-batch.cpp
++++ b/src/llama-batch.cpp
+@@ -9,6 +9,7 @@
+ 
+ #include <cassert>
+ #include <cstring>
++#include <memory>
+ #include <algorithm>
+ #include <sstream>
+ 
+@@ -1315,8 +1316,9 @@ void llama_batch_compat::init(llama_batch_ext & dst, const llama_batch & batch_i
+ }
+ 
+ llama_batch_compat::llama_batch_compat(llama_context * ctx, const llama_batch & batch_inp, size_t n_embd_row) {
+-    batch_ext = new llama_batch_ext(ctx);
+-    init(*batch_ext, batch_inp, n_embd_row);
++    auto owned = std::make_unique<llama_batch_ext>(ctx);
++    init(*owned, batch_inp, n_embd_row);
++    batch_ext = owned.release();
+ }
+ 
+ llama_batch_compat::~llama_batch_compat() {
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 43c396f15..c7c427ed7 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1519,11 +1519,43 @@ bool llama_model_loader::load_all_data(
+     // 64MB works well for NVMe drives
+     const size_t buffer_size = alignment != 1 ? 64 * 1024 * 1024 + 2 * alignment : 1 * 1024 * 1024;
+ 
+-    std::vector<ggml_backend_buffer_t> host_buffers;
+-    std::vector<ggml_backend_event_t> events;
+-    std::vector<void *> host_ptrs;
++    struct upload_resources {
++        std::vector<ggml_backend_buffer_t> host_buffers;
++        std::vector<ggml_backend_event_t> events;
++        std::vector<void *> host_ptrs;
++        ggml_backend_t backend = nullptr;
++
++        ~upload_resources() { cleanup(); }
++
++        void cleanup() {
++            if (backend) {
++                ggml_backend_synchronize(backend);
++            }
++            for (auto * event : events) {
++                if (event) {
++                    ggml_backend_event_synchronize(event);
++                    ggml_backend_event_free(event);
++                }
++            }
++            events.clear();
++            for (auto * buffer : host_buffers) {
++                if (buffer) {
++                    ggml_backend_buffer_free(buffer);
++                }
++            }
++            host_buffers.clear();
++            if (backend) {
++                ggml_backend_free(backend);
++                backend = nullptr;
++            }
++        }
++    } upload;
++    auto & host_buffers = upload.host_buffers;
++    auto & events = upload.events;
++    auto & host_ptrs = upload.host_ptrs;
++    auto & upload_backend = upload.backend;
+     size_t buffer_idx = 0; // buffer to use for async loads
+-    ggml_backend_t upload_backend = [&](const char * func) -> ggml_backend_t {
++    upload_backend = [&](const char * func) -> ggml_backend_t {
+         if (use_mmap || check_tensors) {
+             return nullptr;
+         }
+@@ -1566,25 +1598,25 @@ bool llama_model_loader::load_all_data(
+ 
+         // If the backend is supported, create pinned memory buffers and events for synchronisation.
+         for (size_t idx = 0; idx < n_buffers; ++idx) {
+-            auto * buf = ggml_backend_buft_alloc_buffer(host_buft, buffer_size);
++            host_buffers.emplace_back(nullptr);
++            host_buffers.back() = ggml_backend_buft_alloc_buffer(host_buft, buffer_size);
+ 
+-            if (!buf) {
++            if (!host_buffers.back()) {
+                 LLAMA_LOG_DEBUG("%s: failed to allocate host buffer for async uploads for device %s\n", func,
+                     ggml_backend_dev_name(dev));
+                 return nullptr;
+             }
+ 
+-            host_buffers.emplace_back(buf);
+-            host_ptrs.emplace_back(ggml_backend_buffer_get_base(buf));
++            host_ptrs.emplace_back(ggml_backend_buffer_get_base(host_buffers.back()));
+ 
+-            auto * event = ggml_backend_event_new(dev);
+-            if (!event) {
++            events.emplace_back(nullptr);
++            events.back() = ggml_backend_event_new(dev);
++            if (!events.back()) {
+                 LLAMA_LOG_DEBUG("%s: failed to create event for async uploads for device %s\n", func,
+                     ggml_backend_dev_name(dev));
+                 return nullptr;
+             }
+ 
+-            events.emplace_back(event);
+         }
+ 
+         ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
+@@ -1594,6 +1626,7 @@ bool llama_model_loader::load_all_data(
+             return nullptr;
+         }
+ 
++        upload_backend = backend;
+         return backend;
+     }(__func__);
+ 
+@@ -1749,16 +1782,7 @@ bool llama_model_loader::load_all_data(
+ 
+         size_done += n_size;
+     }
+-
+-    // free temporary resources used for async uploads
+-    for (auto * event : events) {
+-        ggml_backend_event_synchronize(event);
+-        ggml_backend_event_free(event);
+-    }
+-    for (auto * buf : host_buffers) {
+-        ggml_backend_buffer_free(buf);
+-    }
+-    ggml_backend_free(upload_backend);
++    upload.cleanup();
+ 
+     // check validation results
+     bool validation_failed = false;

@@ -26,6 +26,8 @@ scons use_metal=yes
 
 Build artifacts are written to `bin/`. The full `just check` suite also runs real-model tests and expects `tests/models/gemma-3-270m-it-F16.gguf`.
 
+The pinned llama.cpp source is kept clean. `SConstruct` reconstructs it in `bin/vendor/llama.cpp/` and applies `patches/llama-resource-cleanup.patch` before compiling either backend or the provider. The patch closes the non-mmap asynchronous upload cleanup gap on cancellation, partial setup, and exceptions; it also releases a partially constructed compatibility batch when conversion allocation fails and preserves the correct GGML revision when CMake runs beneath the Chorus checkout. The source tree and CMake build identity include the vendor revision and patch/helper bytes. A patch conflict or dirty tracked submodule fails the build rather than using unpatched code. `.gitattributes` keeps the patch LF even in CRLF-configured checkouts, matching Git's pristine vendor archive. For an upstream revision change, check out the public revision in `third-party/llama.cpp`, rebase the three-file patch against it, and rerun both CPU and Vulkan build/tests plus the upload probe. Do not commit a local-only vendor revision. The weekly latest-llama canary intentionally fails if the patch drifts. On a Linux Vulkan machine with the existing GGUF fixture, `scons test use_vulkan=yes -j2` followed by `python tools/run_vendor_upload_probe.py` checks repeated upload cancellation, final cancellation, decode, bounded partial-setup failures, and conversion allocation faults against the exact built archive. The probe uses non-mmap loading only within the test; Chorus production defaults are unchanged.
+
 ### Godot
 
 To build and stage the addon for Godot 4.4 or newer on Linux or Windows, run:
