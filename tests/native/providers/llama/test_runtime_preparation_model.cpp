@@ -77,7 +77,7 @@ TEST_F(RuntimePreparationModelTest, Literal_counts_match_independent_vendor_toke
     ChorusRuntime runtime;
     auto engine = std::make_unique<ObservedLlamaEngine>();
     auto observer = engine->observation;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), preparation_config()).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), preparation_config()).ok());
     ASSERT_TRUE(runtime.capabilities()->message_token_counting);
     for (size_t i = 0; i < content.size(); ++i) {
         auto submitted = runtime.count_message_tokens(MessageContent::text(content[i]));
@@ -99,7 +99,7 @@ TEST_F(RuntimePreparationModelTest, Literal_counts_match_independent_vendor_toke
 
 TEST_F(RuntimePreparationModelTest, Scheduler_checks_actual_render_budget_before_prefill_and_preserves_render_errors) {
     LlamaEngine engine;
-    ASSERT_FALSE(engine.initialize(preparation_config(), {}).has_value());
+    ASSERT_FALSE(engine.initialize(preparation_config(), {}, {}).has_value());
     auto service = engine.request_preparation();
     std::vector<ChatMessage> messages{{MessageRole::User, MessageContent::text("Tell me about the village.")}};
     auto error = service->render_chat_prompt(messages, "{{ raise_exception('specific failure') }}", true);
@@ -142,7 +142,7 @@ TEST_F(RuntimePreparationModelTest, Changed_provider_render_after_preparation_fa
         }
     };
     ChorusRuntime runtime;
-    ASSERT_FALSE(runtime.load_engine(std::make_unique<ChangedTemplateEngine>(), preparation_config()).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::make_unique<ChangedTemplateEngine>(), preparation_config()).ok());
     GenerationRequest request;
     request.session_id = "changed-template";
     request.prompt = "Hello";
@@ -164,7 +164,7 @@ TEST_F(RuntimePreparationModelTest, Reports_separate_host_admission_completion_a
         ChorusRuntime runtime;
         auto engine = std::make_unique<ObservedLlamaEngine>();
         auto work = engine->observation;
-        ASSERT_FALSE(runtime.load_engine(std::move(engine), preparation_config()).has_value());
+        ASSERT_TRUE(load_runtime(runtime, std::move(engine), preparation_config()).ok());
         std::vector<ConversationMessage> history{{0, {MessageRole::System, MessageContent::text("You are the village blacksmith.")}}};
         for (int i = 0; i < turns; ++i) {
             const std::string padding = i < turns / 2 ? std::string(old_bytes, 'x') : std::string{};

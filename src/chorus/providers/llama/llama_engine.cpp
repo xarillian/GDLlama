@@ -29,7 +29,7 @@ LlamaEngine::~LlamaEngine() {
     shutdown();
 }
 
-std::optional<InitializationFailure> LlamaEngine::initialize(const ChorusConfig& config, Logger logger) {
+std::optional<InitializationFailure> LlamaEngine::initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) {
     bool holds_dead_scheduler = false;
     {
         std::lock_guard<std::mutex> lock(_lifecycle_mutex);
@@ -44,6 +44,9 @@ std::optional<InitializationFailure> LlamaEngine::initialize(const ChorusConfig&
         shutdown();
     }
 
+    if (control.stop_token.stop_requested())
+        return InitializationFailure{ChorusError::Cancelled, "Llama initialization cancelled."};
+
     if (config.model.format != ModelFormat::Gguf && config.model.format != ModelFormat::Auto) {
         _log.error("Engine loads GGUF only", {{"model", config.model.model_id}});
         return InitializationFailure{ChorusError::UnsupportedModelFormat, "This engine loads GGUF models only."};
@@ -52,12 +55,16 @@ std::optional<InitializationFailure> LlamaEngine::initialize(const ChorusConfig&
     try {
         auto next_scheduler = std::make_shared<LlamaScheduler>();
 
-        auto err = next_scheduler->initialize(config, _log);
+        auto err = next_scheduler->initialize(config, _log, control);
         if (err.has_value()) {
             _log.error("Scheduler failed to initialize");
             return err;
         }
 
+        if (control.stop_token.stop_requested()) {
+            next_scheduler->shutdown();
+            return InitializationFailure{ChorusError::Cancelled, "Llama initialization cancelled."};
+        }
         {
             std::lock_guard<std::mutex> lock(_lifecycle_mutex);
             _scheduler = std::move(next_scheduler);
@@ -66,6 +73,9 @@ std::optional<InitializationFailure> LlamaEngine::initialize(const ChorusConfig&
     } catch (const std::exception& e) {
         _log.error("Exception during initialization", {{"detail", e.what()}});
         return InitializationFailure{ChorusError::Unknown, e.what()};
+    } catch (...) {
+        _log.error("Unknown exception during initialization");
+        return InitializationFailure{ChorusError::Unknown, "Llama initialization failed."};
     }
 }
 

@@ -10,8 +10,31 @@ LlamaScheduler::~LlamaScheduler() {
     shutdown();
 }
 
-bool LlamaScheduler::load_model_from_file(const Chorus::LlamaLoadConfig& config) {
-    model = llama_model_load_from_file(config.weights_path.c_str(), Chorus::make_llama_model_params(config, _no_offload_devices));
+bool LlamaScheduler::load_model_from_file(const Chorus::LlamaLoadConfig& config, const Chorus::InitializationControl& control,
+                                          bool& callback_cancelled, bool& callback_failed) {
+    struct ProgressState {
+        const Chorus::InitializationControl& control;
+        bool& cancelled;
+        bool& failed;
+    } state{control, callback_cancelled, callback_failed};
+    auto params = Chorus::make_llama_model_params(config, _no_offload_devices);
+    params.progress_callback = [](float fraction, void* user_data) noexcept -> bool {
+        auto& progress = *static_cast<ProgressState*>(user_data);
+        try {
+            if (progress.control.on_progress)
+                progress.control.on_progress({Chorus::LoadPhase::LoadingModel, fraction});
+        } catch (...) {
+            progress.failed = true;
+            return false;
+        }
+        if (progress.control.stop_token.stop_requested()) {
+            progress.cancelled = true;
+            return false;
+        }
+        return true;
+    };
+    params.progress_callback_user_data = &state;
+    model = llama_model_load_from_file(config.weights_path.c_str(), params);
     if (!model)
         _log.error("Failed to load model weights", {{"path", config.weights_path}});
     return model != nullptr;
@@ -25,63 +48,101 @@ bool LlamaScheduler::init_context(const Chorus::LlamaLoadConfig& config) {
 }
 
 std::optional<Chorus::InitializationFailure>
-LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) {
+LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger, const Chorus::InitializationControl& control) {
     _log = std::move(logger);
-    _llama_log_bridge = Chorus::LlamaLogBridge::acquire(_log);
-    auto parsed = Chorus::parse_llama_load_config(config);
-    if (auto* rejection = std::get_if<Chorus::RequestRejection>(&parsed))
-        return Chorus::InitializationFailure{rejection->error, rejection->message};
-    const auto& load_config = std::get<Chorus::LlamaLoadConfig>(parsed);
-    if (!load_model_from_file(load_config))
-        return Chorus::InitializationFailure{Chorus::ChorusError::ModelLoad, "Failed to load model weights."};
-    if (!init_context(load_config)) {
-        shutdown();
-        return Chorus::InitializationFailure{Chorus::ChorusError::ContextInit, "Failed to create the inference context."};
-    }
-
-    _batch_capacity = static_cast<int32_t>(llama_n_batch(context));
-    _micro_batch_capacity = static_cast<int32_t>(llama_n_ubatch(context));
-    _max_concurrent_requests = load_config.max_concurrent_requests;
-    if (_max_concurrent_requests > static_cast<uint32_t>(_batch_capacity)) {
-        const std::string message = "This model configuration supports at most " + std::to_string(_batch_capacity) +
-                                    " concurrent requests; requested " + std::to_string(_max_concurrent_requests) + ".";
-        shutdown();
-        return Chorus::InitializationFailure{Chorus::ChorusError::UnsupportedOption, message};
-    }
-    _pooling = llama_pooling_type(context);
-    _embedding_dimensions = llama_model_n_embd_out(model);
-    _has_encoder = llama_model_has_encoder(model);
-    _has_decoder = llama_model_has_decoder(model);
-    if (_pooling == LLAMA_POOLING_TYPE_RANK) {
-        shutdown();
-        return Chorus::InitializationFailure{Chorus::ChorusError::UnsupportedFeature, "The model's rank pooling is not an embedding output."};
-    }
-    batch.initialize(_batch_capacity, 0, _max_concurrent_requests);
-    _sequence_ids.reset(static_cast<int>(_max_concurrent_requests));
-
-    Chorus::LoadedModelInfo info;
-    info.model_id = config.model.model_id;
-    info.format = Chorus::ModelFormat::Gguf;
-    info.family = Chorus::LlamaUtils::model_metadata(model, "general.architecture");
-    info.quantization = Chorus::LlamaUtils::model_description(model);
-    info.maximum_context = static_cast<uint32_t>(llama_model_n_ctx_train(model));
-    info.per_request_context = static_cast<uint32_t>(llama_n_ctx(context) / _max_concurrent_requests);
-    info.model_bytes = llama_model_size(model);
-    info.input_modalities = {Chorus::Modality::Text};
-    info.output_modalities = {Chorus::Modality::Text};
-    _model_info = std::move(info);
     try {
-        _model_default_chat_templates = common_chat_templates_init(model, "");
-    } catch (const std::exception& e) {
-        _log.warn("Chat templates unavailable", {{"detail", e.what()}});
+        _llama_log_bridge = Chorus::LlamaLogBridge::acquire(_log);
+        const auto cancelled = [] { return Chorus::InitializationFailure{Chorus::ChorusError::Cancelled, "Llama initialization cancelled."}; };
+        const auto fail = [this](Chorus::InitializationFailure failure) {
+            shutdown();
+            return failure;
+        };
+        if (control.stop_token.stop_requested())
+            return fail(cancelled());
+        auto parsed = Chorus::parse_llama_load_config(config);
+        if (auto* rejection = std::get_if<Chorus::RequestRejection>(&parsed))
+            return fail({rejection->error, rejection->message});
+        if (control.stop_token.stop_requested())
+            return fail(cancelled());
+        if (control.on_progress)
+            control.on_progress({Chorus::LoadPhase::LoadingModel, std::nullopt});
+        const auto& load_config = std::get<Chorus::LlamaLoadConfig>(parsed);
+        bool callback_cancelled = false;
+        bool callback_failed = false;
+        if (!load_model_from_file(load_config, control, callback_cancelled, callback_failed)) {
+            if (callback_failed)
+                return fail({Chorus::ChorusError::Unknown, "Model progress callback failed."});
+            if (callback_cancelled || control.stop_token.stop_requested())
+                return fail(cancelled());
+            return fail({Chorus::ChorusError::ModelLoad, "Failed to load model weights."});
+        }
+        if (callback_failed)
+            return fail({Chorus::ChorusError::Unknown, "Model progress callback failed."});
+        if (control.stop_token.stop_requested())
+            return fail(cancelled());
+        if (control.on_progress)
+            control.on_progress({Chorus::LoadPhase::InitializingEngine, std::nullopt});
+        if (control.stop_token.stop_requested())
+            return fail(cancelled());
+        if (!init_context(load_config))
+            return fail(control.stop_token.stop_requested()
+                            ? cancelled()
+                            : Chorus::InitializationFailure{Chorus::ChorusError::ContextInit,
+                                                            "Failed to create the inference context."});
+        if (control.stop_token.stop_requested())
+            return fail(cancelled());
+
+        _batch_capacity = static_cast<int32_t>(llama_n_batch(context));
+        _micro_batch_capacity = static_cast<int32_t>(llama_n_ubatch(context));
+        _max_concurrent_requests = load_config.max_concurrent_requests;
+        if (_max_concurrent_requests > static_cast<uint32_t>(_batch_capacity)) {
+            const std::string message = "This model configuration supports at most " + std::to_string(_batch_capacity) +
+                                        " concurrent requests; requested " + std::to_string(_max_concurrent_requests) + ".";
+            return fail({Chorus::ChorusError::UnsupportedOption, message});
+        }
+        _pooling = llama_pooling_type(context);
+        _embedding_dimensions = llama_model_n_embd_out(model);
+        _has_encoder = llama_model_has_encoder(model);
+        _has_decoder = llama_model_has_decoder(model);
+        if (_pooling == LLAMA_POOLING_TYPE_RANK) {
+            return fail({Chorus::ChorusError::UnsupportedFeature, "The model's rank pooling is not an embedding output."});
+        }
+        if (control.stop_token.stop_requested())
+            return fail(cancelled());
+        batch.initialize(_batch_capacity, 0, _max_concurrent_requests);
+        _sequence_ids.reset(static_cast<int>(_max_concurrent_requests));
+
+        Chorus::LoadedModelInfo info;
+        info.model_id = config.model.model_id;
+        info.format = Chorus::ModelFormat::Gguf;
+        info.family = Chorus::LlamaUtils::model_metadata(model, "general.architecture");
+        info.quantization = Chorus::LlamaUtils::model_description(model);
+        info.maximum_context = static_cast<uint32_t>(llama_model_n_ctx_train(model));
+        info.per_request_context = static_cast<uint32_t>(llama_n_ctx(context) / _max_concurrent_requests);
+        info.model_bytes = llama_model_size(model);
+        info.input_modalities = {Chorus::Modality::Text};
+        info.output_modalities = {Chorus::Modality::Text};
+        _model_info = std::move(info);
+        try {
+            _model_default_chat_templates = common_chat_templates_init(model, "");
+        } catch (const std::exception& e) {
+            _log.warn("Chat templates unavailable", {{"detail", e.what()}});
+        }
+        if (control.stop_token.stop_requested())
+            return fail(cancelled());
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            is_running = true;
+            _cancel_requested.clear();
+        }
+        worker_thread = std::thread(&LlamaScheduler::worker_loop, this);
+        if (control.stop_token.stop_requested())
+            return fail(cancelled());
+        return std::nullopt;
+    } catch (...) {
+        shutdown();
+        throw;
     }
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        is_running = true;
-        _cancel_requested.clear();
-    }
-    worker_thread = std::thread(&LlamaScheduler::worker_loop, this);
-    return std::nullopt;
 }
 
 void LlamaScheduler::shutdown() {

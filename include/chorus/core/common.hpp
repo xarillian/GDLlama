@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <stop_token>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -37,6 +38,18 @@ enum class RequestType { Generate, Embedding };
 enum class ExecutionMode { Shared, Exclusive };
 
 enum class TokenChannel { Content, Reasoning };
+
+enum class LoadPhase { ReleasingEngine, LoadingModel, InitializingEngine };
+
+struct LoadProgress {
+    LoadPhase phase = LoadPhase::LoadingModel;
+    std::optional<float> fraction;
+};
+
+struct InitializationControl {
+    std::stop_token stop_token;
+    std::function<void(const LoadProgress&)> on_progress;
+};
 
 /*
  * Engine-wide configuration, fixed for the life of one engine instance.

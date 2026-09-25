@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -82,13 +83,16 @@ struct RuntimeEvent {
         HistoryTruncated,       // Prompt fitting omitted stored history messages; stored history is unchanged.
         EngineFailed,           // Engine-wide failure that does not terminate a request.
         PromptRendered,         // Terminal preview success, with text and omitted IDs.
-        MessageTokenCount       // Terminal literal-content count success.
+        MessageTokenCount,      // Terminal literal-content count success.
+        ModelLoadProgress,
+        ModelLoaded,
+        ModelLoadFailed
     };
 
-    // Accepted request ID, or `-1` for `Chorus::RuntimeEvent::Kind::EngineFailed`.
-    RequestId request_id;
+    // Accepted request ID, or `-1` for engine-wide and load events.
+    RequestId request_id = -1;
 
-    // Absent for stateless requests and `Chorus::RuntimeEvent::Kind::EngineFailed`.
+    // Absent for stateless requests, engine-wide events and load events.
     std::optional<SessionId> session_id;
 
     Kind kind;
@@ -113,6 +117,12 @@ struct RuntimeEvent {
     std::vector<MessageId> omitted_message_ids;
     // Literal content count, valid only for `Chorus::RuntimeEvent::Kind::MessageTokenCount`.
     int64_t token_count = 0;
+
+    // Only load events carry an ID and the admission-time logical model label.
+    // Only `Chorus::RuntimeEvent::Kind::ModelLoadProgress` carries phase progress.
+    std::optional<LoadId> load_id;
+    std::string model_id;
+    std::optional<LoadProgress> load_progress;
 };
 
 /*
@@ -138,6 +148,18 @@ struct SubmitResult {
 };
 
 /*
+ * Reports admission, not readiness. Rejection emits no load events.
+ * An accepted identity remains active until its terminal is polled.
+ */
+struct LoadSubmitResult {
+    LoadId load_id = -1;
+    ChorusError error = ChorusError::None;
+    std::string message;
+
+    bool ok() const { return error == ChorusError::None; }
+};
+
+/*
  * Owns request lifecycle between hosts and an inference engine.
  *
  * Public methods are confined to the first calling thread. Worker callbacks
@@ -152,25 +174,36 @@ class ChorusRuntime {
     ChorusRuntime& operator=(const ChorusRuntime&) = delete;
 
     /*
-     * Replaces the engine and owns its lifetime.
-     *
-     * Live requests receive `Chorus::ChorusError::Cancelled`. The old engine
-     * is destroyed before initialization; failure leaves the runtime unloaded.
-     *
-     * Returns:
-     *  - `std::nullopt`: the engine initialized successfully.
-     *  - `Chorus::ChorusError`: initialization failed.
-     *
-     * Errors:
-     *  - `Chorus::ChorusError::InvalidRequest`: the supplied engine pointer is null.
-     *  - `Chorus::ChorusError::UnsupportedModelFormat`: the provider cannot read the artifact.
-     *  - `Chorus::ChorusError::ModelLoad`: the weights failed to load.
-     *  - `Chorus::ChorusError::ContextInit`: the inference context failed to initialize.
-     *  - `Chorus::ChorusError::UnsupportedOption`: a load option is unsupported.
-     *  - `Chorus::ChorusError::Unknown`: the provider could not classify the failure.
+     * Admits an identified load without waiting for retirement or initialization.
+     * Readiness begins only when `Chorus::ChorusRuntime::poll` publishes success.
+     * Rejection leaves the current engine intact. Acceptance closes old
+     * preparation admission immediately; its fence and engine teardown run
+     * on the lifecycle worker before candidate initialization. During loading,
+     * readiness and effective metadata are absent and new work is rejected.
      */
-    std::optional<InitializationFailure>
-    load_engine(std::unique_ptr<InferenceEngine> engine, const ChorusConfig& config);
+    [[nodiscard]] LoadSubmitResult load_engine(std::unique_ptr<InferenceEngine> engine, const ChorusConfig& config);
+
+    /*
+     * Requests cooperative cancellation without waiting for provider cleanup.
+     * A committed failure or drained load cannot be cancelled. An accepted
+     * cancellation wins over unpublished success and produces one polled
+     * `Chorus::ChorusError::Cancelled` terminal after cleanup finishes.
+     */
+    bool cancel_load(LoadId id);
+
+    /// Returns an outstanding load ID until its terminal is drained.
+    std::optional<LoadId> active_load_id() const;
+#ifdef CHORUS_HOST_TEST
+    void test_hold_next_retirement();
+    bool test_retirement_held() const;
+    void test_release_retirement();
+    void test_fail_next_load_setup();
+    void test_fail_next_worker_start();
+    void test_fail_next_preparation_worker_start();
+    bool test_load_parked(LoadId id) const;
+    bool test_load_committed(LoadId id) const;
+    void test_exhaust_load_ids();
+#endif
 
     // Whether an initialized engine is ready to accept work.
     bool is_loaded() const;
@@ -334,7 +367,7 @@ class ChorusRuntime {
      */
     [[nodiscard]] SubmitResult count_message_tokens(MessageContent content);
 
-    /// Drains buffered engine signals into host-facing events.
+    /// Drains request events and load progress, then publishes an identified load terminal.
     std::vector<RuntimeEvent> poll();
 
     /*
@@ -345,8 +378,8 @@ class ChorusRuntime {
      */
     std::vector<LogRecord> poll_logs();
 
-    /// Stops and destroys the engine. Live requests receive one
-    /// `Chorus::ChorusError::Cancelled` terminal event on a later `Chorus::ChorusRuntime::poll`.
+    /// Blocks until engine and load cleanup are fenced. Live requests and an
+    /// outstanding load receive terminals on a later `Chorus::ChorusRuntime::poll`.
     void stop_all();
 
   private:
@@ -354,15 +387,23 @@ class ChorusRuntime {
     struct Control;
     struct PreparationJob;
     struct PreparationState;
-    void enqueue_signal(const ChorusSignal& signal, const std::shared_ptr<Control>& control);
-    void preparation_loop();
-    void prepare(PreparationJob& job);
-    void publish_error(RequestId id, const std::shared_ptr<Control>& control, ChorusError error, std::string message);
-    void fail_preparation();
+    struct EngineLifetime;
+    struct LoadAttempt;
+    struct LoadingState;
+    void lifecycle_loop();
+    void retire_lifetime(EngineLifetime& lifetime);
+    void append_load_events(std::vector<RuntimeEvent>& events, const std::function<void()>& drain_retiring);
+    static void enqueue_signal(PreparationState& state, const ChorusSignal& signal, const std::shared_ptr<Control>& control);
+    static void preparation_loop(std::shared_ptr<PreparationState> state);
+    static void prepare(PreparationState& state, PreparationJob& job);
+    static void publish_error(PreparationState& state, RequestId id, const std::shared_ptr<Control>& control, ChorusError error, std::string message);
+    static void fail_preparation(PreparationState& state);
     void append_signal_events(const ChorusSignal& signal, std::vector<RuntimeEvent>& events);
     void append_engine_failure(std::vector<RuntimeEvent>& events);
     void unload_engine();
-    void cancel_live_requests();
+    void close_preparation(PreparationState& state);
+    void fence_engine(EngineLifetime& lifetime);
+    void cancel_live_requests(PreparationState& state);
     void retire_request(RequestId id);
 
     SubmitResult not_ready() const;
@@ -389,11 +430,12 @@ class ChorusRuntime {
     SubmitResult admit_generation(const GenerationRequest& request, Operation operation, bool regenerate = false);
     SubmitResult admit(std::unique_ptr<PreparationJob> job, MessageNodePtr replaced_reply = {});
     void finish_turn(const LiveRequest& live, TurnOutcome outcome, const std::string& text);
-    void fit_turn_messages(PreparationJob& job);
+    static void fit_turn_messages(PreparationState& state, PreparationJob& job);
 
     struct LiveRequest {
         Operation operation = Operation::Generate;
         std::shared_ptr<Control> control;
+        std::shared_ptr<PreparationState> preparation;
         bool streaming = false;
         std::string accumulated_text;
         std::optional<SessionId> session_id;
@@ -404,7 +446,16 @@ class ChorusRuntime {
         MessageNodePtr replaced_reply;
     };
 
-    std::unique_ptr<InferenceEngine> _engine;
+    std::unique_ptr<EngineLifetime> _lifetime;
+    std::unique_ptr<LoadingState> _loading;
+    LoadId _next_load_id = 0;
+#ifdef CHORUS_HOST_TEST
+    bool _test_hold_next_retirement = false;
+    bool _test_fail_next_load_setup = false;
+    bool _test_fail_next_worker_start = false;
+    bool _test_fail_next_preparation_worker_start = false;
+#endif
+    std::vector<std::shared_ptr<PreparationState>> _draining_states;
 
     std::shared_ptr<LogChannel> _log_channel = std::make_shared<LogChannel>();
 
@@ -414,7 +465,6 @@ class ChorusRuntime {
 
     RequestId _next_request_id = 0;
     uint64_t _next_content_identity = 0;
-    std::unique_ptr<PreparationState> _preparation;
 
     std::unordered_map<RequestId, LiveRequest> _live_requests;
 

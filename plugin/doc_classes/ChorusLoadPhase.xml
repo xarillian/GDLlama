@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusLoadPhase" inherits="RefCounted" api_type="extension">
+	<brief_description>Phase of an accepted model load.</brief_description>
+	<description>Fractions are optional and refer only to the reported phase, never to total time or readiness.</description>
+	<methods></methods>
+	<members></members>
+	<constants>
+		<constant name="RELEASING_ENGINE" value="0" enum="ChorusLoadPhase.Value">Fencing the previous engine, without fractional progress.</constant>
+		<constant name="LOADING_MODEL" value="1" enum="ChorusLoadPhase.Value">Loading provider assets; a fraction may be available.</constant>
+		<constant name="INITIALIZING_ENGINE" value="2" enum="ChorusLoadPhase.Value">Preparing the engine after weights; currently no fraction.</constant>
+	</constants>
+</class>

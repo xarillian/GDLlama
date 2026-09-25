@@ -23,6 +23,8 @@ void initialize_chorus_module(ModuleInitializationLevel p_level) {
     GDREGISTER_CLASS(ChorusMessage);
     GDREGISTER_CLASS(ChorusRequest);
     GDREGISTER_CLASS(ChorusEmbeddingRequest);
+    GDREGISTER_ABSTRACT_CLASS(ChorusLoadPhase);
+    GDREGISTER_CLASS(ChorusLoadResult);
     GDREGISTER_CLASS(ChorusSubmitResult);
     GDREGISTER_CLASS(ChorusResult);
     GDREGISTER_CLASS(ChorusGenerationDefaults);

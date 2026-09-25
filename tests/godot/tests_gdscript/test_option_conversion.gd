@@ -56,7 +56,7 @@ static func run_tests(parent: Node) -> void:
 	var chorus: GodotChorus = ChorusNodeScene.instantiate()
 	chorus.provider = GodotChorus.PROVIDER_ECHO
 	parent.add_child(chorus)
-	TestReport.check(chorus.load_model(), "expected Echo to load for option conversion tests")
+	await LoadWaiter.load(chorus)
 	var terminal_ids: Array[int] = []
 	chorus.generation_complete.connect(func(id, _session, _message_id, _text, _reasoning): terminal_ids.append(id))
 	chorus.generation_error.connect(func(id, _session, _error, _message): terminal_ids.append(id))

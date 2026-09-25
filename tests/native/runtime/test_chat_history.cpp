@@ -21,7 +21,7 @@ std::string text(const ConversationMessage& item) {
 TEST(ChatHistory, import_is_atomic_and_preserves_ids) {
     ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ASSERT_FALSE(runtime.import_conversation_history("npc", {record(41, MessageRole::System, "persona")}).has_value());
     ASSERT_EQ(runtime.import_conversation_history("npc", {record(9, MessageRole::User, "bad"), record(9, MessageRole::Assistant, "duplicate")}), ChorusError::InvalidRequest);
     const auto history = runtime.export_conversation_history("npc");
@@ -33,7 +33,7 @@ TEST(ChatHistory, accepted_turn_reports_and_stores_reserved_ids) {
     ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->tokens = {"answer"};
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     GenerationRequest request;
     request.session_id = "npc";
     request.prompt = "hello";
@@ -53,7 +53,7 @@ TEST(ChatHistory, accepted_turn_reports_and_stores_reserved_ids) {
 TEST(ChatHistory, imported_ids_advance_the_mint_and_exhaust_the_final_pair) {
     ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     const MessageId maximum = std::numeric_limits<MessageId>::max();
     ASSERT_FALSE(runtime.import_conversation_history("near-limit", {record(maximum - 2, MessageRole::System, "persona")}).has_value());
 
@@ -76,7 +76,7 @@ TEST(ChatHistory, failed_first_turn_keeps_empty_history_and_outcome) {
     ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->fail_submit_with = ChorusError::Decode;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
 
     GenerationRequest request;
     request.session_id = "absent";
@@ -101,7 +101,7 @@ TEST(ChatHistory, cancelled_first_turn_keeps_empty_history_and_outcome) {
     auto engine = std::make_unique<SyncMockEngine>();
     engine->hold_requests = true;
     engine->emit_cancelled_on_cancel = true;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
 
     GenerationRequest request;
     request.session_id = "cancelled";
@@ -121,7 +121,7 @@ TEST(ChatHistory, failed_turn_erases_exact_pending_id) {
     ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->fail_submit_with = ChorusError::Decode;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ASSERT_FALSE(runtime.import_conversation_history("npc", {record(77, MessageRole::User, "old")}).has_value());
     GenerationRequest request;
     request.session_id = "npc";
@@ -137,7 +137,7 @@ TEST(ChatHistory, regeneration_reuses_assistant_identity_and_restores_on_error) 
     ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->fail_submit_with = ChorusError::Decode;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ASSERT_FALSE(runtime.import_conversation_history("npc", {record(4, MessageRole::User, "old"), record(5, MessageRole::Assistant, "reply")}).has_value());
     GenerationRequest request;
     request.session_id = "npc";
@@ -155,7 +155,7 @@ TEST(ChatHistory, successful_regeneration_replaces_content_without_changing_iden
     ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->tokens = {"rerolled"};
-    runtime.load_engine(std::move(engine), {});
+    load_runtime(runtime, std::move(engine), {});
     ASSERT_FALSE(runtime.import_conversation_history("npc", {
         record(4, MessageRole::User, "old"), record(5, MessageRole::Assistant, "reply")
     }).has_value());
@@ -179,7 +179,7 @@ TEST(ChatHistory, regeneration_restores_the_exact_reply_after_cancellation) {
     auto engine = std::make_unique<SyncMockEngine>();
     engine->hold_requests = true;
     engine->emit_cancelled_on_cancel = true;
-    runtime.load_engine(std::move(engine), {});
+    load_runtime(runtime, std::move(engine), {});
     ASSERT_FALSE(runtime.import_conversation_history("npc", {
         record(4, MessageRole::User, "old"), record(5, MessageRole::Assistant, "reply")
     }).has_value());
@@ -202,7 +202,7 @@ TEST(ChatHistory, regeneration_restores_the_exact_reply_after_cancellation) {
 TEST(ChatHistory, edit_addresses_id_and_keeps_role) {
     ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ASSERT_FALSE(runtime.import_conversation_history("npc", {record(42, MessageRole::Assistant, "old")}).has_value());
     ASSERT_FALSE(runtime.edit_message("npc", 42, MessageContent::text("new")).has_value());
     ASSERT_EQ(runtime.edit_message("npc", 43, MessageContent::text("bad")), ChorusError::InvalidRequest);

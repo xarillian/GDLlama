@@ -26,6 +26,30 @@ BIND_NAMESPACE(ChorusConstraintFormat,
     BIND_ENUM_CONSTANT(GBNF); BIND_ENUM_CONSTANT(JSON_SCHEMA); BIND_ENUM_CONSTANT(REGEX); BIND_ENUM_CONSTANT(LARK);
 )
 
+BIND_NAMESPACE(ChorusLoadPhase,
+    BIND_ENUM_CONSTANT(RELEASING_ENGINE); BIND_ENUM_CONSTANT(LOADING_MODEL); BIND_ENUM_CONSTANT(INITIALIZING_ENGINE);
+)
+
+int64_t ChorusLoadResult::get_load_id() const { return _load_id; }
+int ChorusLoadResult::get_error() const { return _error; }
+String ChorusLoadResult::get_message() const { return _message; }
+bool ChorusLoadResult::get_accepted() const { return _load_id >= 0 && _error == 0; }
+void ChorusLoadResult::set_result(int64_t load_id, int error, const String& message) {
+    _load_id = load_id;
+    _error = error;
+    _message = message;
+}
+void ChorusLoadResult::_bind_methods() {
+    ClassDB::bind_method(D_METHOD("get_load_id"), &ChorusLoadResult::get_load_id);
+    ClassDB::bind_method(D_METHOD("get_error"), &ChorusLoadResult::get_error);
+    ClassDB::bind_method(D_METHOD("get_message"), &ChorusLoadResult::get_message);
+    ClassDB::bind_method(D_METHOD("get_accepted"), &ChorusLoadResult::get_accepted);
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "load_id", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_load_id");
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "error", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY, "GodotChorus.ErrorCode"), "", "get_error");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "message", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_message");
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "accepted", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_accepted");
+}
+
 void ChorusInferenceRequest::set_content(const String& value) { _content = value; }
 String ChorusInferenceRequest::get_content() const { return _content; }
 void ChorusInferenceRequest::set_session(const StringName& value) { _session = value; }

@@ -71,8 +71,7 @@ void ChorusRuntime::PreparationState::clear_caches() {
     content_bytes = 0;
 }
 
-void ChorusRuntime::fit_turn_messages(PreparationJob& job) {
-    auto& state = *_preparation;
+void ChorusRuntime::fit_turn_messages(PreparationState& state, PreparationJob& job) {
     HistoryNodes nodes = *job.history;
     if (job.pending)
         nodes.push_back(job.pending);
@@ -177,8 +176,7 @@ void ChorusRuntime::fit_turn_messages(PreparationJob& job) {
     throw RequestRejection{ChorusError::InvalidRequest, "Conversation does not fit the context window even after truncation."};
 }
 
-void ChorusRuntime::prepare(PreparationJob& job) {
-    auto& state = *_preparation;
+void ChorusRuntime::prepare(PreparationState& state, PreparationJob& job) {
     check_cancelled(job.control->cancelled);
     if (job.operation == Operation::Count) {
         auto text = joined_text(job.content);
@@ -188,7 +186,7 @@ void ChorusRuntime::prepare(PreparationJob& job) {
     } else {
         if (job.operation != Operation::Embed) {
             if (job.history)
-                fit_turn_messages(job);
+                fit_turn_messages(state, job);
             else
                 job.request.prompt = std::move(job.resolved.request.prompt);
             job.request.gen_config = std::move(job.resolved.config);
@@ -203,8 +201,8 @@ void ChorusRuntime::prepare(PreparationJob& job) {
     check_cancelled(job.control->cancelled);
 }
 
-void ChorusRuntime::preparation_loop() {
-    auto& state = *_preparation;
+void ChorusRuntime::preparation_loop(std::shared_ptr<PreparationState> owned_state) {
+    auto& state = *owned_state;
     std::shared_ptr<Control> running;
     try {
         while (true) {
@@ -219,7 +217,7 @@ void ChorusRuntime::preparation_loop() {
                 running = job->control;
             }
             try {
-                prepare(*job);
+                prepare(state, *job);
                 std::lock_guard<std::mutex> lock(state.mutex);
                 job->control->preparation_finished = true;
                 if (job->control->terminal || job->control->cancelled) {
@@ -236,7 +234,7 @@ void ChorusRuntime::preparation_loop() {
                     state.output.emplace_back(std::move(job));
                 }
             } catch (const RequestRejection& failure) {
-                publish_error(job->request.id, job->control, failure.error, failure.message);
+                publish_error(state, job->request.id, job->control, failure.error, failure.message);
                 std::lock_guard<std::mutex> lock(state.mutex);
                 job->control->preparation_finished = true;
                 state.release_preparation(job->control);
@@ -244,7 +242,7 @@ void ChorusRuntime::preparation_loop() {
             running.reset();
         }
     } catch (...) {
-        fail_preparation();
+        fail_preparation(state);
         std::lock_guard<std::mutex> lock(state.mutex);
         if (running) {
             running->preparation_finished = true;
@@ -262,8 +260,7 @@ void ChorusRuntime::preparation_loop() {
     }
 }
 
-void ChorusRuntime::fail_preparation() {
-    auto& state = *_preparation;
+void ChorusRuntime::fail_preparation(PreparationState& state) {
     {
         std::lock_guard<std::mutex> lock(state.mutex);
         state.failed = true;

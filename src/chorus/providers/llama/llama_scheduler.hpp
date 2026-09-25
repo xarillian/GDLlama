@@ -51,7 +51,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
   public:
     ~LlamaScheduler();
 
-    std::optional<Chorus::InitializationFailure> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger);
+    std::optional<Chorus::InitializationFailure> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger, const Chorus::InitializationControl& control);
     bool push_request(Chorus::ChorusRequest req);
     void cancel_request(Chorus::RequestId id);
     void shutdown();
@@ -144,7 +144,8 @@ class LlamaScheduler : public Chorus::RequestPreparation {
         std::optional<uint64_t> decode_fairness;
     };
 
-    bool load_model_from_file(const Chorus::LlamaLoadConfig& config);
+    bool load_model_from_file(const Chorus::LlamaLoadConfig& config, const Chorus::InitializationControl& control,
+                              bool& callback_cancelled, bool& callback_failed);
     bool init_context(const Chorus::LlamaLoadConfig& config);
     void worker_loop();
     void run_worker();

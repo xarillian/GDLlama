@@ -172,6 +172,30 @@ class ChorusEmbeddingRequest : public ChorusInferenceRequest {
     static godot::Ref<ChorusEmbeddingRequest> create(const godot::String& content, const godot::StringName& session = godot::StringName());
 };
 
+class ChorusLoadPhase : public godot::RefCounted {
+    GDCLASS(ChorusLoadPhase, godot::RefCounted);
+  protected:
+    static void _bind_methods();
+  public:
+    enum Value { RELEASING_ENGINE, LOADING_MODEL, INITIALIZING_ENGINE };
+};
+
+class ChorusLoadResult : public godot::RefCounted {
+    GDCLASS(ChorusLoadResult, godot::RefCounted);
+  protected:
+    static void _bind_methods();
+  public:
+    int64_t get_load_id() const;
+    int get_error() const;
+    godot::String get_message() const;
+    bool get_accepted() const;
+    void set_result(int64_t load_id, int error, const godot::String& message);
+  private:
+    int64_t _load_id = -1;
+    int _error = 5;
+    godot::String _message;
+};
+
 class ChorusSubmitResult : public godot::RefCounted {
     GDCLASS(ChorusSubmitResult, godot::RefCounted);
   protected:
@@ -194,6 +218,7 @@ class ChorusResult : public godot::RefCounted {
   private: int _error = 0; godot::String _message;
 };
 
+VARIANT_ENUM_CAST(ChorusLoadPhase::Value);
 VARIANT_ENUM_CAST(ChorusRole::Value);
 VARIANT_ENUM_CAST(ChorusOverrideState::Value);
 VARIANT_ENUM_CAST(ChorusExecution::Value);

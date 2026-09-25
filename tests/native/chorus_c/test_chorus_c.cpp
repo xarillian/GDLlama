@@ -25,8 +25,24 @@ using RequestPtr = std::unique_ptr<chorus_request, RequestDeleter>;
 RuntimePtr loaded_runtime() {
     RuntimePtr runtime(chorus_runtime_new());
     EXPECT_TRUE(runtime != nullptr);
-    if (runtime)
-        EXPECT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF), CHORUS_OK);
+    if (runtime) {
+        chorus_load_result result{};
+        EXPECT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, &result), CHORUS_OK);
+        EXPECT_EQ(result.error, CHORUS_OK);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        bool loaded = false;
+        while (!loaded && std::chrono::steady_clock::now() < deadline) {
+            size_t count = 0;
+            const auto* events = chorus_poll(runtime.get(), &count);
+            for (size_t i = 0; i < count; ++i) {
+                EXPECT_EQ(events[i].load_id, result.load_id);
+                EXPECT_NE(events[i].kind, CHORUS_EVENT_MODEL_LOAD_FAILED);
+                loaded |= events[i].kind == CHORUS_EVENT_MODEL_LOADED;
+            }
+            if (!loaded) std::this_thread::yield();
+        }
+        EXPECT_TRUE(loaded);
+    }
     return runtime;
 }
 
@@ -59,9 +75,143 @@ std::vector<EventSnapshot> wait_events(chorus_runtime* runtime, size_t expected 
     return result;
 }
 
-TEST(ChorusC, Header_is_pure_c_and_uses_abi_five) {
+TEST(ChorusC, Header_is_pure_c_and_uses_abi_six) {
     ASSERT_EQ(chorus_c_header_smoke(), 0);
-    ASSERT_EQ(chorus_abi_version(), uint32_t{5});
+    ASSERT_EQ(chorus_abi_version(), uint32_t{6});
+}
+
+TEST(ChorusC, Load_admission_cancellation_and_retry_are_identified_and_keep_event_storage) {
+    RuntimePtr runtime = loaded_runtime();
+    RequestPtr request = request_with_prompt("hello");
+    chorus_submit_result submitted{};
+    ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &submitted), CHORUS_OK);
+    ASSERT_EQ(submitted.error, CHORUS_OK);
+    auto generated = wait_events(runtime.get());
+    ASSERT_EQ(generated[0].kind, CHORUS_EVENT_COMPLETE);
+
+    chorus_load_result rejected{42, CHORUS_OK, nullptr};
+    ASSERT_EQ(chorus_load(runtime.get(), static_cast<chorus_provider>(99), nullptr, nullptr, CHORUS_LOG_OFF, &rejected), CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(rejected.load_id, -1);
+    ASSERT_EQ(rejected.error, CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_TRUE(chorus_is_loaded(runtime.get()));
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, nullptr), CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_TRUE(chorus_is_loaded(runtime.get()));
+
+    chorus_load_result cancelled{};
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, &cancelled), CHORUS_OK);
+    ASSERT_EQ(cancelled.error, CHORUS_OK);
+    ASSERT_FALSE(chorus_is_loaded(runtime.get()));
+    ASSERT_EQ(chorus_active_load_id(runtime.get()), cancelled.load_id);
+    chorus_load_result overlap{};
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, &overlap), CHORUS_OK);
+    ASSERT_EQ(overlap.load_id, -1);
+    ASSERT_EQ(overlap.error, CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_NE(overlap.message, nullptr);
+    size_t log_count = 0;
+    chorus_poll_logs(runtime.get(), &log_count);
+    ASSERT_FALSE(std::string(overlap.message).empty());
+    ASSERT_TRUE(chorus_cancel_load(runtime.get(), cancelled.load_id));
+    bool failed = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!failed && std::chrono::steady_clock::now() < deadline) {
+        size_t count = 0;
+        const auto* events = chorus_poll(runtime.get(), &count);
+        for (size_t i = 0; i < count; ++i) {
+            if (events[i].kind != CHORUS_EVENT_MODEL_LOAD_FAILED) continue;
+            EXPECT_EQ(events[i].load_id, cancelled.load_id);
+            EXPECT_EQ(events[i].error, CHORUS_ERR_CANCELLED);
+            EXPECT_STREQ(events[i].model_id, "");
+            EXPECT_EQ(events[i].request_id, -1);
+            failed = true;
+        }
+        if (!failed) std::this_thread::yield();
+    }
+    ASSERT_TRUE(failed);
+    ASSERT_EQ(chorus_active_load_id(runtime.get()), -1);
+
+    chorus_load_result retry{};
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, &retry), CHORUS_OK);
+    ASSERT_EQ(retry.error, CHORUS_OK);
+    bool loaded = false;
+    const auto retry_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!loaded && std::chrono::steady_clock::now() < retry_deadline) {
+        size_t count = 0;
+        const auto* events = chorus_poll(runtime.get(), &count);
+        for (size_t i = 0; i < count; ++i) {
+            if (events[i].kind != CHORUS_EVENT_MODEL_LOADED) continue;
+            EXPECT_EQ(events[i].load_id, retry.load_id);
+            EXPECT_EQ(events[i].request_id, -1);
+            const char* model = events[i].model_id;
+            ASSERT_NE(model, nullptr);
+            size_t log_count = 0;
+            chorus_poll_logs(runtime.get(), &log_count);
+            EXPECT_STREQ(model, "");
+            loaded = true;
+        }
+        if (!loaded) std::this_thread::yield();
+    }
+    ASSERT_TRUE(loaded);
+    ASSERT_TRUE(chorus_is_loaded(runtime.get()));
+    ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &submitted), CHORUS_OK);
+    ASSERT_EQ(wait_events(runtime.get())[0].kind, CHORUS_EVENT_COMPLETE);
+}
+
+TEST(ChorusC, Request_event_snapshot_survives_load_submission_and_log_poll) {
+    RuntimePtr runtime = loaded_runtime();
+    RequestPtr request = request_with_prompt("snapshot");
+    chorus_submit_result submitted{};
+    ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &submitted), CHORUS_OK);
+    ASSERT_EQ(submitted.error, CHORUS_OK);
+    const chorus_event* snapshot = nullptr;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!snapshot && std::chrono::steady_clock::now() < deadline) {
+        size_t count = 0;
+        const auto* events = chorus_poll(runtime.get(), &count);
+        if (count && events[0].kind == CHORUS_EVENT_COMPLETE)
+            snapshot = events;
+        if (!snapshot) std::this_thread::yield();
+    }
+    ASSERT_NE(snapshot, nullptr);
+    const char* text = snapshot[0].text;
+    chorus_load_result load{};
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, &load), CHORUS_OK);
+    size_t log_count = 0;
+    chorus_poll_logs(runtime.get(), &log_count);
+    ASSERT_STREQ(text, "snapshot");
+    ASSERT_EQ(snapshot[0].load_id, -1);
+    ASSERT_TRUE(chorus_cancel_load(runtime.get(), load.load_id));
+    chorus_stop_all(runtime.get());
+}
+
+TEST(ChorusC, Missing_model_fails_after_admission_and_diagnostic_survives_other_calls) {
+    RuntimePtr runtime = loaded_runtime();
+    chorus_load_result result{};
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_LLAMA, "tests/models/not-present.gguf", nullptr, CHORUS_LOG_OFF, &result), CHORUS_OK);
+    ASSERT_EQ(result.error, CHORUS_OK);
+    const auto id = result.load_id;
+    ASSERT_FALSE(chorus_is_loaded(runtime.get()));
+    bool failed = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!failed && std::chrono::steady_clock::now() < deadline) {
+        size_t count = 0;
+        const auto* events = chorus_poll(runtime.get(), &count);
+        for (size_t i = 0; i < count; ++i) {
+            if (events[i].kind != CHORUS_EVENT_MODEL_LOAD_FAILED) continue;
+            ASSERT_EQ(events[i].load_id, id);
+            ASSERT_EQ(events[i].error, CHORUS_ERR_MODEL_LOAD);
+            ASSERT_NE(events[i].model_id, nullptr);
+            ASSERT_STREQ(events[i].model_id, "tests/models/not-present.gguf");
+            const char* text = events[i].text;
+            ASSERT_NE(text, nullptr);
+            size_t logs = 0;
+            chorus_poll_logs(runtime.get(), &logs);
+            ASSERT_FALSE(std::string(text).empty());
+            failed = true;
+        }
+        if (!failed) std::this_thread::yield();
+    }
+    ASSERT_TRUE(failed);
+    ASSERT_FALSE(chorus_is_loaded(runtime.get()));
 }
 
 TEST(ChorusC, Typed_injection_rejects_unknown_roles) {
@@ -270,7 +420,21 @@ TEST(ChorusC, Count_rejection_initializes_outputs_and_echo_does_not_claim_a_toke
 class ChorusCModelTest : public ChorusModelTest {};
 TEST_F(ChorusCModelTest, Async_count_copies_input_and_event_storage_survives_submission_and_log_polling) {
     RuntimePtr runtime(chorus_runtime_new());
-    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_LLAMA, "tests/models/gemma-3-270m-it-F16.gguf", nullptr, CHORUS_LOG_OFF), CHORUS_OK);
+    chorus_load_result load{};
+    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_LLAMA, "tests/models/gemma-3-270m-it-F16.gguf", nullptr, CHORUS_LOG_OFF, &load), CHORUS_OK);
+    ASSERT_EQ(load.error, CHORUS_OK);
+    const auto load_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    bool loaded = false;
+    while (!loaded && std::chrono::steady_clock::now() < load_deadline) {
+        size_t count = 0;
+        const auto* events = chorus_poll(runtime.get(), &count);
+        for (size_t i = 0; i < count; ++i) {
+            ASSERT_NE(events[i].kind, CHORUS_EVENT_MODEL_LOAD_FAILED);
+            loaded |= events[i].kind == CHORUS_EVENT_MODEL_LOADED && events[i].load_id == load.load_id;
+        }
+        if (!loaded) std::this_thread::yield();
+    }
+    ASSERT_TRUE(loaded);
     chorus_capabilities caps{};
     ASSERT_TRUE(chorus_get_capabilities(runtime.get(), &caps));
     ASSERT_TRUE(caps.message_token_counting);

@@ -42,7 +42,7 @@ struct chorus_runtime {
 
 namespace {
 
-constexpr uint32_t kAbiVersion = 5;
+constexpr uint32_t kAbiVersion = 6;
 
 std::optional<Chorus::MessageRole> to_cpp_role(chorus_message_role role) noexcept {
     switch (role) {
@@ -241,8 +241,26 @@ chorus_event_kind to_c_event_kind(Chorus::RuntimeEvent::Kind kind) noexcept {
         return CHORUS_EVENT_PROMPT_RENDERED;
     case Chorus::RuntimeEvent::Kind::MessageTokenCount:
         return CHORUS_EVENT_MESSAGE_TOKEN_COUNT;
+    case Chorus::RuntimeEvent::Kind::ModelLoadProgress:
+        return CHORUS_EVENT_MODEL_LOAD_PROGRESS;
+    case Chorus::RuntimeEvent::Kind::ModelLoaded:
+        return CHORUS_EVENT_MODEL_LOADED;
+    case Chorus::RuntimeEvent::Kind::ModelLoadFailed:
+        return CHORUS_EVENT_MODEL_LOAD_FAILED;
     }
     return CHORUS_EVENT_ERROR;
+}
+
+chorus_load_phase to_c_load_phase(Chorus::LoadPhase phase) noexcept {
+    switch (phase) {
+    case Chorus::LoadPhase::ReleasingEngine:
+        return CHORUS_LOAD_RELEASING_ENGINE;
+    case Chorus::LoadPhase::LoadingModel:
+        return CHORUS_LOAD_LOADING_MODEL;
+    case Chorus::LoadPhase::InitializingEngine:
+        return CHORUS_LOAD_INITIALIZING_ENGINE;
+    }
+    return CHORUS_LOAD_RELEASING_ENGINE;
 }
 
 chorus_turn_outcome to_c_outcome(Chorus::TurnOutcome outcome) noexcept {
@@ -337,6 +355,11 @@ void clear_result_storage(chorus_runtime* rt) noexcept {
     if (!rt)
         return;
     rt->result_strings.clear();
+}
+
+void initialize_load_result(chorus_load_result* result) noexcept {
+    if (result)
+        *result = {-1, CHORUS_ERR_INVALID_REQUEST, nullptr};
 }
 
 void initialize_submit_result(chorus_submit_result* result) noexcept {
@@ -455,10 +478,15 @@ chorus_error chorus_load(
     chorus_provider provider,
     const char* model_path,
     const chorus_options* options,
-    chorus_log_level min_log_level
+    chorus_log_level min_log_level,
+    chorus_load_result* out_result
 ) {
+    initialize_load_result(out_result);
     if (!rt)
         return CHORUS_ERR_INVALID_REQUEST;
+    clear_result_storage(rt);
+    if (!out_result)
+        return invalid_request(rt, "out_result is required.");
 
     Chorus::Provider cpp_provider = Chorus::Provider::Echo;
     const char* provider_id = nullptr;
@@ -479,17 +507,37 @@ chorus_error chorus_load(
         if (options && !options->values.empty())
             config.provider_options[provider_id] = options->values;
 
-        auto error = rt->value.load_engine(Chorus::make_engine(cpp_provider), config);
-        if (error) {
-            replace_last_error(rt, error->message);
-            return to_c_error(error->error);
-        }
+        rt->result_strings.emplace_back();
+        auto result = rt->value.load_engine(Chorus::make_engine(cpp_provider), config);
+        rt->result_strings.front() = std::move(result.message);
+        *out_result = {result.load_id, to_c_error(result.error),
+                       rt->result_strings.front().empty() ? nullptr : rt->result_strings.front().c_str()};
         clear_last_error(rt);
         return CHORUS_OK;
     } catch (const std::exception& error) {
         return unknown_exception(rt, error.what());
     } catch (...) {
         return unknown_exception(rt, "Unknown exception while loading the engine.");
+    }
+}
+
+bool chorus_cancel_load(chorus_runtime* rt, chorus_load_id id) {
+    if (!rt)
+        return false;
+    try {
+        return rt->value.cancel_load(id);
+    } catch (...) {
+        return false;
+    }
+}
+
+chorus_load_id chorus_active_load_id(const chorus_runtime* rt) {
+    if (!rt)
+        return -1;
+    try {
+        return rt->value.active_load_id().value_or(-1);
+    } catch (...) {
+        return -1;
     }
 }
 
@@ -934,6 +982,11 @@ const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count) {
                                   : nullptr;
             event.embedding_count = source.kind == Chorus::RuntimeEvent::Kind::Embedding ? source.embedding.size() : 0;
             event.token_count = source.token_count;
+            event.load_id = source.load_id.value_or(-1);
+            event.model_id = source.load_id ? source.model_id.c_str() : nullptr;
+            event.load_phase = source.load_progress ? to_c_load_phase(source.load_progress->phase) : CHORUS_LOAD_RELEASING_ENGINE;
+            event.has_load_fraction = source.load_progress && source.load_progress->fraction.has_value();
+            event.load_fraction = event.has_load_fraction ? *source.load_progress->fraction : 0.0f;
         }
         *out_count = rt->events.size();
         clear_last_error(rt);

@@ -117,7 +117,7 @@ TEST_F(LlamaSchedulerModelTest, Malformed_sampler_requests_terminate_and_engine_
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
     SchedulerObservation state;
     Chorus::LlamaEngine engine;
-    ASSERT_FALSE(engine.initialize(config, {}).has_value());
+    ASSERT_FALSE(engine.initialize(config, {}, {}).has_value());
 
     auto malformed = make_scheduler_generation(1, 0);
     malformed.on_event = [&](const auto& signal) { state.handle(signal); };
@@ -158,7 +158,7 @@ TEST_F(LlamaSchedulerModelTest, Unexpected_batch_exception_fences_admission_and_
     SchedulerObservation state;
     state.gate_request_id = 1;
     LlamaScheduler scheduler;
-    ASSERT_FALSE(scheduler.initialize(config, {}).has_value());
+    ASSERT_FALSE(scheduler.initialize(config, {}, {}).has_value());
     scheduler.set_batch_observer([&](const auto& record) {
         state.observe(record);
         throw std::logic_error("injected batch failure");
@@ -199,7 +199,7 @@ TEST_F(LlamaSchedulerModelTest, Unexpected_admission_exception_retains_preparing
     SchedulerObservation state;
     state.gate_request_id = 1;
     LlamaScheduler scheduler;
-    ASSERT_FALSE(scheduler.initialize(config, {}).has_value());
+    ASSERT_FALSE(scheduler.initialize(config, {}, {}).has_value());
     scheduler.set_batch_observer([&](const auto& record) { state.observe(record); });
     scheduler.set_admission_observer([](Chorus::RequestId id) {
         if (id == 3)
@@ -242,7 +242,7 @@ TEST_F(LlamaSchedulerModelTest, Preparing_cancellation_is_consumed_and_late_or_u
     SchedulerObservation state;
     state.gate_request_id = 1;
     LlamaScheduler scheduler;
-    ASSERT_FALSE(scheduler.initialize(config, {}).has_value());
+    ASSERT_FALSE(scheduler.initialize(config, {}, {}).has_value());
     scheduler.set_admission_observer([&](Chorus::RequestId id) {
         state.observe({Chorus::RequestType::Generate, 0, {id}, {}});
     });
@@ -439,7 +439,7 @@ TEST_F(LlamaSchedulerModelTest, Mixed_requests_follow_priority_fifo_and_use_homo
 
     SchedulerObservation state;
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
     engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { state.observe(record); });
 
     auto blocker = make_scheduler_generation(1, 100);
@@ -522,7 +522,7 @@ TEST_F(LlamaSchedulerModelTest, Embedding_batches_respect_n_ubatch_and_cancellat
 
     SchedulerObservation state;
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
     engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { state.observe(record); });
 
     auto blocker = make_scheduler_embedding(10, "block", 0);
@@ -572,7 +572,7 @@ TEST_F(LlamaSchedulerModelTest, Embeddings_cancel_while_queued_and_admitted) {
 
     SchedulerObservation queued_state;
     Chorus::LlamaEngine queued_engine;
-    ASSERT_TRUE(!queued_engine.initialize(make_config(), {}).has_value());
+    ASSERT_TRUE(!queued_engine.initialize(make_config(), {}, {}).has_value());
     queued_engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { queued_state.observe(record); });
     auto blocker = make_scheduler_embedding(20, "block", 0);
     blocker.on_event = [&](const Chorus::ChorusSignal& signal) { queued_state.handle(signal); };
@@ -601,7 +601,7 @@ TEST_F(LlamaSchedulerModelTest, Embeddings_cancel_while_queued_and_admitted) {
 
     SchedulerObservation admitted_state;
     Chorus::LlamaEngine admitted_engine;
-    ASSERT_TRUE(!admitted_engine.initialize(make_config(), {}).has_value());
+    ASSERT_TRUE(!admitted_engine.initialize(make_config(), {}, {}).has_value());
     admitted_engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { admitted_state.observe(record); });
     auto admitted = make_scheduler_embedding(22, "admitted", 0);
     admitted.on_event = [&](const Chorus::ChorusSignal& signal) { admitted_state.handle(signal); };
@@ -634,7 +634,7 @@ TEST_F(LlamaSchedulerModelTest, Active_cancellations_emit_priority_ordered_termi
 
     SchedulerObservation state;
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
     engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { state.observe(record); });
 
     auto blocker = make_scheduler_generation(100, 100);
@@ -705,7 +705,7 @@ TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     Chorus::ChorusRequest big;
     big.id = 1;
@@ -790,7 +790,7 @@ TEST_F(LlamaSchedulerModelTest, Higher_priority_request_served_first) {
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     auto make_handler = [&](int64_t id) {
         return [&, id](const Chorus::ChorusSignal& sig) {
@@ -856,7 +856,7 @@ TEST_F(LlamaSchedulerModelTest, Sequence_id_reusable_after_request_completes) {
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     auto run_one = [&](int64_t id) {
         auto result = std::make_shared<Result>();
@@ -933,7 +933,7 @@ TEST_F(LlamaSchedulerModelTest, Batch_demand_beyond_capacity_is_clamped_not_over
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     for (int64_t id = 1; id <= 4; ++id) {
         Chorus::ChorusRequest req;

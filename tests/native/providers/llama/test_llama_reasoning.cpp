@@ -33,7 +33,7 @@ TEST_F(LlamaReasoningModelTest, LlamaReasoning_channels_split) {
     }
 
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(make_reasoning_config(), {}).has_value());
+    ASSERT_TRUE(!engine.initialize(make_reasoning_config(), {}, {}).has_value());
 
     std::mutex mutex;
     std::string content, reasoning;
@@ -73,7 +73,7 @@ TEST_F(LlamaReasoningModelTest, LlamaReasoning_channels_split) {
 
 TEST_F(LlamaReasoningModelTest, LlamaReasoning_show_thinking_off_no_reasoning) {
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(make_reasoning_config(), {}).has_value());
+    ASSERT_TRUE(!engine.initialize(make_reasoning_config(), {}, {}).has_value());
 
     std::mutex mutex;
     std::string content, reasoning;

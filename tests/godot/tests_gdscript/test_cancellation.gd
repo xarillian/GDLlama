@@ -8,7 +8,7 @@ static func run_tests(parent: Node) -> void:
 	var chorus: GodotChorus = ChorusNodeScene.instantiate()
 	chorus.provider = GodotChorus.PROVIDER_ECHO
 	parent.add_child(chorus)
-	chorus.load_model()
+	await LoadWaiter.load(chorus)
 
 	await TestReport.run("cancel_request() reaches one valid terminal outcome", func():
 		var terminal := {"request_id": -1}

@@ -76,4 +76,9 @@ struct ChorusRuntime::PreparationState {
     }
 };
 
+struct ChorusRuntime::EngineLifetime {
+    std::unique_ptr<InferenceEngine> engine;
+    std::shared_ptr<PreparationState> preparation = std::make_shared<PreparationState>();
+};
+
 } // namespace Chorus

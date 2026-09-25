@@ -82,7 +82,7 @@ TEST(LlamaIntegration, Llama_unsupported_model_format_is_rejected) {
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config("/nonexistent.safetensors");
     config.model.format = Chorus::ModelFormat::SafeTensors;
-    auto err = engine.initialize(config, {});
+    auto err = engine.initialize(config, {}, {});
     ASSERT_TRUE(err.has_value());
     ASSERT_TRUE(*err == Chorus::ChorusError::UnsupportedModelFormat);
 }
@@ -91,7 +91,7 @@ TEST(LlamaIntegration, Llama_unknown_load_option_is_rejected) {
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH); // existing macro/constant in this file
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"warp_factor", int64_t{9}}};
-    auto err = engine.initialize(config, {});
+    auto err = engine.initialize(config, {}, {});
     ASSERT_TRUE(err.has_value());
     ASSERT_TRUE(*err == Chorus::ChorusError::UnsupportedOption);
 }
@@ -105,7 +105,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_load_lifecycle_reports_model_facts_and_p
     };
 
     ASSERT_TRUE(!engine.loaded_model_info().has_value());
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
     ASSERT_TRUE(engine.is_initialized());
     ASSERT_TRUE(engine.capabilities().prompt_rendering);
 
@@ -132,14 +132,14 @@ TEST_F(LlamaIntegrationModelTest, Llama_repeated_healthy_initialization_changes_
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
-    ASSERT_TRUE(!engine.initialize(config, original_logs.logger()).has_value());
+    ASSERT_TRUE(!engine.initialize(config, original_logs.logger(), {}).has_value());
     const auto before = engine.loaded_model_info();
     ASSERT_TRUE(before.has_value());
 
     Chorus::ChorusConfig replacement = make_gguf_config("/unused/replacement.gguf");
     replacement.model.model_id = "unused-replacement";
     replacement.model.format = Chorus::ModelFormat::SafeTensors;
-    ASSERT_TRUE(!engine.initialize(replacement, replacement_logs.logger()).has_value());
+    ASSERT_TRUE(!engine.initialize(replacement, replacement_logs.logger(), {}).has_value());
     const auto after = engine.loaded_model_info();
     ASSERT_TRUE(after.has_value());
     ASSERT_EQ(after->model_id, before->model_id);
@@ -163,7 +163,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_CPU_placement_avoids_Vulkan_compute_buff
     Chorus::LlamaEngine engine;
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
-    ASSERT_TRUE(!engine.initialize(config, log_capture.logger()).has_value());
+    ASSERT_TRUE(!engine.initialize(config, log_capture.logger(), {}).has_value());
 
     std::mutex mutex;
     std::condition_variable cv;
@@ -208,7 +208,7 @@ TEST_F(LlamaGpuModelTest, Llama_GPU_placement_uses_Vulkan_compute_buffer) {
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", true}};
 
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, log_capture.logger()).has_value());
+    ASSERT_TRUE(!engine.initialize(config, log_capture.logger(), {}).has_value());
     engine.shutdown();
 
     ASSERT_TRUE(contains_vulkan_compute_buffer_log(log_capture.text()));
@@ -227,7 +227,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_batch_controls_create_context_and_genera
     std::vector<Chorus::ChorusSignal> terminals;
     size_t token_chunks = 0;
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     Chorus::ChorusRequest request;
     request.id = 96;
@@ -275,7 +275,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_effective_batch_capacity_contains_oversi
         std::vector<Chorus::ChorusSignal> recovery_terminals;
     } state;
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
     const auto model_info = engine.loaded_model_info();
     ASSERT_TRUE(model_info && model_info->per_request_context);
 
@@ -362,7 +362,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_concurrent_requests_complete_with_multip
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     for (int request_index = 0; request_index < 2; ++request_index) {
         Chorus::ChorusRequest request;
@@ -409,7 +409,7 @@ TEST_F(LlamaIntegrationModelTest, Max_tokens_counts_generated_not_prompt_tokens)
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     std::string long_prompt = "<start_of_turn>user\n";
     for (int i = 0; i < 40; ++i)
@@ -451,12 +451,24 @@ TEST_F(LlamaIntegrationModelTest, Engine_reinitializes_and_generates_after_shutd
     // declared after the state its worker callbacks capture, so the engine (and its worker thread) is destroyed first
     Chorus::LlamaEngine engine;
 
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    std::stop_source stop;
+    bool saw_weight_progress = false;
+    Chorus::InitializationControl control{stop.get_token(), [&](const Chorus::LoadProgress& progress) {
+        if (progress.phase == Chorus::LoadPhase::LoadingModel && progress.fraction) {
+            saw_weight_progress = true;
+            stop.request_stop();
+        }
+    }};
+    const auto cancelled = engine.initialize(config, {}, control);
+    ASSERT_TRUE(saw_weight_progress);
+    ASSERT_TRUE(cancelled.has_value());
+    ASSERT_EQ(cancelled->error, Chorus::ChorusError::Cancelled);
+    ASSERT_FALSE(engine.is_initialized());
     engine.shutdown();
     ASSERT_TRUE(!engine.is_initialized());
 
     // Re-init must rebuild cleanly (robust shutdown() freed everything) and still generate.
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
     ASSERT_TRUE(engine.is_initialized());
 
     Chorus::ChorusRequest req;
@@ -519,7 +531,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_removes_queued_request_befo
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     Chorus::ChorusRequest active;
     active.id = 301;
@@ -592,7 +604,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_is_idempotent_and_releases_
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     Chorus::ChorusRequest active;
     active.id = 311;
@@ -683,7 +695,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_from_committed_buffered_tok
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     auto run = [&](int64_t id, std::vector<std::string> stop, bool cancel_from_token) {
         auto result = std::make_shared<Result>();
@@ -753,7 +765,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_shutdown_waits_for_active_cancellation_c
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     auto callback = [state](Chorus::ChorusSignal& signal) {
         std::unique_lock<std::mutex> lock(state->mutex);
@@ -864,7 +876,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_shutdown_waits_for_active_cancellation_c
 
 TEST_F(LlamaIntegrationModelTest, Llama_rejects_unwired_controls_explicitly) {
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(make_gguf_config(MODEL_PATH), {}).has_value());
+    ASSERT_TRUE(!engine.initialize(make_gguf_config(MODEL_PATH), {}, {}).has_value());
     Chorus::ChorusRequest req;
     req.id = 1;
     req.prompt = "hi";
@@ -952,7 +964,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_GBNF_constraint_enforces_output) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     auto result = run_constraint_request(
         engine, 101, Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, R"(root ::= "\"PINK_MOTH\"")"}
@@ -972,7 +984,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_JSON_Schema_constraint_enforces_output) 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     auto result = run_constraint_request(
         engine,
@@ -1000,7 +1012,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_invalid_grammar_is_isolated_to_one_const
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     auto invalid =
         run_constraint_request(engine, 103, Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= ["});
@@ -1041,7 +1053,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_conformance_seed_and_temperature) {
         // declared after the state its worker callbacks capture, so the engine
         // (and its worker thread) is destroyed first
         Chorus::LlamaEngine engine;
-        ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+        ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
         Chorus::ChorusRequest req;
         req.id = 1;
@@ -1089,7 +1101,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_tokens_completes_and_reuses_sl
     std::vector<Chorus::ChorusSignal::Event> zero_events;
     std::vector<Chorus::ChorusSignal::Event> reuse_events;
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     Chorus::ChorusRequest zero;
     zero.id = 201;
@@ -1152,7 +1164,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_marker_never_emits_and_slot_reuses)
     };
 
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     auto run = [&](int64_t id, const std::vector<std::string>& stops, int32_t max_tokens) {
         auto result = std::make_shared<Result>();
@@ -1246,7 +1258,7 @@ int run_reentry_child(ReentryTrigger trigger) {
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
     Chorus::LlamaEngine engine;
     state->engine = &engine;
-    if (engine.initialize(config, {}).has_value())
+    if (engine.initialize(config, {}, {}).has_value())
         return 10;
 
     Chorus::ChorusRequest request;
@@ -1326,7 +1338,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_completion_releases_callback_resour
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     Chorus::ChorusRequest request;
     request.id = 223;
@@ -1365,7 +1377,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_completes_while_slot_is_occupi
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     Chorus::ChorusRequest busy;
     busy.id = 224;
@@ -1426,7 +1438,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_one_per_request) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     auto drive = [&](Chorus::ChorusRequest request, bool cancel_on_first_token) -> bool {
         const int64_t id = request.id;
@@ -1566,7 +1578,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_decode_failure_ends_o
         {"max_concurrent_requests", int64_t{1}},
     };
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     std::string huge_prompt;
     for (int i = 0; i < 200; ++i)
@@ -1610,7 +1622,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_engine_shutdown_ends_
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     Chorus::ChorusRequest request;
     request.id = 421;
@@ -1663,7 +1675,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_two_sequences_one_cancels_one_completes)
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{2}}};
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(config, {}).has_value());
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
     const int64_t cancel_id = 431;
     const int64_t complete_id = 432;
@@ -1788,7 +1800,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_returns_a_normalized_embe
     Chorus::ChorusConfig config = make_gguf_config("tests/models/embeddinggemma-300M-Q8_0.gguf");
     config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"n_batch", int64_t{64}}, {"n_ubatch", int64_t{64}}};
     Chorus::ChorusRuntime runtime;
-    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), config).has_value());
+    ASSERT_TRUE(load_runtime(runtime, Chorus::make_engine(Chorus::Provider::Llama), config).ok());
     const auto capabilities = runtime.capabilities();
     ASSERT_TRUE(capabilities.has_value() && capabilities->embeddings);
 
@@ -1831,7 +1843,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_none_pooling_uses_normali
         {"use_gpu", false}, {"n_batch", int64_t{64}}, {"n_ubatch", int64_t{64}}, {"pooling", std::string{"none"}}
     };
     Chorus::ChorusRuntime runtime;
-    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), config).has_value());
+    ASSERT_TRUE(load_runtime(runtime, Chorus::make_engine(Chorus::Provider::Llama), config).ok());
 
     const auto submit = [&](const std::string& prompt) {
         const auto result = runtime.submit(Chorus::EmbeddingRequest{prompt, std::nullopt, 0});
@@ -1862,7 +1874,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_none_pooling_uses_normali
 
 TEST_F(LlamaIntegrationModelTest, Llama_chat_messages_render_and_generate) {
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(make_chat_config(), {}).has_value());
+    ASSERT_TRUE(!engine.initialize(make_chat_config(), {}, {}).has_value());
 
     // Render hook: gemma's embedded template must produce its role scaffolding.
     auto rendered = engine.render_chat_prompt({{Chorus::MessageRole::System, Chorus::MessageContent::text("You are terse.")}, {Chorus::MessageRole::User, Chorus::MessageContent::text("Say hi.")}}, "", true);
@@ -1908,7 +1920,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_messages_render_and_generate) {
 
 TEST_F(LlamaIntegrationModelTest, Llama_chat_capabilities_report_rendering) {
     Chorus::LlamaEngine engine;
-    ASSERT_TRUE(!engine.initialize(make_chat_config(), {}).has_value());
+    ASSERT_TRUE(!engine.initialize(make_chat_config(), {}, {}).has_value());
     ASSERT_TRUE(engine.capabilities().prompt_rendering);
     auto info = engine.loaded_model_info();
     ASSERT_TRUE(info.has_value() && info->per_request_context.has_value());
@@ -1920,7 +1932,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_multi_turn_stays_contextual) {
     // Exercise a multi-turn conversation at the runtime layer so history
     // assembly itself is under test.
     Chorus::ChorusRuntime runtime;
-    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), make_chat_config()).has_value());
+    ASSERT_TRUE(load_runtime(runtime, Chorus::make_engine(Chorus::Provider::Llama), make_chat_config()).ok());
 
     Chorus::GenerationRequest turn1;
     turn1.prompt = "My name is Trebor. Remember my name.";
@@ -1948,7 +1960,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_truncation_preserves_system) {
     auto config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] =
         Chorus::ProviderOptionMap{{"context_size", int64_t{512}}, {"max_concurrent_requests", int64_t{1}}, {"use_gpu", false}};
-    ASSERT_TRUE(!runtime.load_engine(Chorus::make_engine(Chorus::Provider::Llama), config).has_value());
+    ASSERT_TRUE(load_runtime(runtime, Chorus::make_engine(Chorus::Provider::Llama), config).ok());
 
     std::vector<Chorus::ConversationMessage> history{{0, {Chorus::MessageRole::System, Chorus::MessageContent::text("You are Brunn the blacksmith.")}}};
     for (int i = 0; i < 30; ++i) {

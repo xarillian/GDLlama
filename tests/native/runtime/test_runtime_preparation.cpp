@@ -5,6 +5,7 @@
 
 #include <condition_variable>
 #include <functional>
+#include <limits>
 #include <set>
 #include <stdexcept>
 
@@ -99,9 +100,9 @@ class PreparationEngine : public SyncMockEngine {
         value.message_token_counting = counting;
         return value;
     }
-    std::optional<InitializationFailure> initialize(const ChorusConfig& config, Logger logger) override {
+    std::optional<InitializationFailure> initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) override {
         if (on_initialize) on_initialize();
-        return SyncMockEngine::initialize(config, std::move(logger));
+        return SyncMockEngine::initialize(config, std::move(logger), control);
     }
     std::shared_ptr<RequestPreparation> request_preparation() const override { return service; }
     void shutdown() override {
@@ -111,9 +112,41 @@ class PreparationEngine : public SyncMockEngine {
     }
 };
 
+struct LoadGate {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool entered = false;
+    bool released = false;
+    void hold() {
+        std::unique_lock lock(mutex);
+        entered = true;
+        cv.notify_all();
+        cv.wait(lock, [&] { return released; });
+    }
+    bool wait_entered() {
+        std::unique_lock lock(mutex);
+        return cv.wait_for(lock, std::chrono::seconds(10), [&] { return entered; });
+    }
+    void release() {
+        std::lock_guard lock(mutex);
+        released = true;
+        cv.notify_all();
+    }
+};
+
+struct ReleaseLoadGate {
+    std::shared_ptr<LoadGate> gate;
+    ~ReleaseLoadGate() { gate->release(); }
+};
+
 struct ReleaseGate {
     std::shared_ptr<GatedPreparation> service;
     ~ReleaseGate() { service->release(); }
+};
+
+struct ReleaseRuntimeRetirement {
+    ChorusRuntime& runtime;
+    ~ReleaseRuntimeRetirement() { runtime.test_release_retirement(); }
 };
 
 GenerationRequest chat(const char* session = "npc", std::string prompt = "new") {
@@ -135,7 +168,7 @@ TEST(RuntimePreparation, Gated_hook_leaves_every_admission_poll_and_cancel_respo
     auto* observed = engine.get();
     auto service = engine->service;
     service->gate_at = 1;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
     ASSERT_FALSE(runtime.import_conversation_history("reroll", {
         {10, {MessageRole::User, MessageContent::text("question")}},
@@ -191,7 +224,7 @@ TEST(RuntimePreparation, Preview_freezes_history_defaults_and_source_without_occ
     auto engine = std::make_unique<PreparationEngine>();
     auto service = engine->service;
     service->gate_at = 1;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
     ASSERT_FALSE(runtime.import_conversation_history("npc", {{0, {MessageRole::System, MessageContent::text("old")}}}).has_value());
     auto request = chat();
@@ -223,7 +256,7 @@ TEST(RuntimePreparation, Lazy_counts_reuse_nodes_invalidate_edits_and_verify_ext
     engine->mock_per_request_context = 24;
     auto* observed = engine.get();
     auto service = engine->service;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     std::vector<ConversationMessage> history{{0, {MessageRole::System, MessageContent::text("S")}}};
     for (int i = 0; i < 128; ++i) {
         history.push_back({1 + 2 * i, {MessageRole::User, MessageContent::text("user")}});
@@ -280,7 +313,7 @@ TEST(RuntimePreparation, Nonmonotonic_fallback_recovers_a_larger_candidate_when_
     service->render = [](const std::vector<ChatMessage>& messages) {
         return RenderedPrompt{std::to_string(messages.size()), messages.size() == 3 ? 4 : 99};
     };
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ASSERT_FALSE(runtime.import_conversation_history("npc", {
         {0, {MessageRole::User, MessageContent::text("oversized-old-content")}},
         {1, {MessageRole::Assistant, MessageContent::text("reply")}}
@@ -297,7 +330,7 @@ TEST(RuntimePreparation, Mandatory_estimate_overflow_does_not_reject_a_fitting_n
     ChorusRuntime runtime;
     auto engine = std::make_unique<PreparationEngine>();
     engine->service->count_override = INT64_MAX;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ASSERT_FALSE(runtime.import_conversation_history("npc", {
         {0, {MessageRole::System, MessageContent::text("S")}},
         {1, {MessageRole::System, MessageContent::text("T")}}
@@ -316,7 +349,7 @@ TEST(RuntimePreparation, Tokenizer_and_renderer_failures_are_errors_not_zero_or_
     engine->service->render = [](const auto&) -> std::variant<RenderedPrompt, RequestRejection> {
         return RequestRejection{ChorusError::Tokenize, "rendered tokenization failed"};
     };
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ASSERT_TRUE(runtime.submit(chat()).ok());
     auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events[0].error, ChorusError::Tokenize);
@@ -324,7 +357,7 @@ TEST(RuntimePreparation, Tokenizer_and_renderer_failures_are_errors_not_zero_or_
     ASSERT_TRUE(runtime.export_conversation_history("npc").empty());
     auto replacement = std::make_unique<PreparationEngine>();
     replacement->service->count_rejection = RequestRejection{ChorusError::Tokenize, "raw tokenization failed"};
-    ASSERT_FALSE(runtime.load_engine(std::move(replacement), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(replacement), {}).ok());
     ASSERT_TRUE(runtime.count_message_tokens(MessageContent::text("text")).ok());
     events = drain_runtime_events(runtime);
     ASSERT_EQ(events[0].kind, RuntimeEvent::Kind::Error);
@@ -335,7 +368,7 @@ TEST(RuntimePreparation, Counts_join_parts_and_bound_arbitrary_content_cache_and
     ChorusRuntime runtime;
     auto engine = std::make_unique<PreparationEngine>();
     auto service = engine->service;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     MessageContent content{{std::string("ab"), std::string("cd")}};
     ASSERT_TRUE(runtime.count_message_tokens(content).ok());
     auto first = drain_runtime_events(runtime);
@@ -370,7 +403,7 @@ TEST(RuntimePreparation, Counts_join_parts_and_bound_arbitrary_content_cache_and
     ASSERT_EQ(service->count_calls, before + 1);
     auto replacement = std::make_unique<PreparationEngine>();
     auto fresh = replacement->service;
-    ASSERT_FALSE(runtime.load_engine(std::move(replacement), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(replacement), {}).ok());
     ASSERT_TRUE(service->closed);
     ASSERT_TRUE(runtime.count_message_tokens(content).ok());
     drain_runtime_events(runtime);
@@ -385,7 +418,7 @@ TEST_P(PreparationFailure, Unexpected_exception_fails_ready_running_and_queued_o
     auto service = engine->service;
     service->gate_at = 2;
     service->throw_kind = GetParam();
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
     auto ready = runtime.submit(raw("ready"));
     auto running = runtime.submit(raw("running"));
@@ -420,7 +453,7 @@ TEST_P(PreparationFailure, Worker_failure_cancels_provider_owned_work_without_lo
     auto service = engine->service;
     service->gate_at = 2;
     service->throw_kind = GetParam();
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
     auto active = runtime.submit(raw("provider active"));
     forward_runtime_until(runtime, [&] { return observed->submitted_ids.size() == 1; });
@@ -450,7 +483,7 @@ TEST(RuntimePreparation, Provider_death_drains_gated_and_queued_preparation_with
     auto* observed = engine.get();
     auto service = engine->service;
     service->gate_at = 1;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
     ASSERT_TRUE(runtime.count_message_tokens(MessageContent::text("gated")).ok());
     ASSERT_TRUE(service->wait_entered());
@@ -472,7 +505,7 @@ TEST(RuntimePreparation, Cancel_ready_work_never_forwards_and_buffered_auxiliary
     auto* observed = engine.get();
     auto service = engine->service;
     service->gate_at = 3;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
     const auto success = runtime.count_message_tokens(MessageContent::text("count"));
     const auto ready = runtime.submit(raw("ready"));
@@ -500,7 +533,7 @@ TEST(RuntimePreparation, Gated_render_and_count_cancel_without_waiting_and_disca
         engine->counting = count;
         auto service = engine->service;
         service->gate_at = 1;
-        ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+        ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
         ReleaseGate release{service};
         auto accepted = count ? runtime.count_message_tokens(MessageContent::text("draft")) : runtime.render_prompt(chat());
         ASSERT_TRUE(accepted.ok());
@@ -523,7 +556,7 @@ TEST(RuntimePreparation, Batch_defaults_are_frozen_before_a_gated_worker_can_obs
     auto engine = std::make_unique<PreparationEngine>();
     auto service = engine->service;
     service->gate_at = 1;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
     HostDefaults defaults;
     defaults.config.temperature = ConfigPatch<float>::set(0.25f);
@@ -540,15 +573,407 @@ TEST(RuntimePreparation, Batch_defaults_are_frozen_before_a_gated_worker_can_obs
         ASSERT_EQ(config.temperature, 0.25f);
 }
 
+TEST(RuntimePreparation, Progress_is_coalesced_and_invalid_samples_do_not_publish_readiness) {
+    class ProgressEngine : public PreparationEngine {
+      public:
+        std::shared_ptr<std::atomic<bool>> reported;
+        std::optional<InitializationFailure> initialize(const ChorusConfig& config, Logger logger,
+                                                        const InitializationControl& control) override {
+            for (int i = 0; i < 5000; ++i)
+                control.on_progress({LoadPhase::LoadingModel, 0.5f});
+            control.on_progress({LoadPhase::LoadingModel, 0.25f});
+            control.on_progress({LoadPhase::LoadingModel, std::numeric_limits<float>::quiet_NaN()});
+            control.on_progress({LoadPhase::InitializingEngine, std::nullopt});
+            control.on_progress({LoadPhase::LoadingModel, 1.0f});
+            reported->store(true);
+            return PreparationEngine::initialize(config, std::move(logger), control);
+        }
+    };
+    ChorusRuntime runtime;
+    auto reported = std::make_shared<std::atomic<bool>>(false);
+    auto engine = std::make_unique<ProgressEngine>();
+    engine->reported = reported;
+    auto admitted = runtime.load_engine(std::move(engine), {});
+    ASSERT_TRUE(admitted.ok());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!reported->load() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    ASSERT_TRUE(reported->load());
+    auto observed = wait_load_terminal(runtime, std::move(admitted));
+    ASSERT_TRUE(observed.ok());
+    ASSERT_EQ(observed.events.size(), 2U);
+    ASSERT_EQ(observed.events[0].kind, RuntimeEvent::Kind::ModelLoadProgress);
+    ASSERT_EQ(observed.events[0].load_progress->phase, LoadPhase::InitializingEngine);
+    ASSERT_FALSE(observed.events[0].load_progress->fraction);
+    ASSERT_EQ(observed.events[1].kind, RuntimeEvent::Kind::ModelLoaded);
+    auto logs = runtime.poll_logs();
+    ASSERT_EQ(logs.size(), 1U);
+    ASSERT_TRUE(runtime.poll().empty());
+}
+
+TEST(RuntimePreparation, In_flight_progress_drains_across_polls_without_regressing_or_replaying) {
+    class ProgressEngine : public PreparationEngine {
+      public:
+        std::shared_ptr<LoadGate> first;
+        std::shared_ptr<LoadGate> second;
+        std::optional<InitializationFailure> initialize(const ChorusConfig& config, Logger logger,
+                                                        const InitializationControl& control) override {
+            control.on_progress({LoadPhase::LoadingModel, 0.4f});
+            first->hold();
+            control.on_progress({LoadPhase::LoadingModel, 0.2f});
+            control.on_progress({LoadPhase::LoadingModel, 0.7f});
+            second->hold();
+            control.on_progress({LoadPhase::LoadingModel, 0.6f});
+            return PreparationEngine::initialize(config, std::move(logger), control);
+        }
+    };
+    ChorusRuntime runtime;
+    auto first = std::make_shared<LoadGate>();
+    auto second = std::make_shared<LoadGate>();
+    ReleaseLoadGate release_first{first};
+    ReleaseLoadGate release_second{second};
+    auto engine = std::make_unique<ProgressEngine>();
+    engine->first = first;
+    engine->second = second;
+    auto admitted = runtime.load_engine(std::move(engine), {});
+    ASSERT_TRUE(admitted.ok());
+    ASSERT_TRUE(first->wait_entered());
+    auto early = runtime.poll();
+    ASSERT_EQ(early.size(), 1U);
+    ASSERT_EQ(early[0].kind, RuntimeEvent::Kind::ModelLoadProgress);
+    ASSERT_EQ(early[0].load_id, admitted.load_id);
+    ASSERT_EQ(early[0].load_progress->fraction, 0.4f);
+    ASSERT_TRUE(runtime.poll().empty());
+    first->release();
+    ASSERT_TRUE(second->wait_entered());
+    auto later = runtime.poll();
+    ASSERT_EQ(later.size(), 1U);
+    ASSERT_EQ(later[0].kind, RuntimeEvent::Kind::ModelLoadProgress);
+    ASSERT_EQ(later[0].load_progress->fraction, 0.7f);
+    ASSERT_TRUE(runtime.poll().empty());
+    second->release();
+    auto terminal = wait_load_terminal(runtime, std::move(admitted));
+    ASSERT_TRUE(terminal.ok());
+    ASSERT_EQ(terminal.events.size(), 1U);
+    ASSERT_EQ(terminal.events[0].kind, RuntimeEvent::Kind::ModelLoaded);
+    ASSERT_TRUE(runtime.poll().empty());
+}
+
+TEST(RuntimePreparation, Initialization_is_off_thread_and_cancellation_wins_before_return) {
+    ChorusRuntime runtime;
+    auto gate = std::make_shared<LoadGate>();
+    ReleaseLoadGate release{gate};
+    auto engine = std::make_unique<PreparationEngine>();
+    engine->on_initialize = [gate] { gate->hold(); };
+    auto config = ChorusConfig{};
+    config.model.model_id = "original";
+    auto admitted = runtime.load_engine(std::move(engine), config);
+    ASSERT_TRUE(admitted.ok());
+    ASSERT_TRUE(gate->wait_entered());
+    config.model.model_id = "modified";
+    ASSERT_FALSE(runtime.is_loaded());
+    ASSERT_EQ(runtime.active_load_id(), admitted.load_id);
+    ASSERT_EQ(runtime.submit(raw("too soon")).error, ChorusError::EngineNotReady);
+    ASSERT_EQ(runtime.load_engine(std::make_unique<PreparationEngine>(), {}).error, ChorusError::InvalidRequest);
+    ASSERT_TRUE(runtime.poll().empty());
+    ASSERT_TRUE(runtime.cancel_load(admitted.load_id));
+    gate->release();
+    auto cancelled = wait_load_terminal(runtime, std::move(admitted));
+    ASSERT_EQ(cancelled.error, ChorusError::Cancelled);
+    ASSERT_EQ(cancelled.events.back().model_id, "original");
+    ASSERT_EQ(cancelled.events.back().kind, RuntimeEvent::Kind::ModelLoadFailed);
+    ASSERT_FALSE(runtime.cancel_load(cancelled.load_id));
+    ASSERT_TRUE(runtime.poll().empty());
+    auto retry = load_runtime(runtime, std::make_unique<PreparationEngine>(), {});
+    ASSERT_TRUE(retry.ok());
+    ASSERT_TRUE(runtime.is_loaded());
+}
+
+TEST(RuntimePreparation, Cancellation_after_candidate_is_parked_prevents_publication) {
+    ChorusRuntime runtime;
+    auto admitted = runtime.load_engine(std::make_unique<PreparationEngine>(), {});
+    ASSERT_TRUE(admitted.ok());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!runtime.test_load_parked(admitted.load_id) && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    ASSERT_TRUE(runtime.test_load_parked(admitted.load_id));
+    ASSERT_FALSE(runtime.is_loaded());
+    ASSERT_EQ(runtime.active_load_id(), admitted.load_id);
+    ASSERT_TRUE(runtime.cancel_load(admitted.load_id));
+    auto observed = wait_load_terminal(runtime, std::move(admitted));
+    ASSERT_EQ(observed.error, ChorusError::Cancelled);
+    ASSERT_EQ(observed.events.back().kind, RuntimeEvent::Kind::ModelLoadFailed);
+    ASSERT_FALSE(runtime.is_loaded());
+    ASSERT_TRUE(runtime.poll().empty());
+}
+
+TEST(RuntimePreparation, Cancellation_accepted_before_provider_failure_wins_and_later_cancel_cannot_rewrite_failure) {
+    ChorusRuntime runtime;
+    auto gate = std::make_shared<LoadGate>();
+    ReleaseLoadGate release{gate};
+    auto engine = std::make_unique<PreparationEngine>();
+    engine->on_initialize = [gate] { gate->hold(); };
+    engine->fail_initialize_with = ChorusError::ModelLoad;
+    auto admitted = runtime.load_engine(std::move(engine), {});
+    ASSERT_TRUE(admitted.ok());
+    ASSERT_TRUE(gate->wait_entered());
+    ASSERT_TRUE(runtime.cancel_load(admitted.load_id));
+    ASSERT_TRUE(runtime.cancel_load(admitted.load_id));
+    gate->release();
+    auto cancelled = wait_load_terminal(runtime, std::move(admitted));
+    ASSERT_EQ(cancelled.error, ChorusError::Cancelled);
+    ASSERT_FALSE(runtime.cancel_load(cancelled.load_id));
+    auto next = std::make_unique<PreparationEngine>();
+    next->fail_initialize_with = ChorusError::ModelLoad;
+    auto failed_admission = runtime.load_engine(std::move(next), {});
+    ASSERT_TRUE(failed_admission.ok());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!runtime.test_load_committed(failed_admission.load_id) && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    ASSERT_TRUE(runtime.test_load_committed(failed_admission.load_id));
+    ASSERT_EQ(runtime.active_load_id(), failed_admission.load_id);
+    ASSERT_FALSE(runtime.cancel_load(failed_admission.load_id));
+    ASSERT_EQ(runtime.load_engine(std::make_unique<PreparationEngine>(), {}).error, ChorusError::InvalidRequest);
+    auto failed = wait_load_terminal(runtime, std::move(failed_admission));
+    ASSERT_EQ(failed.error, ChorusError::ModelLoad);
+    ASSERT_EQ(failed.events.back().kind, RuntimeEvent::Kind::ModelLoadFailed);
+    ASSERT_EQ(failed.events.back().error, ChorusError::ModelLoad);
+    ASSERT_FALSE(runtime.cancel_load(failed.load_id));
+    ASSERT_TRUE(runtime.poll().empty());
+    ASSERT_TRUE(load_runtime(runtime, std::make_unique<PreparationEngine>(), {}).ok());
+}
+
+TEST(RuntimePreparation, Stop_fences_unpublished_candidate_and_preserves_the_load_terminal) {
+    ChorusRuntime runtime;
+    auto gate = std::make_shared<LoadGate>();
+    ReleaseLoadGate release{gate};
+    auto engine = std::make_unique<PreparationEngine>();
+    engine->on_initialize = [gate] { gate->hold(); };
+    auto admitted = runtime.load_engine(std::move(engine), {});
+    ASSERT_TRUE(admitted.ok());
+    ASSERT_TRUE(gate->wait_entered());
+    ASSERT_TRUE(runtime.cancel_load(admitted.load_id));
+    gate->release();
+    runtime.stop_all();
+    runtime.stop_all();
+    ASSERT_FALSE(runtime.is_loaded());
+    auto terminal = wait_load_terminal(runtime, std::move(admitted));
+    ASSERT_EQ(terminal.error, ChorusError::Cancelled);
+    ASSERT_EQ(terminal.events.back().kind, RuntimeEvent::Kind::ModelLoadFailed);
+    ASSERT_TRUE(runtime.poll().empty());
+    ASSERT_TRUE(load_runtime(runtime, std::make_unique<PreparationEngine>(), {}).ok());
+}
+
+TEST(RuntimePreparation, Partial_initialization_failures_fence_resources_before_terminal_and_recover) {
+    enum class Failure { StandardException, NonstandardException, FalseReadiness, MissingPreparation, WorkerStart };
+    class Candidate : public PreparationEngine {
+      public:
+        explicit Candidate(Failure failure) : failure(failure) {}
+        Failure failure;
+        std::optional<InitializationFailure> initialize(const ChorusConfig& config, Logger logger,
+                                                        const InitializationControl& control) override {
+            auto result = PreparationEngine::initialize(config, std::move(logger), control);
+            if (failure == Failure::StandardException)
+                throw std::runtime_error("partial initialization failed");
+            return result;
+        }
+        bool is_initialized() const override {
+            return failure != Failure::FalseReadiness && PreparationEngine::is_initialized();
+        }
+        std::shared_ptr<RequestPreparation> request_preparation() const override {
+            return failure == Failure::MissingPreparation ? nullptr : PreparationEngine::request_preparation();
+        }
+        std::optional<LoadedModelInfo> loaded_model_info() const override {
+            if (failure == Failure::NonstandardException)
+                throw 42;
+            return PreparationEngine::loaded_model_info();
+        }
+    };
+    struct Cleanup {
+        std::atomic<int> shutdowns{0};
+        std::atomic<int> destructions{0};
+        std::atomic<bool> closed_before_destruction{false};
+    };
+    ChorusRuntime runtime;
+    for (auto failure : {Failure::StandardException, Failure::NonstandardException, Failure::FalseReadiness,
+                         Failure::MissingPreparation, Failure::WorkerStart}) {
+        SCOPED_TRACE(static_cast<int>(failure));
+        auto cleanup = std::make_shared<Cleanup>();
+        auto candidate = std::make_unique<Candidate>(failure);
+        std::weak_ptr<GatedPreparation> service = candidate->service;
+        candidate->on_shutdown = [cleanup] { ++cleanup->shutdowns; };
+        candidate->on_destroy = [cleanup, service] {
+            if (auto retained = service.lock())
+                cleanup->closed_before_destruction = retained->closed.load();
+            ++cleanup->destructions;
+        };
+        if (failure == Failure::WorkerStart)
+            runtime.test_fail_next_preparation_worker_start();
+        auto admitted = runtime.load_engine(std::move(candidate), {});
+        ASSERT_TRUE(admitted.ok());
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!runtime.test_load_committed(admitted.load_id) && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        ASSERT_TRUE(runtime.test_load_committed(admitted.load_id));
+        ASSERT_EQ(runtime.active_load_id(), admitted.load_id);
+        ASSERT_EQ(cleanup->shutdowns.load(), 1);
+        ASSERT_EQ(cleanup->destructions.load(), 1);
+        ASSERT_TRUE(cleanup->closed_before_destruction.load());
+        ASSERT_TRUE(service.expired());
+        auto observed = wait_load_terminal(runtime, std::move(admitted));
+        ASSERT_EQ(observed.error, failure == Failure::FalseReadiness || failure == Failure::MissingPreparation
+                                      ? ChorusError::EngineNotReady : ChorusError::Unknown);
+        ASSERT_EQ(observed.events.back().kind, RuntimeEvent::Kind::ModelLoadFailed);
+        ASSERT_EQ(std::count_if(observed.events.begin(), observed.events.end(), [](const auto& event) {
+            return event.kind == RuntimeEvent::Kind::ModelLoadFailed || event.kind == RuntimeEvent::Kind::ModelLoaded;
+        }), 1);
+        ASSERT_TRUE(std::none_of(observed.events.begin(), observed.events.end(), [](const auto& event) {
+            return event.kind == RuntimeEvent::Kind::EngineFailed;
+        }));
+        ASSERT_FALSE(observed.events.back().text.empty());
+        if (failure == Failure::StandardException)
+            ASSERT_EQ(observed.events.back().text, "partial initialization failed");
+        ASSERT_FALSE(runtime.is_loaded());
+        ASSERT_TRUE(runtime.poll().empty());
+        ASSERT_TRUE(load_runtime(runtime, std::make_unique<PreparationEngine>(), {}).ok());
+        auto request = runtime.submit(raw("after failed load"));
+        ASSERT_TRUE(request.ok());
+        ASSERT_EQ(drain_runtime_events(runtime).back().kind, RuntimeEvent::Kind::Complete);
+    }
+}
+
+TEST(RuntimePreparation, Failed_load_setup_and_exhausted_identity_preserve_the_loaded_engine) {
+    ChorusRuntime failed_start;
+    failed_start.test_fail_next_worker_start();
+    auto rejected_start = failed_start.load_engine(std::make_unique<PreparationEngine>(), {});
+    ASSERT_EQ(rejected_start.error, ChorusError::Unknown);
+    ASSERT_EQ(rejected_start.load_id, -1);
+    ASSERT_FALSE(failed_start.active_load_id());
+    ASSERT_TRUE(load_runtime(failed_start, std::make_unique<PreparationEngine>(), {}).ok());
+    auto current = failed_start.submit(raw("still usable"));
+    ASSERT_TRUE(current.ok());
+    failed_start.test_fail_next_load_setup();
+    auto rejected_setup = failed_start.load_engine(std::make_unique<PreparationEngine>(), {});
+    ASSERT_EQ(rejected_setup.error, ChorusError::Unknown);
+    ASSERT_EQ(rejected_setup.load_id, -1);
+    ASSERT_FALSE(failed_start.active_load_id());
+    ASSERT_TRUE(failed_start.is_loaded());
+    ASSERT_EQ(drain_runtime_events(failed_start)[0].request_id, current.request_id);
+    failed_start.test_exhaust_load_ids();
+    auto exhausted = failed_start.load_engine(std::make_unique<PreparationEngine>(), {});
+    ASSERT_EQ(exhausted.error, ChorusError::InvalidRequest);
+    ASSERT_EQ(exhausted.load_id, -1);
+    ASSERT_FALSE(failed_start.active_load_id());
+    ASSERT_TRUE(failed_start.is_loaded());
+    ASSERT_TRUE(failed_start.submit(raw("after rejection")).ok());
+    ASSERT_EQ(drain_runtime_events(failed_start).back().kind, RuntimeEvent::Kind::Complete);
+}
+
+TEST(RuntimePreparation, Parked_candidate_that_loses_health_is_cleaned_up_before_failure_terminal) {
+    class FailingCandidate : public PreparationEngine {
+      public:
+        std::shared_ptr<std::atomic<bool>> healthy;
+        bool is_initialized() const override {
+            return PreparationEngine::is_initialized() && healthy->load();
+        }
+    };
+    int shutdowns = 0;
+    ChorusRuntime runtime;
+    auto candidate = std::make_unique<FailingCandidate>();
+    auto healthy = std::make_shared<std::atomic<bool>>(true);
+    candidate->healthy = healthy;
+    candidate->shutdown_count_sink = &shutdowns;
+    auto admitted = runtime.load_engine(std::move(candidate), {});
+    ASSERT_TRUE(admitted.ok());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!runtime.test_load_parked(admitted.load_id) && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    ASSERT_TRUE(runtime.test_load_parked(admitted.load_id));
+    healthy->store(false);
+    auto observed = wait_load_terminal(runtime, std::move(admitted));
+    ASSERT_EQ(observed.error, ChorusError::EngineNotReady);
+    ASSERT_EQ(observed.events.back().kind, RuntimeEvent::Kind::ModelLoadFailed);
+    ASSERT_EQ(shutdowns, 1);
+    ASSERT_FALSE(runtime.is_loaded());
+    ASSERT_TRUE(runtime.poll().empty());
+    ASSERT_TRUE(load_runtime(runtime, std::make_unique<PreparationEngine>(), {}).ok());
+}
+
+TEST(RuntimePreparation, Acceptance_closes_old_preparation_before_worker_retires_it) {
+    ChorusRuntime runtime;
+    auto old = std::make_unique<PreparationEngine>();
+    auto service = old->service;
+    service->gate_at = 1;
+    ASSERT_TRUE(load_runtime(runtime, std::move(old), {}).ok());
+    ReleaseGate release_service{service};
+    auto first = runtime.count_message_tokens(MessageContent::text("running"));
+    ASSERT_TRUE(service->wait_entered());
+    auto queued = runtime.count_message_tokens(MessageContent::text("queued"));
+    ASSERT_TRUE(first.ok() && queued.ok());
+    runtime.test_hold_next_retirement();
+    ReleaseRuntimeRetirement release_retirement{runtime};
+    auto admitted = runtime.load_engine(std::make_unique<PreparationEngine>(), {});
+    ASSERT_TRUE(admitted.ok());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!runtime.test_retirement_held() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::yield();
+    const bool held = runtime.test_retirement_held();
+    if (!held) {
+        service->release();
+        runtime.test_release_retirement();
+    }
+    ASSERT_TRUE(held);
+    auto progress = runtime.poll();
+    ASSERT_EQ(progress.back().kind, RuntimeEvent::Kind::ModelLoadProgress);
+    ASSERT_EQ(progress.back().load_progress->phase, LoadPhase::ReleasingEngine);
+    service->release();
+    {
+        std::lock_guard lock(service->mutex);
+        ASSERT_EQ(service->count_calls, 1U);
+    }
+    runtime.test_release_retirement();
+    auto observed = wait_load_terminal(runtime, std::move(admitted));
+    ASSERT_TRUE(observed.ok());
+    std::erase_if(observed.events, [](const auto& event) { return event.kind == RuntimeEvent::Kind::ModelLoadProgress; });
+    ASSERT_EQ(observed.events.size(), 3U);
+    ASSERT_EQ(observed.events[0].error, ChorusError::Cancelled);
+    ASSERT_EQ(observed.events[1].error, ChorusError::Cancelled);
+    ASSERT_EQ(std::set<RequestId>({observed.events[0].request_id, observed.events[1].request_id}),
+              std::set<RequestId>({first.request_id, queued.request_id}));
+    ASSERT_EQ(observed.events[2].kind, RuntimeEvent::Kind::ModelLoaded);
+}
+
+TEST(RuntimePreparation, Replacement_admission_does_not_wait_for_old_shutdown_or_start_candidate_early) {
+    ChorusRuntime runtime;
+    auto old = std::make_unique<PreparationEngine>();
+    auto gate = std::make_shared<LoadGate>();
+    ReleaseLoadGate release{gate};
+    old->on_shutdown = [gate] { gate->hold(); };
+    ASSERT_TRUE(load_runtime(runtime, std::move(old), {}).ok());
+    auto next = std::make_unique<PreparationEngine>();
+    std::atomic<bool> entered_init{false};
+    next->on_initialize = [&] { entered_init = true; };
+    auto admitted = runtime.load_engine(std::move(next), {});
+    ASSERT_TRUE(admitted.ok());
+    ASSERT_TRUE(gate->wait_entered());
+    ASSERT_FALSE(entered_init);
+    ASSERT_FALSE(runtime.is_loaded());
+    ASSERT_TRUE(runtime.cancel_load(admitted.load_id));
+    gate->release();
+    auto result = wait_load_terminal(runtime, std::move(admitted));
+    ASSERT_EQ(result.error, ChorusError::Cancelled);
+    ASSERT_FALSE(entered_init);
+}
+
 TEST(RuntimePreparation, Reload_joins_gated_preparation_before_old_destruction_and_replacement_initialization) {
     ChorusRuntime runtime;
     auto engine = std::make_unique<PreparationEngine>();
     auto service = engine->service;
     service->gate_at = 1;
-    bool old_destroyed = false;
+    std::atomic<bool> old_destroyed{false};
     engine->on_shutdown = [&] { EXPECT_TRUE(service->gate_exited); };
     engine->on_destroy = [&] { old_destroyed = true; };
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
     auto old = runtime.render_prompt(chat());
     ASSERT_TRUE(service->wait_entered());
@@ -561,11 +986,16 @@ TEST(RuntimePreparation, Reload_joins_gated_preparation_before_old_destruction_a
         service->release();
     });
     replacing = true;
-    auto error = runtime.load_engine(std::move(replacement), {});
+    auto admission = runtime.load_engine(std::move(replacement), {});
+    ASSERT_TRUE(admission.ok());
+    ASSERT_FALSE(runtime.is_loaded());
     unblock.join();
-    ASSERT_FALSE(error);
-    auto events = runtime.poll();
-    ASSERT_EQ(events.size(), 1U);
+    auto loaded = wait_load_terminal(runtime, std::move(admission));
+    ASSERT_TRUE(loaded.ok());
+    auto events = loaded.events;
+    std::erase_if(events, [](const auto& event) { return event.kind == RuntimeEvent::Kind::ModelLoadProgress; });
+    ASSERT_EQ(events.size(), 2U);
+    ASSERT_EQ(events[1].kind, RuntimeEvent::Kind::ModelLoaded);
     ASSERT_EQ(events[0].request_id, old.request_id);
     ASSERT_EQ(events[0].error, ChorusError::Cancelled);
     auto fresh = runtime.render_prompt(chat());
@@ -573,12 +1003,45 @@ TEST(RuntimePreparation, Reload_joins_gated_preparation_before_old_destruction_a
     ASSERT_EQ(drain_runtime_events(runtime)[0].request_id, fresh.request_id);
 }
 
+TEST(RuntimePreparation, Buffered_preparation_success_and_cancelled_chat_drain_after_engine_teardown) {
+    ChorusRuntime runtime;
+    auto engine = std::make_unique<PreparationEngine>();
+    auto service = engine->service;
+    service->gate_at = 2;
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
+    ReleaseGate release{service};
+    auto counted = runtime.count_message_tokens(MessageContent::text("draft"));
+    auto interrupted = runtime.submit(chat());
+    ASSERT_TRUE(counted.ok() && interrupted.ok());
+    ASSERT_TRUE(service->wait_entered());
+    service->release();
+    runtime.stop_all();
+    auto loaded = wait_load_terminal(runtime, runtime.load_engine(std::make_unique<PreparationEngine>(), {}));
+    ASSERT_TRUE(loaded.ok());
+    auto events = loaded.events;
+    std::erase_if(events, [](const auto& event) { return event.kind == RuntimeEvent::Kind::ModelLoadProgress; });
+    ASSERT_EQ(events.size(), 3U);
+    ASSERT_EQ(events[2].kind, RuntimeEvent::Kind::ModelLoaded);
+    ASSERT_EQ(events[0].request_id, counted.request_id);
+    ASSERT_EQ(events[0].kind, RuntimeEvent::Kind::MessageTokenCount);
+    ASSERT_EQ(events[0].token_count, 5);
+    ASSERT_EQ(events[1].request_id, interrupted.request_id);
+    ASSERT_EQ(events[1].kind, RuntimeEvent::Kind::Error);
+    ASSERT_EQ(events[1].error, ChorusError::Cancelled);
+    ASSERT_TRUE(runtime.export_conversation_history("npc").empty());
+    ASSERT_EQ(runtime.last_turn_outcome("npc"), TurnOutcome::Cancelled);
+    auto fresh = runtime.submit(chat());
+    ASSERT_TRUE(fresh.ok());
+    ASSERT_EQ(drain_runtime_events(runtime).back().request_id, fresh.request_id);
+    ASSERT_TRUE(runtime.poll().empty());
+}
+
 TEST(RuntimePreparation, Node_cache_eviction_and_reimport_with_same_durable_ids_recompute_counts) {
     ChorusRuntime runtime;
     auto engine = std::make_unique<PreparationEngine>();
     engine->mock_per_request_context = 100000;
     auto service = engine->service;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     std::vector<ConversationMessage> messages;
     for (size_t i = 0; i < kMessageCountCacheEntries + 1; ++i)
         messages.push_back({static_cast<MessageId>(i), {MessageRole::System, MessageContent::text("x")}});
@@ -602,7 +1065,7 @@ TEST(RuntimePreparation, Regeneration_reuses_durable_id_but_not_the_replaced_con
     auto engine = std::make_unique<PreparationEngine>();
     engine->tokens = {"new reply"};
     auto service = engine->service;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ASSERT_FALSE(runtime.import_conversation_history("npc", {
         {4, {MessageRole::User, MessageContent::text("question")}},
         {5, {MessageRole::Assistant, MessageContent::text("old reply")}}
@@ -623,7 +1086,7 @@ TEST(RuntimePreparation, Injections_and_systems_survive_worker_fitting_and_zero_
     ChorusRuntime runtime;
     auto engine = std::make_unique<PreparationEngine>();
     engine->mock_per_request_context = 15;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), {}).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ASSERT_FALSE(runtime.import_conversation_history("npc", {
         {9, {MessageRole::System, MessageContent::text("S")}},
         {0, {MessageRole::User, MessageContent::text("old")}},

@@ -37,6 +37,10 @@ class RequestPreparation {
 /*
  * The service contract implemented by every inference provider.
  *
+ * An engine may transfer between host and lifecycle threads only at an exclusive
+ * handoff. No other caller invokes its methods during initialization, retirement,
+ * or destruction. After handoff, ordinary methods remain host-thread confined.
+ * Readiness queries used at publication must not block on provider work.
  * Callers invoke engine methods from their confined thread. An engine may
  * invoke request callbacks from any of its worker threads, so every callback
  * must be thread-safe and must not throw. Engine workers never invoke these methods.
@@ -57,21 +61,25 @@ class InferenceEngine {
      * engine that failed after initialization releases its existing resources
      * before acquiring replacements, so two models are never resident at once.
      *
-     * Initialization failures are returned instead of signalled.
+     * Initialization failures are returned instead of signalled. The control's
+     * progress sink is invocation-scoped, thread-safe and nonthrowing; providers
+     * must not retain it or invoke it after initialization returns. Cancellation
+     * is cooperative and partial resources must be reclaimed before returning.
      *
      * Returns:
      *  - `std::nullopt`: initialization succeeded.
-     *  - `ChorusError`: initialization failed.
+     *  - `Chorus::InitializationFailure`: initialization failed.
      *
      * Errors:
      *  - `ChorusError::UnsupportedModelFormat`: the provider cannot read the artifact.
      *  - `ChorusError::ModelLoad`: the weights failed to load.
      *  - `ChorusError::ContextInit`: the inference context failed to initialize.
      *  - `ChorusError::UnsupportedOption`: a load option the provider does not declare.
+     *  - `ChorusError::Cancelled`: initialization was interrupted.
      *  - `ChorusError::Unknown`: the provider could not classify the failure.
      */
     virtual std::optional<InitializationFailure>
-    initialize(const Chorus::ChorusConfig& chorus_config, Logger logger) = 0;
+    initialize(const Chorus::ChorusConfig& chorus_config, Logger logger, const InitializationControl& control) = 0;
 
     /// Whether the engine is ready to accept work.
     /// An engine that fails after initialization returns false, as does an
@@ -156,7 +164,8 @@ class InferenceEngine {
      * `ChorusRequest::on_event` is running or can begin, so callers may safely
      * destroy callback state. Calling this on an idle or stopped engine changes
      * nothing. Cancellation is signalled on `ChorusRequest::on_event` and not
-     * returned.
+     * returned. Shutdown and destruction must not throw, including after a
+     * failed or cancelled partial initialization.
      */
     virtual void shutdown() = 0;
 };

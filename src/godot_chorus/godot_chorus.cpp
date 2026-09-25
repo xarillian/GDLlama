@@ -51,6 +51,15 @@ static const char* chorus_error_name(Chorus::ChorusError e) {
     return "Unknown";
 }
 
+static ChorusLoadPhase::Value to_godot_load_phase(Chorus::LoadPhase phase) {
+    switch (phase) {
+    case Chorus::LoadPhase::ReleasingEngine: return ChorusLoadPhase::RELEASING_ENGINE;
+    case Chorus::LoadPhase::LoadingModel: return ChorusLoadPhase::LOADING_MODEL;
+    case Chorus::LoadPhase::InitializingEngine: return ChorusLoadPhase::INITIALIZING_ENGINE;
+    }
+    return ChorusLoadPhase::LOADING_MODEL;
+}
+
 static Chorus::Provider to_chorus_provider(GodotChorus::ProviderChoice provider) {
     return provider == GodotChorus::PROVIDER_ECHO ? Chorus::Provider::Echo : Chorus::Provider::Llama;
 }
@@ -288,20 +297,30 @@ void GodotChorus::_process(double /*delta*/) {
         case Chorus::RuntimeEvent::Kind::EngineFailed:
             emit_signal("engine_failed", to_godot(event.error), to_godot_string(event.text));
             break;
+        case Chorus::RuntimeEvent::Kind::ModelLoadProgress:
+            emit_signal("model_load_progress", event.load_id.value(), to_godot_string(event.model_id),
+                to_godot_load_phase(event.load_progress->phase),
+                event.load_progress->fraction.has_value(), event.load_progress->fraction.value_or(0.0f));
+            break;
+        case Chorus::RuntimeEvent::Kind::ModelLoaded:
+            emit_signal("model_loaded", event.load_id.value(), to_godot_string(event.model_id));
+            break;
+        case Chorus::RuntimeEvent::Kind::ModelLoadFailed:
+            emit_signal("model_load_failed", event.load_id.value(), to_godot_string(event.model_id),
+                to_godot(event.error), to_godot_string(event.text));
+            break;
         }
     }
 }
 
 // Core API
 
-bool GodotChorus::load_model() {
-    _last_load_error = ERR_NONE;
-    _last_load_error_message = String();
+Ref<ChorusLoadResult> GodotChorus::load_model() {
+    Ref<ChorusLoadResult> result;
+    result.instantiate();
     if (_provider != PROVIDER_ECHO && _model_path.is_empty()) {
-        _last_load_error = ERR_INVALID_REQUEST;
-        _last_load_error_message = "model_path is not set.";
-        UtilityFunctions::push_error("[Chorus] model_path is not set.");
-        return false;
+        result->set_result(-1, ERR_INVALID_REQUEST, "model_path is not set.");
+        return result;
     }
 
     const Chorus::Provider provider = to_chorus_provider(_provider);
@@ -322,19 +341,19 @@ bool GodotChorus::load_model() {
         config.provider_options[caps.provider_id] = Chorus::resolve_option_defaults(caps.load_options, _load_options);
 
     auto engine = Chorus::make_engine(provider);
-    auto err = _runtime.load_engine(std::move(engine), config);
-    // Before the verdict: a load logs the provider's own account of what
-    // happened, and a failure code with no account is the complaint this
-    // whole channel exists to answer.
-    drain_logs();
-    if (err.has_value()) {
-        _last_load_error = to_godot(err->error);
-        _last_load_error_message = to_godot_string(err->message);
-        UtilityFunctions::push_error(String("[Chorus] Model load failed: ") + chorus_error_name(err->error) + String(" - ") + _last_load_error_message);
-        return false;
-    }
-    return true;
+    const auto admission = _runtime.load_engine(std::move(engine), config);
+    result->set_result(admission.load_id, to_godot(admission.error), to_godot_string(admission.message));
+    return result;
 }
+
+#ifdef CHORUS_HOST_TEST
+void GodotChorus::test_hold_next_retirement() { _runtime.test_hold_next_retirement(); }
+bool GodotChorus::test_retirement_held() const { return _runtime.test_retirement_held(); }
+void GodotChorus::test_release_retirement() { _runtime.test_release_retirement(); }
+#endif
+
+bool GodotChorus::cancel_load(int64_t load_id) { return _runtime.cancel_load(load_id); }
+int64_t GodotChorus::get_active_load_id() const { return _runtime.active_load_id().value_or(-1); }
 
 void GodotChorus::stop_all() {
     _runtime.stop_all();
@@ -359,8 +378,6 @@ int64_t GodotChorus::get_effective_context_size() const {
     return info ? info->per_request_context.value_or(0) : 0;
 }
 
-int GodotChorus::get_last_load_error() const { return _last_load_error; }
-String GodotChorus::get_last_load_error_message() const { return _last_load_error_message; }
 
 Ref<ChorusSubmitResult> GodotChorus::generate(const Ref<ChorusRequest>& request) {
     Ref<ChorusInferenceRequest> source = request;
@@ -572,8 +589,8 @@ bool GodotChorus::_set(const StringName& name, const Variant& value) {
         return true;
     }
     _load_options[descriptor->key] = std::move(*coerced);
-    if (is_loaded())
-        UtilityFunctions::push_warning("[Chorus] load option changed while loaded; takes effect on the next load_model().");
+    if (is_loaded() || get_active_load_id() >= 0)
+        UtilityFunctions::push_warning("[Chorus] load option changed while loaded or loading; takes effect on the next accepted load_model().");
     if (is_prerequisite_for_any_option(load_option_descriptors(), descriptor->key)) {
         // Dependent options may have entered or left the Inspector surface.
         notify_property_list_changed();
@@ -625,9 +642,9 @@ bool GodotChorus::_property_get_revert(const StringName& name, Variant& ret) con
 }
 
 void GodotChorus::set_provider(ProviderChoice provider) {
-    if (is_loaded()) {
+    if (is_loaded() || get_active_load_id() >= 0) {
         UtilityFunctions::push_warning(
-            "[Chorus] provider changed while loaded; takes effect on the next load_model()."
+            "[Chorus] provider changed while loaded or loading; takes effect on the next accepted load_model()."
         );
     }
     _provider = provider;
@@ -713,6 +730,14 @@ float GodotChorus::similarity_cos(PackedFloat32Array array1, PackedFloat32Array 
 
 void GodotChorus::_bind_methods() {
     // Signals
+    ADD_SIGNAL(MethodInfo("model_load_progress", PropertyInfo(Variant::INT, "load_id"),
+        PropertyInfo(Variant::STRING, "model_id"),
+        PropertyInfo(Variant::INT, "phase", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT, "ChorusLoadPhase.Value"),
+        PropertyInfo(Variant::BOOL, "has_fraction"), PropertyInfo(Variant::FLOAT, "fraction")));
+    ADD_SIGNAL(MethodInfo("model_loaded", PropertyInfo(Variant::INT, "load_id"), PropertyInfo(Variant::STRING, "model_id")));
+    ADD_SIGNAL(MethodInfo("model_load_failed", PropertyInfo(Variant::INT, "load_id"),
+        PropertyInfo(Variant::STRING, "model_id"), PropertyInfo(Variant::INT, "error_code"),
+        PropertyInfo(Variant::STRING, "message")));
     ADD_SIGNAL(MethodInfo(
         "token_generated",
         PropertyInfo(Variant::INT, "request_id"),
@@ -809,6 +834,13 @@ void GodotChorus::_bind_methods() {
 
     // Runtime methods
     ClassDB::bind_method(D_METHOD("load_model"), &GodotChorus::load_model);
+#ifdef CHORUS_HOST_TEST
+    ClassDB::bind_method(D_METHOD("test_hold_next_retirement"), &GodotChorus::test_hold_next_retirement);
+    ClassDB::bind_method(D_METHOD("test_retirement_held"), &GodotChorus::test_retirement_held);
+    ClassDB::bind_method(D_METHOD("test_release_retirement"), &GodotChorus::test_release_retirement);
+#endif
+    ClassDB::bind_method(D_METHOD("cancel_load", "load_id"), &GodotChorus::cancel_load);
+    ClassDB::bind_method(D_METHOD("get_active_load_id"), &GodotChorus::get_active_load_id);
     ClassDB::bind_method(D_METHOD("stop_all"), &GodotChorus::stop_all);
     ClassDB::bind_method(D_METHOD("is_loaded"), &GodotChorus::is_loaded);
     ClassDB::bind_method(D_METHOD("supports_embeddings"), &GodotChorus::supports_embeddings);
@@ -843,10 +875,7 @@ void GodotChorus::_bind_methods() {
     );
     ClassDB::bind_method(D_METHOD("get_effective_context_size"), &GodotChorus::get_effective_context_size);
     ADD_PROPERTY(PropertyInfo(Variant::INT, "effective_context_size", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_effective_context_size");
-    ClassDB::bind_method(D_METHOD("get_last_load_error"), &GodotChorus::get_last_load_error);
-    ADD_PROPERTY(PropertyInfo(Variant::INT, "last_load_error", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_last_load_error");
-    ClassDB::bind_method(D_METHOD("get_last_load_error_message"), &GodotChorus::get_last_load_error_message);
-    ADD_PROPERTY(PropertyInfo(Variant::STRING, "last_load_error_message", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_last_load_error_message");
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "active_load_id", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_active_load_id");
 
     // Provider load options such as `context_size` and `use_gpu` are not bound
     // here. `GodotChorus::_get_property_list` renders the selected provider's

@@ -107,7 +107,7 @@ class TokenGate {
 
 std::unique_ptr<Chorus::InferenceEngine> start_engine(const EngineUnderTest& subject) {
     auto engine = subject.make_engine();
-    if (engine->initialize(subject.make_config(), {}).has_value())
+    if (engine->initialize(subject.make_config(), {}, {}).has_value())
         return nullptr;
     return engine;
 }
@@ -127,6 +127,20 @@ ChorusRequest short_request(const EngineUnderTest& subject, RequestId id) {
 }
 
 // --- cases ---
+
+void case_pre_cancelled_initialization_can_recover(const EngineUnderTest& subject) {
+    auto engine = subject.make_engine();
+    std::stop_source stop;
+    stop.request_stop();
+    const auto failure = engine->initialize(subject.make_config(), {}, {stop.get_token(), {}});
+    ASSERT_TRUE(failure.has_value());
+    EXPECT_EQ(failure->error, Chorus::ChorusError::Cancelled);
+    EXPECT_FALSE(engine->is_initialized());
+    engine->shutdown();
+    ASSERT_FALSE(engine->initialize(subject.make_config(), {}, {}).has_value());
+    ASSERT_TRUE(engine->is_initialized());
+    engine->shutdown();
+}
 
 /*
  * An engine that will not run the work says so, rather than dropping it.
@@ -352,6 +366,10 @@ void case_shutdown_is_idempotent(const EngineUnderTest& subject) {
 }
 
 } // namespace
+
+TEST_P(EngineContractTest, contract_pre_cancelled_initialization_can_recover) {
+    case_pre_cancelled_initialization_can_recover(GetParam());
+}
 
 TEST_P(EngineContractTest, contract_submit_before_initialize_is_refused) {
     case_submit_before_initialize_is_refused(GetParam());

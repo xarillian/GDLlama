@@ -46,9 +46,38 @@ The staged addon is written to `plugin/addons/chorus`. To use it in a Godot proj
 2. Open the project and enable **Chorus LLM** under **Project Settings > Plugins**.
 3. Add a `GodotChorus` node to a scene.
 4. Set its `model_path` to a compatible GGUF model. 
-5. Call `load_model()` and inspect `last_load_error` and `last_load_error_message` if it returns `false`.
+5. Connect load signals, call `load_model()`, and check its typed `ChorusLoadResult.accepted` before waiting for the identified terminal.
 
-`model_path` accepts absolute paths and Godot `res://` or `user://` paths to loose GGUF files. A model packed inside a PCK must currently be extracted to the filesystem.
+```gdscript
+var terminals := {}
+chorus.model_loaded.connect(func(id, model_id): terminals[id] = true)
+chorus.model_load_failed.connect(func(id, model_id, error_code, message):
+    terminals[id] = false
+    if error_code == GodotChorus.ERR_CANCELLED:
+        print("Model load %d cancelled" % id)
+    else:
+        push_error("Model load %d failed (%d): %s" % [id, error_code, message]))
+chorus.model_load_progress.connect(func(id, model_id, phase, has_fraction, fraction):
+    if has_fraction:
+        print("Load %d phase %d: %.1f%%" % [id, phase, fraction * 100.0])
+    else:
+        print("Load %d phase %d: progress unknown" % [id, phase]))
+var load := chorus.load_model()
+if not load.accepted:
+    push_error("Load rejected: %s" % load.message)
+else:
+    # To abandon this attempt, call chorus.cancel_load(load.load_id) and still await its terminal.
+    var deadline := Time.get_ticks_msec() + 30000
+    while not terminals.has(load.load_id) and Time.get_ticks_msec() < deadline:
+        await get_tree().process_frame
+    if terminals.get(load.load_id, false) and chorus.is_loaded():
+        var result := chorus.generate(ChorusRequest.stateless("Hello"))
+        assert(result.accepted)
+    elif not terminals.has(load.load_id):
+        push_error("Timed out waiting for load %d" % load.load_id)
+```
+
+A weight-loading fraction of 100% is not readiness. A success signal records publication, but an earlier handler in the same polled batch can stop or replace the engine; correlate the ID and check current readiness when acting. Changing node properties while loaded or loading affects only the next accepted load. Cancellation admission does not wait for cleanup; explicit `stop_all()` and node destruction do. `model_path` accepts absolute paths and Godot `res://` or `user://` paths to loose GGUF files. A model packed inside a PCK must currently be extracted to the filesystem.
 
 ## Architecture
 See [Architecture](docs/ARCHITECTURE.md) for the dependency model, service

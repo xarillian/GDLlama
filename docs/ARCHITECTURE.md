@@ -181,23 +181,36 @@ Two rules follow:
 - **Host-facing APIs are host-thread confined.** Everything a host adapter
   calls on the application layer happens on one thread, and the application
   layer may assume it.
+- **Engine handoff is exclusive.** A host may admit one identified load without
+  waiting for old-engine retirement or new-engine initialization. The old
+  preparation closes admission on acceptance; the lifecycle worker fences its
+  callbacks and resources before it initializes the candidate. Candidate
+  readiness is published only through host polling. Between acceptance and
+  publication, the host cannot submit new inference or preparation work.
+  Ordinary provider methods remain host-thread confined after publication.
 - **Preparation is off-thread.** Each loaded runtime owns one bounded FIFO
   preparation worker. It consumes immutable history snapshots through the core
   `Chorus::RequestPreparation` service, not host-confined engine methods. Cached
   literal-content counts guide lazy selection; exact rendered checks determine
   fit. Validation and fitting failures after admission are polled terminals.
-  Preview and count operations do not occupy inference sessions. Stop and reload
-  join preparation before provider resource teardown; an indivisible vendor call
-  may delay stop, but ordinary admission, cancellation and polling never wait for
-  that call. Provider shutdown also revokes independently retained preparation
-  handles before releasing their resources.
+  Preview and count operations do not occupy inference sessions. Replacement
+  hands the old lifetime to an exclusive lifecycle worker, which joins its
+  preparation worker and releases its provider resources before initializing
+  the successor. An indivisible vendor operation can delay cleanup but not
+  load or cancellation admission. Cancellation is cooperative and its terminal
+  follows completed cleanup, with no fixed deadline. Explicit stop and
+  destruction remain blocking lifetime fences. Provider shutdown also revokes
+  independently retained preparation handles before releasing their resources.
 - **Providers may be asynchronous internally.** A provider may run threads,
   and contract callbacks may arrive from any of them. Callback sinks
   supplied to providers must therefore be thread-safe.
 - **Events cross the boundary through a synchronized channel.** Asynchronous
   provider signals are never delivered directly into host code; they are
   handed to the application layer's channel and surface to the host on the
-  host's thread, at the host's cadence.
+  host's thread, at the host's cadence. Accepted model loads are not ready
+  until polling publishes their identified success; progress does not imply
+  readiness. Handlers must preserve published event identity even if earlier
+  handlers stop or replace the engine.
 - **Shutdown fences callbacks.** After a provider's stop completes, that
   provider must never invoke a previously supplied callback again. Everything
   above relies on this to tear down safely.

@@ -120,7 +120,7 @@ EchoEngine::~EchoEngine() {
     shutdown();
 }
 
-std::optional<InitializationFailure> EchoEngine::initialize(const ChorusConfig& config, Logger logger) {
+std::optional<InitializationFailure> EchoEngine::initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) {
     _log = std::move(logger);
 
     if (_initialized) {
@@ -134,11 +134,31 @@ std::optional<InitializationFailure> EchoEngine::initialize(const ChorusConfig& 
         return InitializationFailure{ChorusError::UnsupportedOption, "EchoEngine accepts no provider options."};
     }
 
-    _preparation = std::make_shared<Preparation>(_log);
-    _running = true;
-    _worker = std::thread(&EchoEngine::worker_loop, this);
-    _initialized = true;
-    return std::nullopt;
+    if (control.stop_token.stop_requested())
+        return InitializationFailure{ChorusError::Cancelled, "Echo initialization cancelled."};
+    if (control.on_progress)
+        control.on_progress({LoadPhase::InitializingEngine, std::nullopt});
+    try {
+        _preparation = std::make_shared<Preparation>(_log);
+        if (control.stop_token.stop_requested()) {
+            shutdown();
+            return InitializationFailure{ChorusError::Cancelled, "Echo initialization cancelled."};
+        }
+        _running = true;
+        _worker = std::thread(&EchoEngine::worker_loop, this);
+        if (control.stop_token.stop_requested()) {
+            shutdown();
+            return InitializationFailure{ChorusError::Cancelled, "Echo initialization cancelled."};
+        }
+        _initialized = true;
+        return std::nullopt;
+    } catch (const std::exception& e) {
+        shutdown();
+        return InitializationFailure{ChorusError::Unknown, e.what()};
+    } catch (...) {
+        shutdown();
+        return InitializationFailure{ChorusError::Unknown, "Echo initialization failed."};
+    }
 }
 
 bool EchoEngine::is_initialized() const {
@@ -345,6 +365,7 @@ void EchoEngine::shutdown() {
         });
     }
     _initialized = false;
+    _preparation.reset();
 
     for (auto& request : queued) {
         if (!request.on_event)

@@ -14,7 +14,7 @@ static func run_tests(parent: Node) -> void:
 	var chorus: GodotChorus = ChorusNodeScene.instantiate()
 	chorus.provider = GodotChorus.PROVIDER_ECHO
 	parent.add_child(chorus)
-	chorus.load_model()
+	await LoadWaiter.load(chorus)
 
 	await TestReport.run("structured log records reach Godot unchanged", func():
 		var request_id := chorus.generate(_temperature_request()).request_id

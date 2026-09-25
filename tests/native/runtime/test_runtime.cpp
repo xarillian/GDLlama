@@ -49,16 +49,17 @@ TEST(Runtime, Runtime_submit_before_load_returns_EngineNotReady) {
 
 TEST(Runtime, Runtime_load_engine_success_and_is_loaded) {
     Chorus::ChorusRuntime runtime;
-    auto err = runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
-    ASSERT_TRUE(!err.has_value());
+    auto err = load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config());
+    ASSERT_TRUE(err.ok());
     ASSERT_TRUE(runtime.is_loaded());
+    ASSERT_EQ(err.events.back().kind, Chorus::RuntimeEvent::Kind::ModelLoaded);
 }
 
 TEST(Runtime, Runtime_load_engine_null_engine_is_InvalidRequest) {
     Chorus::ChorusRuntime runtime;
-    auto err = runtime.load_engine(nullptr, make_config());
-    ASSERT_TRUE(err.has_value());
-    ASSERT_TRUE(err.value() == Chorus::ChorusError::InvalidRequest);
+    auto err = load_runtime(runtime, nullptr, make_config());
+    ASSERT_TRUE(!err.ok());
+    ASSERT_TRUE(err.error == Chorus::ChorusError::InvalidRequest);
     ASSERT_TRUE(!runtime.is_loaded());
 }
 
@@ -67,10 +68,10 @@ TEST(Runtime, Runtime_failed_load_leaves_runtime_unloaded) {
     auto engine = std::make_unique<SyncMockEngine>();
     engine->fail_initialize_with = Chorus::ChorusError::ModelLoad;
 
-    auto err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(err.has_value());
-    ASSERT_TRUE(err.value() == Chorus::ChorusError::ModelLoad);
-    ASSERT_EQ(err->message, "mock initialization failure");
+    auto err = load_runtime(runtime, std::move(engine), make_config());
+    ASSERT_TRUE(!err.ok());
+    ASSERT_TRUE(err.error == Chorus::ChorusError::ModelLoad);
+    ASSERT_EQ(err.message, "mock initialization failure");
     ASSERT_TRUE(!runtime.is_loaded());
 }
 
@@ -78,7 +79,7 @@ TEST(Runtime, Runtime_execution_mode_reaches_the_engine) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     auto* observed = engine.get();
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), make_config()).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
     auto request = make_request("isolated");
     request.execution = Chorus::ExecutionMode::Exclusive;
     ASSERT_TRUE(runtime.submit(request).ok());
@@ -89,7 +90,7 @@ TEST(Runtime, Runtime_execution_mode_reaches_the_engine) {
 TEST(Runtime, Runtime_poll_on_idle_runtime_returns_empty) {
     Chorus::ChorusRuntime runtime;
     ASSERT_EQ(runtime.poll().size(), 0);
-    runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
+    load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config());
     ASSERT_EQ(runtime.poll().size(), 0);
 }
 
@@ -99,7 +100,7 @@ TEST(Runtime, Runtime_preview_matches_the_prompt_submitted_without_mutation) {
     engine->supports_render = true;
     engine->mock_per_request_context = 32;
     auto* observed = engine.get();
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), make_config()).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
 
     Chorus::GenerationRequest request;
     request.session_id = "preview";
@@ -123,7 +124,7 @@ TEST(Runtime, Runtime_truncation_event_reports_durable_ids_in_history_order) {
     auto engine = std::make_unique<SyncMockEngine>();
     engine->supports_render = true;
     engine->mock_per_request_context = 4;
-    ASSERT_FALSE(runtime.load_engine(std::move(engine), make_config()).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
     ASSERT_FALSE(runtime.import_conversation_history("npc", {
         {7, {Chorus::MessageRole::System, Chorus::MessageContent::text("persona")}},
         {0, {Chorus::MessageRole::User, Chorus::MessageContent::text("old")}},
@@ -148,7 +149,7 @@ TEST(Runtime, Runtime_truncation_event_reports_durable_ids_in_history_order) {
 
 TEST(Runtime, Runtime_non_streaming_yields_only_Complete) {
     Chorus::ChorusRuntime runtime;
-    runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
+    load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config());
 
     auto result = runtime.submit(make_request("hi", /*stream=*/false));
     ASSERT_TRUE(result.ok());
@@ -163,7 +164,7 @@ TEST(Runtime, Runtime_non_streaming_yields_only_Complete) {
 
 TEST(Runtime, Runtime_streaming_yields_tokens_then_Complete) {
     Chorus::ChorusRuntime runtime;
-    runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
+    load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config());
 
     auto result = runtime.submit(make_request("hi", /*stream=*/true));
     ASSERT_TRUE(result.ok());
@@ -181,7 +182,7 @@ TEST(Runtime, Runtime_streaming_yields_tokens_then_Complete) {
 
 TEST(Runtime, Runtime_interleaved_requests_accumulate_independently) {
     Chorus::ChorusRuntime runtime;
-    runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
+    load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config());
 
     auto a = runtime.submit(make_request("a"));
     auto b = runtime.submit(make_request("b"));
@@ -198,7 +199,7 @@ TEST(Runtime, Runtime_inline_rejection_delivered_on_next_poll) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->fail_submit_with = Chorus::ChorusError::Tokenize;
-    runtime.load_engine(std::move(engine), make_config());
+    load_runtime(runtime, std::move(engine), make_config());
 
     auto result = runtime.submit(make_request("hi"));
     ASSERT_TRUE(result.ok()); // engine accepted the call; failure arrives as an event
@@ -215,7 +216,7 @@ TEST(Runtime, Runtime_error_after_tokens_discards_partial) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->emit_error_instead_of_stop = true; // "Hello ", "world", then Error
-    runtime.load_engine(std::move(engine), make_config());
+    load_runtime(runtime, std::move(engine), make_config());
 
     auto result = runtime.submit(make_request("hi", /*stream=*/false));
     ASSERT_TRUE(result.ok());
@@ -252,8 +253,8 @@ TEST_P(RuntimeBrokenEventDefense, Surfaces_only_the_accepted_request_stream_and_
             engine->rogue_extra_id = 999999;
             break;
     }
-    const auto load_error = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_error.has_value());
+    const auto load_error = load_runtime(runtime, std::move(engine), make_config());
+    ASSERT_TRUE(load_error.ok());
 
     const auto result = runtime.submit(make_request("hi", /*stream=*/true));
     ASSERT_TRUE(result.ok());
@@ -289,8 +290,8 @@ TEST(Runtime, Runtime_embedding_waits_for_Stop_then_emits_its_vector) {
     auto engine = std::make_unique<SyncMockEngine>();
     engine->emit_embedding_event = true;
     engine->embedding_values = {3.0F, 4.0F};
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    auto load_err = load_runtime(runtime, std::move(engine), make_config());
+    ASSERT_TRUE(load_err.ok());
 
     const auto result = runtime.submit(make_embedding_request("hi"));
     ASSERT_TRUE(result.ok());
@@ -309,8 +310,8 @@ TEST(Runtime, Runtime_embedding_error_discards_a_pending_vector) {
     auto engine = std::make_unique<SyncMockEngine>();
     engine->emit_embedding_event = true;
     engine->emit_error_instead_of_stop = true;
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    auto load_err = load_runtime(runtime, std::move(engine), make_config());
+    ASSERT_TRUE(load_err.ok());
 
     const auto result = runtime.submit(make_embedding_request("hi"));
     ASSERT_TRUE(result.ok());
@@ -327,7 +328,7 @@ TEST(Runtime, Runtime_embedding_does_not_create_conversation_history) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->emit_embedding_event = true;
-    ASSERT_TRUE(!runtime.load_engine(std::move(engine), make_config()).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
 
     const auto result = runtime.submit(make_embedding_request("hi"));
     ASSERT_TRUE(result.ok());
@@ -339,7 +340,7 @@ TEST(Runtime, Runtime_mismatched_embedding_rolls_back_the_generation_turn) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->emit_embedding_event = true;
-    ASSERT_TRUE(!runtime.load_engine(std::move(engine), make_config()).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
 
     auto request = make_request("discard this user turn");
     request.session_id = "session";
@@ -359,7 +360,7 @@ TEST(Runtime, Runtime_mismatched_embedding_rolls_back_the_generation_turn) {
 TEST(Runtime, Runtime_capabilities_copy_the_loaded_engine_effective_value) {
     Chorus::ChorusRuntime runtime;
     ASSERT_TRUE(!runtime.capabilities().has_value());
-    ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config()).ok());
     const auto capabilities = runtime.capabilities();
     ASSERT_TRUE(capabilities.has_value());
     ASSERT_TRUE(capabilities->embeddings);
@@ -369,7 +370,7 @@ TEST(Runtime, Runtime_cancel_unknown_request_returns_false) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     auto* seen = engine.get();
-    runtime.load_engine(std::move(engine), make_config());
+    load_runtime(runtime, std::move(engine), make_config());
 
     ASSERT_TRUE(!runtime.cancel(404));
     ASSERT_TRUE(!runtime.is_request_active(404));
@@ -381,7 +382,7 @@ TEST(Runtime, Runtime_cancel_forwards_each_time_while_live) {
     auto engine = std::make_unique<SyncMockEngine>();
     auto* seen = engine.get();
     engine->hold_requests = true;
-    runtime.load_engine(std::move(engine), make_config());
+    load_runtime(runtime, std::move(engine), make_config());
     auto result = runtime.submit(make_request("held"));
     forward_runtime_until(runtime, [&] { return seen->submitted_ids.size() == 1; });
 
@@ -399,7 +400,7 @@ TEST(Runtime, Runtime_cancelled_request_active_until_terminal_drain) {
     auto* seen = engine.get();
     engine->hold_requests = true;
     engine->emit_cancelled_on_cancel = true;
-    runtime.load_engine(std::move(engine), make_config());
+    load_runtime(runtime, std::move(engine), make_config());
     auto result = runtime.submit(make_request("held"));
     forward_runtime_until(runtime, [&] { return seen->submitted_ids.size() == 1; });
 
@@ -422,7 +423,7 @@ TEST(Runtime, Runtime_cancel_forwards_after_terminal_enqueue_before_poll) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     auto* seen = engine.get();
-    runtime.load_engine(std::move(engine), make_config());
+    load_runtime(runtime, std::move(engine), make_config());
     auto result = runtime.submit(make_request("completing"));
     forward_runtime_until(runtime, [&] { return seen->submitted_ids.size() == 1; });
 
@@ -443,7 +444,7 @@ TEST(Runtime, Runtime_cancel_two_request_isolation) {
     auto* seen = engine.get();
     engine->hold_requests = true;
     engine->emit_cancelled_on_cancel = true;
-    runtime.load_engine(std::move(engine), make_config());
+    load_runtime(runtime, std::move(engine), make_config());
     auto cancelled = runtime.submit(make_request("cancelled"));
     auto untouched = runtime.submit(make_request("untouched"));
     forward_runtime_until(runtime, [&] { return seen->submitted_ids.size() == 2; });
@@ -463,8 +464,8 @@ TEST(Runtime, Runtime_stop_all_yields_one_Cancelled_per_live_request) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->hold_requests = true;
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    auto load_err = load_runtime(runtime, std::move(engine), make_config());
+    ASSERT_TRUE(load_err.ok());
 
     auto a = runtime.submit(make_request("a"));
     auto b = runtime.submit(make_request("b"));
@@ -491,52 +492,86 @@ TEST(Runtime, Runtime_replacing_engine_cancels_and_new_engine_works) {
     auto first = std::make_unique<SyncMockEngine>();
     first->hold_requests = true;
     first->shutdown_count_sink = &first_stops;
-    auto load_err = runtime.load_engine(std::move(first), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    auto load_err = load_runtime(runtime, std::move(first), make_config());
+    ASSERT_TRUE(load_err.ok());
     auto held = runtime.submit(make_request("held"));
     ASSERT_TRUE(held.ok());
 
-    auto err = runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
-    ASSERT_TRUE(!err.has_value());
+    auto err = wait_load_terminal(runtime, runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()));
+    ASSERT_TRUE(err.ok());
     ASSERT_EQ(first_stops, 1); // old engine stopped before replacement
     ASSERT_TRUE(runtime.is_loaded());
 
     auto fresh = runtime.submit(make_request("fresh"));
     ASSERT_TRUE(fresh.ok());
-    auto events = drain_runtime_events(runtime, 2);
-    ASSERT_EQ(events.size(), 2);
+    auto events = err.events;
+    auto fresh_events = drain_runtime_events(runtime);
+    events.insert(events.end(), fresh_events.begin(), fresh_events.end());
+    std::erase_if(events, [](const auto& event) { return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress; });
+    ASSERT_EQ(events.size(), 3U);
     ASSERT_EQ(events[0].request_id, held.request_id);
+    ASSERT_EQ(events[1].kind, Chorus::RuntimeEvent::Kind::ModelLoaded);
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Cancelled);
-    ASSERT_EQ(events[1].request_id, fresh.request_id);
-    ASSERT_TRUE(events[1].kind == Chorus::RuntimeEvent::Kind::Complete);
+    ASSERT_EQ(events[2].request_id, fresh.request_id);
+    ASSERT_TRUE(events[2].kind == Chorus::RuntimeEvent::Kind::Complete);
 }
 
 TEST(Runtime, Runtime_failed_replacement_cancels_and_unloads) {
     Chorus::ChorusRuntime runtime;
     auto first = std::make_unique<SyncMockEngine>();
     first->hold_requests = true;
-    auto load_err = runtime.load_engine(std::move(first), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    auto load_err = load_runtime(runtime, std::move(first), make_config());
+    ASSERT_TRUE(load_err.ok());
     auto held = runtime.submit(make_request("held"));
     ASSERT_TRUE(held.ok());
 
     auto bad = std::make_unique<SyncMockEngine>();
     bad->fail_initialize_with = Chorus::ChorusError::ModelLoad;
-    auto err = runtime.load_engine(std::move(bad), make_config());
-    ASSERT_TRUE(err.has_value());
+    auto err = wait_load_terminal(runtime, runtime.load_engine(std::move(bad), make_config()));
+    ASSERT_TRUE(!err.ok());
     ASSERT_TRUE(!runtime.is_loaded());
 
-    auto events = drain_runtime_events(runtime);
-    ASSERT_EQ(events.size(), 1);
-    ASSERT_TRUE(events[0].error == Chorus::ChorusError::Cancelled);
+    std::erase_if(err.events, [](const auto& event) { return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress; });
+    ASSERT_EQ(err.events.size(), 2U);
+    ASSERT_EQ(err.events[0].request_id, held.request_id);
+    ASSERT_TRUE(err.events[0].error == Chorus::ChorusError::Cancelled);
+    ASSERT_EQ(err.events[1].kind, Chorus::RuntimeEvent::Kind::ModelLoadFailed);
+}
+
+TEST(Runtime, Replacement_preserves_provider_error_and_rolls_back_the_old_session_before_load_terminal) {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    engine->hold_requests = true;
+    engine->emit_error_during_shutdown = true;
+    auto* observed = engine.get();
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
+    auto request = make_request("turn");
+    request.session_id = "npc";
+    const auto held = runtime.submit(request);
+    ASSERT_TRUE(held.ok());
+    forward_runtime_until(runtime, [&] { return observed->submitted_ids.size() == 1; });
+    auto failure = std::make_unique<SyncMockEngine>();
+    failure->fail_initialize_with = Chorus::ChorusError::ModelLoad;
+    auto loaded = wait_load_terminal(runtime, runtime.load_engine(std::move(failure), make_config()));
+    ASSERT_EQ(loaded.error, Chorus::ChorusError::ModelLoad);
+    std::erase_if(loaded.events, [](const auto& event) { return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress; });
+    ASSERT_EQ(loaded.events.size(), 2U);
+    ASSERT_EQ(loaded.events[0].request_id, held.request_id);
+    ASSERT_EQ(loaded.events[0].error, Chorus::ChorusError::Decode);
+    ASSERT_EQ(loaded.events[1].kind, Chorus::RuntimeEvent::Kind::ModelLoadFailed);
+    ASSERT_TRUE(runtime.export_conversation_history("npc").empty());
+    ASSERT_EQ(runtime.last_turn_outcome("npc"), Chorus::TurnOutcome::Errored);
+    ASSERT_TRUE(load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config()).ok());
+    ASSERT_TRUE(runtime.submit(request).ok());
+    ASSERT_EQ(drain_runtime_events(runtime).back().kind, Chorus::RuntimeEvent::Kind::Complete);
 }
 
 TEST(Runtime, Runtime_engine_death_yields_one_EngineFailed_once) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     SyncMockEngine* mock = engine.get();
-    const auto load_error = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_error.has_value());
+    const auto load_error = load_runtime(runtime, std::move(engine), make_config());
+    ASSERT_TRUE(load_error.ok());
     ASSERT_TRUE(runtime.is_loaded());
 
     mock->die();
@@ -555,15 +590,15 @@ TEST(Runtime, Runtime_engine_death_yields_one_EngineFailed_once) {
 
 TEST(Runtime, Runtime_ordinary_unload_emits_no_EngineFailed) {
     Chorus::ChorusRuntime runtime;
-    auto load_err = runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    auto load_err = load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config());
+    ASSERT_TRUE(load_err.ok());
 
     // stop_all() also takes is_initialized() true -> false; only a death speaks.
     runtime.stop_all();
     ASSERT_EQ(runtime.poll().size(), 0);
 
     // Nor does replacing a healthy engine.
-    ASSERT_TRUE(!runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).has_value());
+    ASSERT_TRUE(load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config()).ok());
     ASSERT_EQ(runtime.poll().size(), 0);
 }
 
@@ -572,8 +607,8 @@ TEST(Runtime, Runtime_dying_terminal_precedes_EngineFailed) {
     auto engine = std::make_unique<SyncMockEngine>();
     engine->hold_requests = true;
     SyncMockEngine* mock = engine.get();
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    auto load_err = load_runtime(runtime, std::move(engine), make_config());
+    ASSERT_TRUE(load_err.ok());
 
     auto held = runtime.submit(make_request("held"));
     ASSERT_TRUE(held.ok());
@@ -592,8 +627,8 @@ TEST(Runtime, Runtime_submit_after_engine_death_is_EngineNotReady) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     SyncMockEngine* mock = engine.get();
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    auto load_err = load_runtime(runtime, std::move(engine), make_config());
+    ASSERT_TRUE(load_err.ok());
 
     mock->die();
     ASSERT_TRUE(!runtime.is_loaded());
@@ -612,8 +647,8 @@ TEST(Runtime, Runtime_engine_error_during_stop_wins_over_Cancelled) {
     engine->hold_requests = true;
     auto* observed = engine.get();
     engine->emit_error_during_shutdown = true;
-    auto load_err = runtime.load_engine(std::move(engine), make_config());
-    ASSERT_TRUE(!load_err.has_value());
+    auto load_err = load_runtime(runtime, std::move(engine), make_config());
+    ASSERT_TRUE(load_err.ok());
 
     auto held = runtime.submit(make_request("held"));
     ASSERT_TRUE(held.ok());
@@ -638,10 +673,10 @@ TEST(Runtime, Runtime_consecutive_loads_apply_each_config) {
     auto e2 = std::make_unique<SyncMockEngine>();
     e2->seen_model_id = &path_b;
 
-    auto err_a = runtime.load_engine(std::move(e1), make_config("a.gguf"));
-    ASSERT_TRUE(!err_a.has_value());
-    auto err_b = runtime.load_engine(std::move(e2), make_config("b.gguf"));
-    ASSERT_TRUE(!err_b.has_value());
+    auto err_a = load_runtime(runtime, std::move(e1), make_config("a.gguf"));
+    ASSERT_TRUE(err_a.ok());
+    auto err_b = load_runtime(runtime, std::move(e2), make_config("b.gguf"));
+    ASSERT_TRUE(err_b.ok());
 
     ASSERT_EQ(path_a, "a.gguf");
     ASSERT_EQ(path_b, "b.gguf"); // no reuse: the second load fully applies
@@ -656,7 +691,7 @@ TEST(Runtime, Runtime_provider_thread_log_drains_once) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->log_on_initialize_from_worker = true;
-    runtime.load_engine(std::move(engine), config);
+    load_runtime(runtime, std::move(engine), config);
 
     auto records = runtime.poll_logs();
     ASSERT_EQ(records.size(), size_t{1});
@@ -676,7 +711,7 @@ TEST(Runtime, Runtime_log_level_from_the_config_silences_a_level) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->log_on_initialize_from_worker = true;
-    runtime.load_engine(std::move(engine), config);
+    load_runtime(runtime, std::move(engine), config);
 
     ASSERT_EQ(runtime.poll_logs().size(), size_t{0});
 }
@@ -690,7 +725,7 @@ TEST(Runtime, Runtime_records_enqueued_before_shutdown_drain_afterward) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->log_on_initialize_from_worker = true;
-    runtime.load_engine(std::move(engine), config);
+    load_runtime(runtime, std::move(engine), config);
     runtime.stop_all();
 
     auto records = runtime.poll_logs();
@@ -707,7 +742,7 @@ TEST(Runtime, Runtime_records_produced_during_stop_drain_afterward) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     engine->log_on_shutdown = true;
-    runtime.load_engine(std::move(engine), config);
+    load_runtime(runtime, std::move(engine), config);
     ASSERT_EQ(runtime.poll_logs().size(), size_t{0});
 
     runtime.stop_all();
@@ -724,8 +759,8 @@ TEST(Runtime, Runtime_destruction_with_active_requests_shuts_down_engine_once) {
         auto engine = std::make_unique<SyncMockEngine>();
         engine->hold_requests = true;
         engine->shutdown_count_sink = &shutdown_count;
-        const auto load_error = runtime.load_engine(std::move(engine), make_config());
-        ASSERT_TRUE(!load_error.has_value());
+        const auto load_error = load_runtime(runtime, std::move(engine), make_config());
+        ASSERT_TRUE(load_error.ok());
         const auto held = runtime.submit(make_request("held"));
         ASSERT_TRUE(held.ok());
     }

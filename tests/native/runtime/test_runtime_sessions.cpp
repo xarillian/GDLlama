@@ -32,7 +32,7 @@ static Chorus::EmbeddingRequest embedding(const char* prompt, const char* sessio
 TEST(RuntimeSessions, Runtime_session_ids_monotonic_across_sessioned_and_stateless) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
     // Inline mock completes at submit; poll() drains the terminal and frees the
     // session, so the same lane could be reused. Ids stay monotonic regardless.
@@ -54,7 +54,7 @@ TEST(RuntimeSessions, Runtime_session_ids_monotonic_across_sessioned_and_statele
 TEST(RuntimeSessions, Runtime_session_id_present_on_all_event_kinds) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
     auto req = sessioned("hi", "s1");
     req.stream = true;
@@ -70,7 +70,7 @@ TEST(RuntimeSessions, Runtime_session_id_present_on_all_event_kinds) {
     // The synthesized terminal path must also carry the session id.
     auto held_mock = std::make_unique<SyncMockEngine>();
     held_mock->hold_requests = true;
-    runtime.load_engine(std::move(held_mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(held_mock), Chorus::ChorusConfig{});
 
     auto held = runtime.submit(sessioned("still going", "s1"));
     ASSERT_TRUE(held.ok());
@@ -88,7 +88,7 @@ TEST(RuntimeSessions, Runtime_session_second_live_request_rejected_SessionBusy) 
     auto mock = std::make_unique<SyncMockEngine>();
     auto* mock_ptr = mock.get();
     mock_ptr->hold_requests = true;
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
     auto first = runtime.submit(sessioned("a", "npc"));
     ASSERT_TRUE(first.ok());
@@ -105,21 +105,22 @@ TEST(RuntimeSessions, Runtime_session_released_only_when_terminal_drained) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
     auto first = runtime.submit(sessioned("a", "npc"));
     ASSERT_TRUE(first.ok());
 
-    // Replacing the engine synthesizes a Cancelled terminal but does NOT drain
-    // it: the session stays busy until poll() consumes the terminal.
-    runtime.load_engine(std::make_unique<SyncMockEngine>(), Chorus::ChorusConfig{});
-
+    auto admission = runtime.load_engine(std::make_unique<SyncMockEngine>(), Chorus::ChorusConfig{});
+    ASSERT_TRUE(admission.ok());
     auto before_drain = runtime.submit(sessioned("b", "npc"));
-    ASSERT_TRUE(!before_drain.ok());
-    ASSERT_TRUE(before_drain.error == Chorus::ChorusError::SessionBusy);
+    ASSERT_EQ(before_drain.error, Chorus::ChorusError::EngineNotReady);
 
-    auto events = drain_runtime_events(runtime); // drains the Cancelled terminal, frees the lane
-    ASSERT_EQ(events.size(), 1);
+    auto load = wait_load_terminal(runtime, std::move(admission));
+    ASSERT_TRUE(load.ok());
+    auto events = load.events;
+    std::erase_if(events, [](const auto& event) { return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress; });
+    ASSERT_EQ(events.size(), 2U);
+    ASSERT_EQ(events[1].kind, Chorus::RuntimeEvent::Kind::ModelLoaded);
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Cancelled);
     ASSERT_TRUE(events[0].session_id.has_value());
     ASSERT_EQ(*events[0].session_id, "npc");
@@ -132,7 +133,7 @@ TEST(RuntimeSessions, Runtime_session_reusable_after_complete_and_error) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     auto* mock_ptr = mock.get();
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
     auto first = runtime.submit(sessioned("a", "npc"));
     ASSERT_TRUE(first.ok());
@@ -162,7 +163,7 @@ TEST(RuntimeSessions, Runtime_session_stateless_requests_admit_concurrently) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
     auto a = runtime.submit(stateless("a"));
     auto b = runtime.submit(stateless("b"));
@@ -174,7 +175,7 @@ TEST(RuntimeSessions, Runtime_session_empty_string_is_invalid) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     auto* mock_ptr = mock.get();
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
     auto result = runtime.submit(sessioned("a", ""));
     ASSERT_TRUE(!result.ok());
@@ -187,7 +188,7 @@ TEST(RuntimeSessions, Runtime_session_preparation_rejection_rolls_back_at_termin
     auto mock = std::make_unique<SyncMockEngine>();
     auto* mock_ptr = mock.get();
     mock_ptr->reject_with = Chorus::RequestRejection{Chorus::ChorusError::UnsupportedOption, "nope"};
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
     auto rejected = runtime.submit(sessioned("a", "npc"));
     ASSERT_TRUE(rejected.ok());
@@ -209,7 +210,7 @@ TEST(RuntimeSessions, Runtime_session_two_sessions_concurrently_live) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
     auto s1 = runtime.submit(sessioned("a", "s1"));
     auto s2 = runtime.submit(sessioned("b", "s2"));
@@ -234,7 +235,7 @@ TEST(RuntimeSessions, Runtime_session_two_sessions_concurrently_live) {
 
     // Both lanes were freed by the drained Cancelled terminals; a fresh engine
     // accepts new submissions for both sessions.
-    runtime.load_engine(std::make_unique<SyncMockEngine>(), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::make_unique<SyncMockEngine>(), Chorus::ChorusConfig{});
     auto s1_again = runtime.submit(sessioned("c", "s1"));
     auto s2_again = runtime.submit(sessioned("d", "s2"));
     ASSERT_TRUE(s1_again.ok());
@@ -246,7 +247,7 @@ TEST(RuntimeSessions, Runtime_sessioned_embedding_owns_lane_until_terminal_deliv
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
     mock->emit_cancelled_on_cancel = true;
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
     const auto submitted = runtime.submit(embedding("memory", "s1"));
     ASSERT_TRUE(submitted.ok());
     ASSERT_EQ(runtime.active_request_for_session("s1"), submitted.request_id);
@@ -265,7 +266,7 @@ TEST(RuntimeSessions, Runtime_embedding_batch_cancellation_is_independent) {
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
     mock->emit_cancelled_on_cancel = true;
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
     const auto results = runtime.submit_batch(std::vector<Chorus::EmbeddingRequest>{
         embedding("first", "one"), embedding("second", "two")
@@ -287,7 +288,7 @@ TEST(RuntimeSessions, Runtime_batches_follow_singular_input_order) {
     Chorus::ChorusRuntime runtime;
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
     const auto results = runtime.submit_batch(std::vector<Chorus::GenerationRequest>{sessioned("one", "s"), sessioned("two", "s"), stateless("three")});
     ASSERT_EQ(results.size(), 3U);
     ASSERT_TRUE(results[0].ok());
@@ -300,7 +301,7 @@ TEST(RuntimeSessions, Runtime_cancel_status_preserves_session_until_terminal_dra
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
     mock->emit_cancelled_on_cancel = true;
-    runtime.load_engine(std::move(mock), Chorus::ChorusConfig{});
+    load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
     auto result = runtime.submit(sessioned("hello", "npc"));
 
     ASSERT_TRUE(runtime.active_request_for_session("npc") == result.request_id);

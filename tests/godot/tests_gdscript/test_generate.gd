@@ -16,7 +16,7 @@ static func run_tests(parent: Node) -> void:
 	var chorus: GodotChorus = ChorusNodeScene.instantiate()
 	chorus.provider = GodotChorus.PROVIDER_ECHO
 	parent.add_child(chorus)
-	chorus.load_model()
+	await LoadWaiter.load(chorus)
 	var terminals := {}
 	chorus.generation_complete.connect(func(id, session, message_id, text, reasoning): terminals[id] = [id, session, message_id, text, reasoning])
 	chorus.embedding_complete.connect(func(id, session, values): terminals[id] = [id, session, values])
@@ -215,7 +215,7 @@ static func run_tests(parent: Node) -> void:
 		chorus.model_path = ModelPaths.valid_gguf()
 		chorus.set("use_gpu", false)
 		chorus.set("context_size", 512)
-		TestReport.check(chorus.load_model(), "expected real model for asynchronous preparation")
+		await LoadWaiter.load(chorus)
 		TestReport.check(chorus.supports_message_token_counting(), "expected loaded tokenizer capability")
 		var count_method: Dictionary = ClassDB.class_get_method_list("GodotChorus").filter(func(item): return item.name == &"count_message_tokens")[0]
 		var count_signal: Dictionary = ClassDB.class_get_signal_list("GodotChorus").filter(func(item): return item.name == &"message_token_counted")[0]

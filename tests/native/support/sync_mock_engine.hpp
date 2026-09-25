@@ -55,7 +55,9 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     Chorus::ExecutionMode last_execution = Chorus::ExecutionMode::Shared;
 
     std::optional<Chorus::InitializationFailure>
-    initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger) override {
+    initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger, const Chorus::InitializationControl& control) override {
+        if (control.stop_token.stop_requested())
+            return Chorus::InitializationFailure{Chorus::ChorusError::Cancelled, "mock initialization cancelled"};
         initialize_calls++;
         _log = std::move(logger);
         if (seen_model_id)

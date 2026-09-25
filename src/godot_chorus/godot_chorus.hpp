@@ -100,14 +100,19 @@ class GodotChorus : public godot::Node {
      * configuration takes effect. Replacement terminates in-flight requests
      * with `Chorus::ChorusError::Cancelled`.
      */
-    bool load_model();
+    godot::Ref<ChorusLoadResult> load_model();
+#ifdef CHORUS_HOST_TEST
+    void test_hold_next_retirement();
+    bool test_retirement_held() const;
+    void test_release_retirement();
+#endif
+    bool cancel_load(int64_t load_id);
+    int64_t get_active_load_id() const;
     void stop_all();
     bool is_loaded() const;
     bool supports_embeddings() const;
     bool supports_message_token_counting() const;
     int64_t get_effective_context_size() const;
-    int get_last_load_error() const;
-    godot::String get_last_load_error_message() const;
 
     godot::Ref<ChorusSubmitResult> generate(const godot::Ref<ChorusRequest>& request);
     godot::TypedArray<ChorusSubmitResult> generate_batch(const godot::TypedArray<ChorusRequest>& requests);
@@ -228,8 +233,6 @@ class GodotChorus : public godot::Node {
     // supplies the internal fallback.
     godot::Ref<ChorusGenerationDefaults> _generation_defaults;
     godot::Ref<ChorusGenerationDefaults> _fallback_generation_defaults;
-    int _last_load_error = ERR_NONE;
-    godot::String _last_load_error_message;
 };
 
 VARIANT_ENUM_CAST(GodotChorus::ErrorCode);

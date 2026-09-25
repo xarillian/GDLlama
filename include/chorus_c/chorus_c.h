@@ -31,6 +31,7 @@ typedef struct chorus_runtime chorus_runtime;
 typedef struct chorus_options chorus_options;
 typedef struct chorus_request chorus_request;
 
+typedef int64_t chorus_load_id;
 typedef int64_t chorus_request_id;
 typedef int64_t chorus_message_id;
 
@@ -76,7 +77,16 @@ typedef enum chorus_event_kind {
     CHORUS_EVENT_EMBEDDING = 6,
     CHORUS_EVENT_PROMPT_RENDERED = 7,
     CHORUS_EVENT_MESSAGE_TOKEN_COUNT = 8,
+    CHORUS_EVENT_MODEL_LOAD_PROGRESS = 9,
+    CHORUS_EVENT_MODEL_LOADED = 10,
+    CHORUS_EVENT_MODEL_LOAD_FAILED = 11,
 } chorus_event_kind;
+
+typedef enum chorus_load_phase {
+    CHORUS_LOAD_RELEASING_ENGINE = 0,
+    CHORUS_LOAD_LOADING_MODEL = 1,
+    CHORUS_LOAD_INITIALIZING_ENGINE = 2,
+} chorus_load_phase;
 
 typedef enum chorus_turn_outcome {
     CHORUS_TURN_NONE = 0,
@@ -131,6 +141,11 @@ typedef struct chorus_event {
     size_t embedding_count;
     /* Valid only for CHORUS_EVENT_MESSAGE_TOKEN_COUNT. */
     int64_t token_count;
+    chorus_load_id load_id;
+    const char* model_id;
+    chorus_load_phase load_phase;
+    bool has_load_fraction;
+    float load_fraction;
 } chorus_event;
 
 typedef struct chorus_capabilities {
@@ -178,14 +193,23 @@ CHORUS_API chorus_error chorus_options_set_float(chorus_options* opts, const cha
 CHORUS_API chorus_error chorus_options_set_bool(chorus_options* opts, const char* key, bool value);
 CHORUS_API chorus_error chorus_options_set_string(chorus_options* opts, const char* key, const char* value);
 
-/* model_path may be NULL only for CHORUS_PROVIDER_ECHO. */
+typedef struct chorus_load_result {
+    chorus_load_id load_id;
+    chorus_error error;
+    const char* message;
+} chorus_load_result;
+
+/* model_path may be NULL only for CHORUS_PROVIDER_ECHO. CHORUS_OK means an admission result was produced. */
 CHORUS_API chorus_error chorus_load(
     chorus_runtime* rt,
     chorus_provider provider,
     const char* model_path,
     const chorus_options* options,
-    chorus_log_level min_log_level
+    chorus_log_level min_log_level,
+    chorus_load_result* out_result
 );
+CHORUS_API bool chorus_cancel_load(chorus_runtime* rt, chorus_load_id id);
+CHORUS_API chorus_load_id chorus_active_load_id(const chorus_runtime* rt);
 CHORUS_API bool chorus_is_loaded(const chorus_runtime* rt);
 CHORUS_API bool chorus_get_capabilities(const chorus_runtime* rt, chorus_capabilities* out_capabilities);
 CHORUS_API void chorus_stop_all(chorus_runtime* rt);
@@ -242,7 +266,7 @@ typedef struct chorus_embedding_request {
     chorus_execution_mode execution;
 } chorus_embedding_request;
 
-/* Result strings remain valid until the next submission, render, poll, or runtime destruction. */
+/* Result strings remain valid until the next submission, load, render, poll, or runtime destruction. */
 CHORUS_API chorus_error chorus_generate(
     chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result
 );
