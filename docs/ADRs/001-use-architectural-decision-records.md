@@ -5,7 +5,7 @@ Date: 2026-06-22
 
 ## Context
 
-The original decision log mixed architectural commitments with roadmap changes, implementation notes, temporary planning constraints, and reversals. As it grew, durable reasoning became hard to find among entries whose value ended when their work landed or their plan changed.
+The original, uncommitted decision log mixed architectural commitments with roadmap changes, implementation notes, temporary planning constraints, and reversals. As it grew, durable reasoning became hard to find among entries whose value ended when their work landed or their plan changed.
 
 Architecture decisions need a small, tracked record that explains their context and consequences after the implementation becomes familiar. Active planning decisions still need a local place where they can change without turning the architectural record into a progress ledger.
 
@@ -40,6 +40,7 @@ Negative:
 
 ## Notes
 
-- Version: 1.0
+- Version: 1.01
 - Changelog:
+  - 1.01: Specified old decision log source.
   - 1.0: Initial accepted record
