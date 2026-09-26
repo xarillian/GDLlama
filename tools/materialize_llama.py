@@ -1,5 +1,6 @@
 """Build a verified, patched llama.cpp source tree without modifying its submodule."""
 
+import errno
 import hashlib
 import json
 import os
@@ -31,6 +32,14 @@ def inventory(tree):
     }
 
 
+def verify_source_tree(tree, revision, identity):
+    marker = tree / MARKER
+    if not marker.is_file() or json.loads(marker.read_text()) != {
+        "revision": revision, "identity": identity, "files": inventory(tree)
+    }:
+        raise RuntimeError(f"incompatible generated llama.cpp tree: {tree}; remove this generated directory")
+
+
 def materialize():
     revision = run("git", "rev-parse", "HEAD", cwd=VENDOR)
     if run("git", "status", "--porcelain", "--untracked-files=no", cwd=VENDOR):
@@ -45,11 +54,7 @@ def materialize():
     identity = hashlib.sha256(PATCH.read_bytes() + Path(__file__).read_bytes()).hexdigest()[:20]
     destination = OUTPUT / (revision + "-" + identity)
     if destination.exists():
-        marker = destination / MARKER
-        if not marker.is_file() or json.loads(marker.read_text()) != {
-            "revision": revision, "identity": identity, "files": inventory(destination)
-        }:
-            raise RuntimeError(f"incompatible generated llama.cpp tree: {destination}; remove this generated directory")
+        verify_source_tree(destination, revision, identity)
         return destination, revision, identity
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -66,7 +71,12 @@ def materialize():
         shutil.rmtree(temporary / ".git")
         manifest = {"revision": revision, "identity": identity, "files": inventory(temporary)}
         (temporary / MARKER).write_text(json.dumps(manifest, sort_keys=True))
-        os.rename(temporary, destination)
+        try:
+            os.rename(temporary, destination)
+        except OSError as error:
+            if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+                raise
+            verify_source_tree(destination, revision, identity)
     finally:
         if archive.exists():
             archive.unlink()

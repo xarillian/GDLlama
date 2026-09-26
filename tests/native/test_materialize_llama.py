@@ -1,12 +1,28 @@
 """Regression checks for the tracked llama.cpp patch build boundary."""
 
+from concurrent.futures import ProcessPoolExecutor
+import errno
+import multiprocessing
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from tools import materialize_llama as llama
+
+
+def synchronize_publication(vendor, output, barrier):
+    llama.VENDOR = vendor
+    llama.OUTPUT = output
+    rename = llama.os.rename
+
+    def publish(source, destination):
+        barrier.wait(timeout=10)
+        return rename(source, destination)
+
+    llama.os.rename = publish
 
 
 class MaterializeLlamaTest(unittest.TestCase):
@@ -51,6 +67,47 @@ class MaterializeLlamaTest(unittest.TestCase):
         (tree / "src/llama-model-loader.cpp").write_text("damaged")
         with self.assertRaisesRegex(RuntimeError, "incompatible generated"):
             llama.materialize()
+
+    def test_concurrent_first_materializations_reuse_one_verified_tree(self):
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=2, mp_context=context,
+                                 initializer=synchronize_publication,
+                                 initargs=(self.vendor, llama.OUTPUT, context.Barrier(2))) as builders:
+            attempts = [builders.submit(llama.materialize) for _ in range(2)]
+            first, second = [attempt.result(timeout=30) for attempt in attempts]
+        self.assertEqual(first, second)
+        self.assertEqual(first, llama.materialize())
+        self.assertEqual([first[0]], list(llama.OUTPUT.iterdir()))
+
+    def test_publication_collision_rejects_incomplete_or_changed_tree(self):
+        rename = llama.os.rename
+        for damage in ("missing-marker", "changed-source"):
+            with self.subTest(damage=damage), patch.object(llama, "OUTPUT", self.root / damage):
+                def publish(source, destination):
+                    shutil.copytree(source, destination)
+                    if damage == "missing-marker":
+                        (destination / llama.MARKER).unlink()
+                    else:
+                        (destination / "src/llama-model-loader.cpp").write_text("damaged")
+                    return rename(source, destination)
+
+                with patch.object(llama.os, "rename", side_effect=publish):
+                    with self.assertRaisesRegex(RuntimeError, "incompatible generated"):
+                        llama.materialize()
+                remaining = list(llama.OUTPUT.iterdir())
+                self.assertEqual(1, len(remaining))
+                if damage == "missing-marker":
+                    self.assertFalse((remaining[0] / llama.MARKER).exists())
+                else:
+                    self.assertEqual("damaged", (remaining[0] / "src/llama-model-loader.cpp").read_text())
+
+    def test_unrelated_publication_error_propagates_and_removes_staging_tree(self):
+        failure = PermissionError(errno.EACCES, "publication denied")
+        with patch.object(llama.os, "rename", side_effect=failure):
+            with self.assertRaises(PermissionError) as raised:
+                llama.materialize()
+        self.assertIs(failure, raised.exception)
+        self.assertEqual([], list(llama.OUTPUT.iterdir()))
 
     def test_real_crlf_checkout_preserves_patch_application(self):
         checkout = self.root / "checkout"
