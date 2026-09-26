@@ -70,14 +70,13 @@ class GodotChorus : public godot::Node {
         TURN_ERRORED,
     };
 
-    // `GodotChorus::LOG_OFF` is a threshold only and is never emitted.
     enum LogLevelCode {
         LOG_DEBUG,
         LOG_INFO,
         LOG_WARN,
         LOG_ERROR,
         LOG_FATAL,
-        LOG_OFF,
+        LOG_OFF, // threshold only, never emitted
     };
 
     static int to_godot(Chorus::ChorusError e);
@@ -124,6 +123,7 @@ class GodotChorus : public godot::Node {
     bool cancel_request(int64_t request_id);
     /// Returns true until `GodotChorus::_process` drains the terminal event.
     bool is_request_active(int64_t request_id) const;
+
     /*
      * Returns:
      *  - `int64_t`: the non-negative active request ID.
@@ -131,11 +131,14 @@ class GodotChorus : public godot::Node {
      */
     int64_t active_request_for_session(const godot::String& session) const;
 
-    godot::Ref<ChorusResult> import_conversation_history(const godot::StringName& session, const godot::TypedArray<ChorusMessage>& history);
+    godot::Ref<ChorusResult>
+    import_conversation_history(const godot::StringName& session, const godot::TypedArray<ChorusMessage>& history);
     godot::TypedArray<ChorusMessage> export_conversation_history(const godot::StringName& session) const;
     godot::Ref<ChorusResult> clear_conversation_history(const godot::StringName& session);
-    godot::Ref<ChorusResult> edit_message(const godot::StringName& session, int64_t message_id, const godot::String& content);
+    godot::Ref<ChorusResult>
+    edit_message(const godot::StringName& session, int64_t message_id, const godot::String& content);
     godot::PackedStringArray list_conversations() const;
+
     /*
      * Clears every conversation.
      *
@@ -154,6 +157,7 @@ class GodotChorus : public godot::Node {
     ProviderChoice get_provider() const;
     void set_generation_defaults(const godot::Ref<ChorusGenerationDefaults>& defaults);
     godot::Ref<ChorusGenerationDefaults> get_generation_defaults() const;
+
     /*
      * Sets the node-level Jinja chat template for sessioned turns.
      *
@@ -164,6 +168,7 @@ class GodotChorus : public godot::Node {
      */
     void set_chat_template(const godot::String& chat_template);
     godot::String get_chat_template() const;
+
     /*
      * Selects the least severe `Chorus::LogLevel` for the next engine.
      *
