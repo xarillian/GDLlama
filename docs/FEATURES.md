@@ -18,7 +18,7 @@
 ### Structured Output
 - Constrain generation with a GBNF grammar.
 - Convert a JSON Schema into a generation constraint.
-- Configure structured-output constraints separately for each request.
+- Configure structured-output constraints separately for each request, including explicit unconstrained intent.
 - Return structured-output failures through the request error model.
 
 ### Conversations
@@ -49,11 +49,12 @@
 - Configure frequency, presence, and repetition penalties.
 - Configure stop sequences.
 - Configure advanced `llama.cpp` samplers, sampler order, and logit bias.
-- Layer provider defaults, host defaults, and per-request overrides.
+- Apply request choices over injected host choices while leaving absent choices to the provider; assignment selects a value and clearing removes only the local choice.
+- Persist explicit generation choices as portable JSON, without persisting provider defaults.
 
 ### Chat and Reasoning
 - Render conversations with a model-provided chat template.
-- Override the chat template globally or per request.
+- Select a shared project chat template or a per-request template.
 - Preview a frozen conversation's fitted prompt asynchronously without occupying its session.
 - Enable or disable model thinking when supported by the template.
 - Deliver reasoning and visible content through separate channels.
@@ -75,7 +76,9 @@
 ### Host Integration and Diagnostics
 - Use Chorus through a host-neutral C++ runtime.
 - Use Chorus as a native Godot GDExtension.
-- Use typed Godot request resources with explicit generation override states.
+- Use typed Godot request resources with directly assigned and locally cleared generation choices.
+- Edit shared Godot generation defaults in native Project Settings, imported from JSON and written back automatically only in the editor or explicitly saved from gameplay after source checks.
+- Load generation defaults from files or JSON content into selected C runtime instances; export and explicitly save runtime choices through the C ABI.
 - Use Chorus through a stable C ABI over the public runtime API.
 - Emit structured logs with typed fields.
 - Correlate logs with request and session identities.

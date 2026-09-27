@@ -42,12 +42,14 @@ After a Metal build on macOS, stage the addon without rebuilding:
 python tools/stage_godot.py
 ```
 
-The staged addon is written to `plugin/addons/chorus`. To use it in a Godot project:
+The staged addon is written to `plugin/addons/chorus`. Its declared minimum remains Godot 4.4. Actual editor and runtime acceptance passed on Godot 4.4.1. The installed Arch Godot 4.7.2 aborts a fresh editor import with the current godot-cpp 4.4.1 bindings; a matched minimal extension registering one native class aborts at the same phase. Compatibility with that engine version remains unresolved.
+
+To use it in a Godot project:
 
 1. Copy that directory to `<project>/addons/chorus`.
-2. Open the project and enable **Chorus LLM** under **Project Settings > Plugins**.
-3. Add a `GodotChorus` node to a scene.
-4. Set its `model_path` to a compatible GGUF model. 
+2. Open the project. The extension imports `res://chorus/settings.json` even before the editor plugin is enabled; if missing, it creates `{"version":1,"generation":{}}`. Keep this file **outside** `addons/chorus`, which staging replaces.
+3. Enable **Chorus LLM** under **Project Settings > Plugins** for editor write-back and reload prompts.
+4. Add a `GodotChorus` node to a scene and set its `model_path` to a compatible GGUF model.
 5. Connect load signals, call `load_model()`, and check its typed `ChorusLoadResult.accepted` before waiting for the identified terminal.
 
 ```gdscript
@@ -80,6 +82,26 @@ else:
 ```
 
 A weight-loading fraction of 100% is not readiness. A success signal records publication, but an earlier handler in the same polled batch can stop or replace the engine; correlate the ID and check current readiness when acting. Changing node properties while loaded or loading affects only the next accepted load. Cancellation admission does not wait for cleanup; explicit `stop_all()` and node destruction do. `model_path` accepts absolute paths and Godot `res://` or `user://` paths to loose GGUF files. A model packed inside a PCK must currently be extracted to the filesystem.
+
+#### Shared generation defaults
+
+`settings.json` is the sole persisted authority for **generation choices**, not model paths or load settings. The default source is `res://chorus/settings.json`; `chorus/generation/settings_path` selects another project-contained `res://` JSON file. Bundle that selected file in **Project > Export > Resources** (for example, include `*.json` or the selected path in non-resource export filters), and check the exported PCK contains it. A missing selected file in a read-only export cannot be created: the host reports an error and uses empty caller choices rather than stale `project.godot` values. Existing malformed or unreadable JSON is not overwritten. Godot rejects JSON text containing an escaped NUL in a string or option key without changing the file, since its native String boundary cannot represent it losslessly; the portable codec and C API retain escaped NUL. On project opening, imported JSON replaces cached `chorus/generation/` choices in `project.godot`; failed first import clears stale choices and reports a diagnostic in the editor output or game log. A failed later reload keeps the last valid choices and source. Fix the file and reload explicitly instead of treating cached settings as a fallback.
+
+The portable document has exactly `version: 1` and an object `generation`. Omitted choices mean the provider decides if neither a request nor the shared defaults supplies a value. A present request choice replaces the corresponding project choice; clearing the request choice resumes project/provider resolution. The following file illustrates valid presence, including zero, false, an empty collection and an explicit unconstrained output:
+
+```json
+{"version":1,"generation":{"max_tokens":0,"show_thinking":false,"stop":[],"seed":18446744073709551615,"constraint":{"kind":"unconstrained"},"provider_options":{"llama":{"repeat_penalty":1.0,"logit_bias":{}}}}}
+```
+
+Supported `generation` keys are `max_tokens` and `top_k` (signed 32-bit integers), `temperature`, `top_p`, `frequency_penalty`, `presence_penalty` (finite 32-bit floats), `seed` (unsigned 64-bit integer), `stop` (string array), `show_thinking` (boolean), `chat_template` (string), `constraint`, and `provider_options`. A constraint is either `{"kind":"unconstrained"}` or an object with `kind` set to `gbnf`, `json_schema`, `regex`, or `lark` and a string `source`. `provider_options` maps provider names to option dictionaries: option values are booleans, signed 64-bit integers, finite floating numbers, strings, arrays, or string-keyed dictionaries. A present option map, even `{}`, replaces that entire request/default option value rather than recursively merging. Unknown schema fields, `null`, duplicate keys and malformed data produce errors, not silently dropped choices. A syntactically valid choice unsupported by the selected provider can still fail when a request is prepared.
+
+Use **Project Settings > General > chorus/generation** to edit shared choices. Each common choice and `chat_template` is a Dictionary: `{}` means absent. Add a key named `value` with the desired typed value to select it (including `0`, `false`, `""`, `[]`); edit that value to replace it, or delete the key to clear it. `constraint` uses a Dictionary as its selected `value`; `{"value":{"kind":"unconstrained"}}` differs from absent `{}`. Enter `seed` as **decimal text** in the selected `value` field so its full unsigned range is retained. `provider_options` is a direct Dictionary of namespaces and keys. Editor edits write back after a short delay; if the file changed outside Godot, the plugin asks **Reload** (discard unsaved edits) or **Cancel** (keep them in memory without overwriting disk). Invalid edits and failed writes appear as editor diagnostics. Gameplay edits to ProjectSettings affect later requests in memory only; `ChorusProjectSettings.new().save_generation_defaults()` explicitly saves after the same source/conflict checks, returning a Dictionary with `status` and `message`. `reload_generation_defaults()` reimports the selected file; failed sources block saves until a successful reload. Accepted requests retain their admission snapshot.
+
+Scenes with older `GodotChorus.generation_defaults`, node `chat_template`, or `_generation_choices` data must move their **explicit** generation values to the shared `settings.json`; remove those obsolete node properties/resources from scenes. `ChorusRequest.chat_template` and its other request-local properties remain available. Do not migrate old `project.godot` cache entries as defaults, or copy provider-advertised default values into the file. Multiple nodes in a project share one set of choices; for different agent behavior, put concrete choices on each request.
+
+#### C hosts
+
+The C ABI (version 8) has no process-wide defaults or implicit write-back. For each selected `chorus_runtime*`, call `chorus_generation_defaults_load_file(rt, path)` or `chorus_generation_defaults_apply_json(rt, bytes, byte_count)`; these replace that runtime's host choices on success only. Load creates a valid empty document if the selected path is missing; passing empty JSON content is an error. `chorus_generation_defaults_export_json(rt, &json)` returns a caller-owned UTF-8 string (free it with `chorus_string_free`). `chorus_generation_defaults_save_file(rt, path)` writes to an **explicitly selected destination**, including defaults last applied as JSON content. No load/apply remembers a save target; reload requires another load call. Existing malformed or unreadable destinations are not replaced. Invalid arguments/JSON return `CHORUS_ERR_INVALID_REQUEST`; I/O/allocation failures return `CHORUS_ERR_UNKNOWN`. Inspect `chorus_last_error_message(rt)` for the scoped diagnostic, which clears on success. Request choices override that runtime's injected choices and clearing only removes the request choice.
 
 ## Architecture
 See [Architecture](docs/ARCHITECTURE.md) for the dependency model, service
