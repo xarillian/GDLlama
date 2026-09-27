@@ -1,6 +1,7 @@
 #include "chorus/core/common.hpp"
 #include "chorus/providers/echo/echo_engine.hpp"
-#include "collecting_log.hpp"
+#include "chorus/runtime/runtime.hpp"
+#include "support/runtime_test_utils.hpp"
 #include "engine_contract_suite.hpp"
 #include "process_test.hpp"
 #include "gtest_utils.hpp"
@@ -191,54 +192,99 @@ TEST(EchoEngine, Echo_capabilities_deterministic_across_init) {
     engine.shutdown();
 }
 
-// Content controls are inert on a test double whose output makes no content
-// claims (user decision 2026-07-17 amending the no-silent-discard posture for
-// Echo): accept them so real request pipelines run unmodified, warn once per
-// engine lifetime so the discard is not silent. Options addressed to Echo by
-// namespace stay demands: unknown keys are typos and reject.
-TEST(EchoEngine, Echo_ignores_content_controls_with_one_warning) {
-    Chorus::EchoEngine engine;
-    Chorus::ChorusConfig config;
-    CollectingLog logs;
-    ASSERT_TRUE(!engine.initialize(config, logs.logger(), {}).has_value());
-    const std::string ignored_warning = "Ignoring content controls; echoed output makes no content claims";
+TEST(EchoEngine, Echo_resolves_defaults_request_override_and_local_clear) {
+    Chorus::ChorusRuntime runtime;
+    ASSERT_TRUE(load_runtime(runtime, std::make_unique<Chorus::EchoEngine>(), {}).ok());
+    Chorus::GenerationDefaults defaults;
+    defaults.options.max_tokens = 1;
+    runtime.set_generation_defaults(defaults);
 
-    Chorus::ChorusRequest req;
-    req.id = 1;
-    req.prompt = "hi";
-    req.gen_config.temperature = 0.5f;
-    req.gen_config.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= \"x\""};
-    req.chat_template = "{{ ignored }}";
-    req.gen_config.show_thinking = true;
-    req.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"repeat_penalty", 1.1}};
-    ASSERT_TRUE(!engine.validate_request(req).has_value());
+    Chorus::GenerationRequest request;
+    request.prompt = "one two three";
+    auto run = [&] {
+        auto admission = runtime.submit(request);
+        EXPECT_TRUE(admission.ok());
+        auto events = drain_runtime_events(runtime);
+        EXPECT_EQ(events.back().kind, Chorus::RuntimeEvent::Kind::Complete);
+        size_t terminals = 0;
+        for (const auto& event : events)
+            terminals += runtime_terminal(event.kind);
+        EXPECT_EQ(terminals, size_t{1});
+        return events.back().text;
+    };
+    EXPECT_EQ(run(), "one ");
+    request.options.max_tokens = 0;
+    EXPECT_EQ(run(), "");
+    request.options.max_tokens.reset();
+    EXPECT_EQ(run(), "one ");
+    runtime.set_generation_defaults({});
+    EXPECT_EQ(run(), "one two three");
+}
 
-    // Second sighting stays quiet: one warning per engine lifetime.
-    ASSERT_TRUE(!engine.validate_request(req).has_value());
-    ASSERT_EQ(logs.count(ignored_warning), size_t{1});
+TEST(EchoEngine, Echo_honors_empty_stop_unconstrained_and_false_reasoning_but_rejects_selected_demands) {
+    Chorus::ChorusRuntime runtime;
+    ASSERT_TRUE(load_runtime(runtime, std::make_unique<Chorus::EchoEngine>(), {}).ok());
+    Chorus::GenerationRequest request;
+    request.session_id = "echo-chat";
+    request.prompt = "hi";
+    auto expect = [&](Chorus::ChorusError error) {
+        auto admission = runtime.submit(request);
+        ASSERT_TRUE(admission.ok());
+        auto events = drain_runtime_events(runtime);
+        ASSERT_FALSE(events.empty());
+        size_t terminals = 0;
+        for (const auto& event : events)
+            terminals += runtime_terminal(event.kind);
+        EXPECT_EQ(terminals, size_t{1});
+        EXPECT_EQ(events.back().kind, error == Chorus::ChorusError::None
+                                              ? Chorus::RuntimeEvent::Kind::Complete : Chorus::RuntimeEvent::Kind::Error);
+        EXPECT_EQ(events.back().error, error);
+    };
+    request.options.stop = std::vector<std::string>{};
+    request.options.constraint = Chorus::UnconstrainedOutput{};
+    request.options.show_thinking = false;
+    request.options.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", false}};
+    request.options.provider_options["echo"] = Chorus::ProviderOptionMap{};
+    expect(Chorus::ChorusError::None);
 
-    // The discarded controls ride a field, not the sentence: a host can list
-    // them without parsing the message back apart.
-    const auto records = logs.records();
-    const auto* controls = find_log_field(records.front(), "controls");
-    ASSERT_TRUE(controls != nullptr);
-    const auto* control_names = controls ? std::get_if<std::string>(controls) : nullptr;
-    ASSERT_TRUE(control_names != nullptr);
-    if (control_names) {
-        ASSERT_TRUE(control_names->find("temperature") != std::string::npos);
-        ASSERT_TRUE(control_names->find("chat_template") != std::string::npos);
-        ASSERT_TRUE(control_names->find("show_thinking") != std::string::npos);
-    }
-
-    // Namespace-addressed options are demands, not content controls.
-    req = {};
-    req.id = 3;
-    req.prompt = "hi";
-    req.gen_config.provider_options["echo"] = Chorus::ProviderOptionMap{{"volume", int64_t{11}}};
-    auto rejection = engine.validate_request(req);
-    ASSERT_TRUE(rejection.has_value());
-    ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
-    engine.shutdown();
+    request.options.temperature = 0.0f;
+    expect(Chorus::ChorusError::UnsupportedOption);
+    request.options.temperature.reset();
+    request.options.top_k = 0;
+    expect(Chorus::ChorusError::UnsupportedOption);
+    request.options.top_k.reset();
+    request.options.top_p = 0.0f;
+    expect(Chorus::ChorusError::UnsupportedOption);
+    request.options.top_p.reset();
+    request.options.seed = 0;
+    expect(Chorus::ChorusError::UnsupportedOption);
+    request.options.seed.reset();
+    request.options.frequency_penalty = 0.0f;
+    expect(Chorus::ChorusError::UnsupportedOption);
+    request.options.frequency_penalty.reset();
+    request.options.presence_penalty = 0.0f;
+    expect(Chorus::ChorusError::UnsupportedOption);
+    request.options.presence_penalty.reset();
+    request.options.stop = std::vector<std::string>{"halt"};
+    expect(Chorus::ChorusError::UnsupportedOption);
+    request.options.stop = std::vector<std::string>{};
+    request.options.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::Gbnf, "root ::= \"x\""};
+    expect(Chorus::ChorusError::UnsupportedFeature);
+    request.options.constraint = Chorus::OutputConstraint{Chorus::ConstraintFormat::JsonSchema, "{}"};
+    expect(Chorus::ChorusError::UnsupportedFeature);
+    request.options.constraint = Chorus::UnconstrainedOutput{};
+    request.options.show_thinking = true;
+    expect(Chorus::ChorusError::UnsupportedOption);
+    request.options.show_thinking = false;
+    request.chat_template = "{{ messages }}";
+    expect(Chorus::ChorusError::UnsupportedOption);
+    request.chat_template = "";
+    expect(Chorus::ChorusError::InvalidRequest);
+    request.chat_template.reset();
+    request.options.provider_options["echo"] = Chorus::ProviderOptionMap{{"volume", false}};
+    expect(Chorus::ChorusError::UnsupportedOption);
+    request.options.provider_options["echo"] = false;
+    expect(Chorus::ChorusError::UnsupportedOption);
 }
 
 TEST(EchoEngine, Echo_accepts_session_id_as_correlation) {

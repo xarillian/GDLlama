@@ -3,7 +3,8 @@
  *
  * Every function taking a chorus_runtime must be called from one host thread.
  * Input strings are borrowed UTF-8 NUL-terminated values and are copied before
- * return. Returned storage is owned as documented by each function.
+ * return, except JSON content, whose byte_count determines its length.
+ * Returned storage is owned as documented by each function.
  */
 
 #ifndef CHORUS_C_CHORUS_C_H
@@ -186,6 +187,26 @@ CHORUS_API chorus_runtime* chorus_runtime_new(void);
 CHORUS_API void chorus_runtime_free(chorus_runtime* rt);
 CHORUS_API const char* chorus_last_error_message(const chorus_runtime* rt);
 
+/*
+ * Loads the selected path into this runtime only. A missing path gets a valid
+ * empty document; a malformed or unreadable existing file is not overwritten.
+ * Failure leaves this runtime's previous choices intact. No source is remembered.
+ */
+CHORUS_API chorus_error chorus_generation_defaults_load_file(chorus_runtime* rt, const char* path);
+/* Replaces this runtime's choices from byte_count UTF-8 bytes without file I/O. */
+CHORUS_API chorus_error chorus_generation_defaults_apply_json(chorus_runtime* rt, const char* json, size_t byte_count);
+/* Exports current choices, including content-applied choices. Free *out_json with chorus_string_free. */
+CHORUS_API chorus_error chorus_generation_defaults_export_json(const chorus_runtime* rt, char** out_json);
+/*
+ * Explicitly saves this runtime's choices to the selected path, not a remembered
+ * source. Existing malformed or unreadable destinations are never replaced.
+ * No runtime update automatically writes a file.
+ * All four operations return CHORUS_ERR_INVALID_REQUEST for invalid arguments
+ * or JSON/schema and CHORUS_ERR_UNKNOWN for I/O/allocation failure. A scoped
+ * chorus_last_error_message clears on success; export sets *out_json to NULL on failure.
+ */
+CHORUS_API chorus_error chorus_generation_defaults_save_file(chorus_runtime* rt, const char* path);
+
 CHORUS_API chorus_options* chorus_options_new(void);
 CHORUS_API void chorus_options_free(chorus_options* opts);
 CHORUS_API chorus_error chorus_options_set_int(chorus_options* opts, const char* key, int64_t value);
@@ -223,17 +244,30 @@ CHORUS_API chorus_error chorus_request_set_session(chorus_request* req, const ch
 CHORUS_API chorus_error chorus_request_set_priority(chorus_request* req, int32_t priority);
 CHORUS_API chorus_error chorus_request_set_execution_mode(chorus_request* req, chorus_execution_mode execution);
 CHORUS_API chorus_error chorus_request_set_stream(chorus_request* req, bool stream);
+/* Each clear removes only this builder's choice; it does not erase injected defaults. */
 CHORUS_API chorus_error chorus_request_set_max_tokens(chorus_request* req, int32_t max_tokens);
+CHORUS_API chorus_error chorus_request_clear_max_tokens(chorus_request* req);
 CHORUS_API chorus_error chorus_request_set_temperature(chorus_request* req, float temperature);
+CHORUS_API chorus_error chorus_request_clear_temperature(chorus_request* req);
 CHORUS_API chorus_error chorus_request_set_top_k(chorus_request* req, int32_t top_k);
+CHORUS_API chorus_error chorus_request_clear_top_k(chorus_request* req);
 CHORUS_API chorus_error chorus_request_set_top_p(chorus_request* req, float top_p);
+CHORUS_API chorus_error chorus_request_clear_top_p(chorus_request* req);
 CHORUS_API chorus_error chorus_request_set_seed(chorus_request* req, uint64_t seed);
+CHORUS_API chorus_error chorus_request_clear_seed(chorus_request* req);
 CHORUS_API chorus_error chorus_request_set_frequency_penalty(chorus_request* req, float penalty);
+CHORUS_API chorus_error chorus_request_clear_frequency_penalty(chorus_request* req);
 CHORUS_API chorus_error chorus_request_set_presence_penalty(chorus_request* req, float penalty);
+CHORUS_API chorus_error chorus_request_clear_presence_penalty(chorus_request* req);
 CHORUS_API chorus_error chorus_request_add_stop(chorus_request* req, const char* sequence);
+CHORUS_API chorus_error chorus_request_set_empty_stop(chorus_request* req);
+CHORUS_API chorus_error chorus_request_clear_stop(chorus_request* req);
 CHORUS_API chorus_error
 chorus_request_set_constraint(chorus_request* req, chorus_constraint_format format, const char* source);
+CHORUS_API chorus_error chorus_request_set_unconstrained(chorus_request* req);
+CHORUS_API chorus_error chorus_request_clear_constraint(chorus_request* req);
 CHORUS_API chorus_error chorus_request_set_show_thinking(chorus_request* req, bool show_thinking);
+CHORUS_API chorus_error chorus_request_clear_show_thinking(chorus_request* req);
 CHORUS_API chorus_error chorus_request_set_provider_option_float(
     chorus_request* req, const char* provider, const char* key, double value
 );
@@ -246,10 +280,16 @@ CHORUS_API chorus_error chorus_request_set_provider_option_bool(
 CHORUS_API chorus_error chorus_request_set_provider_option_string(
     chorus_request* req, const char* provider, const char* key, const char* value
 );
+CHORUS_API chorus_error chorus_request_clear_provider_option(
+    chorus_request* req, const char* provider, const char* key
+);
+CHORUS_API chorus_error chorus_request_clear_provider_options(chorus_request* req);
 CHORUS_API chorus_error chorus_request_add_inject(
     chorus_request* req, chorus_message_role role, const char* content, int32_t depth
 );
+/* An empty string selects an invalid template; use clear to remove the choice. */
 CHORUS_API chorus_error chorus_request_set_chat_template(chorus_request* req, const char* chat_template);
+CHORUS_API chorus_error chorus_request_clear_chat_template(chorus_request* req);
 
 typedef struct chorus_submit_result {
     chorus_request_id request_id;

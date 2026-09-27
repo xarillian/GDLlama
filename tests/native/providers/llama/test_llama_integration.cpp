@@ -1877,7 +1877,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_messages_render_and_generate) {
     ASSERT_TRUE(!engine.initialize(make_chat_config(), {}, {}).has_value());
 
     // Render hook: gemma's embedded template must produce its role scaffolding.
-    auto rendered = engine.render_chat_prompt({{Chorus::MessageRole::System, Chorus::MessageContent::text("You are terse.")}, {Chorus::MessageRole::User, Chorus::MessageContent::text("Say hi.")}}, "", true);
+    auto rendered = engine.render_chat_prompt({{Chorus::MessageRole::System, Chorus::MessageContent::text("You are terse.")}, {Chorus::MessageRole::User, Chorus::MessageContent::text("Say hi.")}}, std::nullopt, true);
     ASSERT_TRUE(rendered.has_value());
     ASSERT_TRUE(rendered->text.find("<start_of_turn>user") != std::string::npos);
     ASSERT_TRUE(rendered->token_count > 0);
@@ -1915,6 +1915,19 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_messages_render_and_generate) {
     ASSERT_TRUE(done.load());
     ASSERT_TRUE(stopped.load());
     ASSERT_TRUE(!text.empty());
+
+    request.id = 902;
+    request.chat_template = "{%- for m in messages -%}[[{{ m.role }}]]{{ m.content }}{%- endfor -%}[[assistant]]";
+    request.gen_config.show_thinking = false;
+    request.gen_config.max_tokens = 1;
+    done = false;
+    stopped = false;
+    text.clear();
+    engine.submit_request(request);
+    for (int waited_ms = 0; waited_ms < 30000 && !done; waited_ms += 50)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ASSERT_TRUE(done.load());
+    ASSERT_TRUE(stopped.load());
     engine.shutdown();
 }
 
@@ -1937,16 +1950,16 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_multi_turn_stays_contextual) {
     Chorus::GenerationRequest turn1;
     turn1.prompt = "My name is Trebor. Remember my name.";
     turn1.session_id = "npc_1";
-    turn1.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(48);
-    turn1.overrides.temperature = Chorus::ConfigPatch<float>::set(0.0f); // greedy: deterministic recall
+    turn1.options.max_tokens = 48;
+    turn1.options.temperature = 0.0f; // greedy: deterministic recall
     ASSERT_TRUE(runtime.submit(turn1).ok());
     ASSERT_TRUE(drain_runtime_until_terminal(runtime).terminal_kind == Chorus::RuntimeEvent::Kind::Complete);
 
     Chorus::GenerationRequest turn2;
     turn2.prompt = "What is my name? Answer with just the name.";
     turn2.session_id = "npc_1";
-    turn2.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(24);
-    turn2.overrides.temperature = Chorus::ConfigPatch<float>::set(0.0f);
+    turn2.options.max_tokens = 24;
+    turn2.options.temperature = 0.0f;
     ASSERT_TRUE(runtime.submit(turn2).ok());
     auto drained = drain_runtime_until_terminal(runtime);
     ASSERT_TRUE(drained.terminal_kind == Chorus::RuntimeEvent::Kind::Complete);
@@ -1969,12 +1982,12 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_truncation_preserves_system) {
     }
     ASSERT_TRUE(!runtime.import_conversation_history("npc_1", std::move(history)).has_value());
 
-    Chorus::GenerationConfigPatch gen;
-    gen.max_tokens = Chorus::ConfigPatch<int32_t>::set(64);
+    Chorus::GenerationConfig gen;
+    gen.max_tokens = 64;
     Chorus::GenerationRequest preview;
     preview.session_id = "npc_1";
     preview.prompt = "Who are you?";
-    preview.overrides = gen;
+    preview.options = gen;
     auto fitted = runtime.render_prompt(preview);
     ASSERT_TRUE(fitted.ok());
     const auto fitted_events = drain_runtime_events(runtime);
@@ -1985,7 +1998,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_truncation_preserves_system) {
     Chorus::GenerationRequest turn;
     turn.prompt = "Who are you?";
     turn.session_id = "npc_1";
-    turn.overrides = gen;
+    turn.options = gen;
     ASSERT_TRUE(runtime.submit(turn).ok());
     auto drained = drain_runtime_until_terminal(runtime);
     ASSERT_TRUE(drained.terminal_kind == Chorus::RuntimeEvent::Kind::Complete);

@@ -147,7 +147,7 @@ struct ChorusRequest {
     ExecutionMode execution = ExecutionMode::Shared;
 
     std::vector<ChatMessage> messages;
-    std::string chat_template; // Overrides the model's embedded template when non-empty.
+    std::optional<std::string> chat_template; // A selected template overrides the model's embedded template.
 
     GenerationConfig gen_config;
 

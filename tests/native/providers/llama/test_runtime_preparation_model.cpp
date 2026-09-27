@@ -32,7 +32,7 @@ struct ObservedPreparation : RequestPreparation {
         return inner->validate_request(request);
     }
     std::variant<RenderedPrompt, RequestRejection> render_chat_prompt(
-        const std::vector<ChatMessage>& messages, const std::string& selected, bool thinking
+        const std::vector<ChatMessage>& messages, const std::optional<std::string>& selected, std::optional<bool> thinking
     ) const override {
         ++renders;
         return inner->render_chat_prompt(messages, selected, thinking);
@@ -93,7 +93,7 @@ TEST_F(RuntimePreparationModelTest, Literal_counts_match_independent_vendor_toke
     ChorusRequest request;
     ASSERT_EQ(observer->validate_request(request)->error, ChorusError::EngineNotReady);
     ASSERT_EQ(std::get<RequestRejection>(observer->count_message_tokens("x")).error, ChorusError::EngineNotReady);
-    ASSERT_EQ(std::get<RequestRejection>(observer->render_chat_prompt({}, "", true)).error, ChorusError::EngineNotReady);
+    ASSERT_EQ(std::get<RequestRejection>(observer->render_chat_prompt({}, std::nullopt, true)).error, ChorusError::EngineNotReady);
     ASSERT_FALSE(LlamaUtils::tokenize_vocabulary(nullptr, "x", false));
 }
 
@@ -105,7 +105,7 @@ TEST_F(RuntimePreparationModelTest, Scheduler_checks_actual_render_budget_before
     auto error = service->render_chat_prompt(messages, "{{ raise_exception('specific failure') }}", true);
     ASSERT_TRUE(std::holds_alternative<RequestRejection>(error));
     ASSERT_NE(std::get<RequestRejection>(error).message.find("specific failure"), std::string::npos);
-    auto rendered = service->render_chat_prompt(messages, "", true);
+    auto rendered = service->render_chat_prompt(messages, std::nullopt, true);
     ASSERT_TRUE(std::holds_alternative<RenderedPrompt>(rendered));
     ASSERT_GT(std::get<RenderedPrompt>(rendered).token_count, 1);
     std::mutex mutex;
@@ -146,7 +146,7 @@ TEST_F(RuntimePreparationModelTest, Changed_provider_render_after_preparation_fa
     GenerationRequest request;
     request.session_id = "changed-template";
     request.prompt = "Hello";
-    request.overrides.max_tokens = ConfigPatch<int32_t>::set(64);
+    request.options.max_tokens = 64;
     ASSERT_TRUE(runtime.render_prompt(request).ok());
     ASSERT_EQ(drain_runtime_events(runtime).back().kind, RuntimeEvent::Kind::PromptRendered);
     ASSERT_TRUE(runtime.submit(request).ok());
@@ -175,8 +175,8 @@ TEST_F(RuntimePreparationModelTest, Reports_separate_host_admission_completion_a
         GenerationRequest request;
         request.session_id = "npc";
         request.prompt = "What do you remember?";
-        request.overrides.max_tokens = ConfigPatch<int32_t>::set(64);
-        request.overrides.temperature = ConfigPatch<float>::set(0.0f);
+        request.options.max_tokens = 64;
+        request.options.temperature = 0.0f;
         for (int run = 0; run < 4; ++run) {
             const auto counts_before = work->counts;
             const auto bytes_before = work->bytes;

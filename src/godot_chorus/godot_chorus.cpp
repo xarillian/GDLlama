@@ -9,6 +9,7 @@
 
 #include "chorus/engine_factory.hpp"
 #include "godot_chorus/request_conversion.hpp"
+#include "godot_chorus/project_generation_defaults.hpp"
 #include "godot_chorus/option_conversion.hpp"
 #include "godot_chorus/provider_option_properties.hpp"
 
@@ -412,9 +413,8 @@ Ref<ChorusSubmitResult> GodotChorus::embed(const Ref<ChorusEmbeddingRequest>& re
 TypedArray<ChorusSubmitResult> GodotChorus::generate_batch(const TypedArray<ChorusRequest>& requests) {
     TypedArray<ChorusSubmitResult> out;
     std::string error;
-    auto patch = effective_generation_defaults()->to_patch(error);
-    if (!patch) {
-        const String message = to_godot_string("generation_defaults." + error);
+    if (!push_host_defaults(error)) {
+        const String message = to_godot_string(error);
         for (int i = 0; i < requests.size(); ++i) {
             Ref<ChorusRequest> request = requests[i];
             Ref<ChorusInferenceRequest> source = request;
@@ -422,14 +422,25 @@ TypedArray<ChorusSubmitResult> GodotChorus::generate_batch(const TypedArray<Chor
         }
         return out;
     }
-    _runtime.set_host_defaults({std::move(*patch), std::string(_chat_template.utf8().get_data())});
+    std::vector<Chorus::GenerationRequest> admitted;
+    std::vector<int> positions;
+    out.resize(requests.size());
     for (int i = 0; i < requests.size(); ++i) {
         Ref<ChorusRequest> request = requests[i];
-        Ref<ChorusInferenceRequest> source = request;
         auto converted = godot_chorus::generation_request_from_resource(request);
-        out.push_back(std::holds_alternative<std::string>(converted)
-            ? rejected_submit(source, to_godot_string(std::get<std::string>(converted)))
-            : submit_result(source, _runtime.submit(std::get<Chorus::GenerationRequest>(converted))));
+        if (std::holds_alternative<std::string>(converted)) {
+            Ref<ChorusInferenceRequest> source = request;
+            out[i] = rejected_submit(source, to_godot_string(std::get<std::string>(converted)));
+        } else {
+            positions.push_back(i);
+            admitted.push_back(std::get<Chorus::GenerationRequest>(std::move(converted)));
+        }
+    }
+    const auto results = _runtime.submit_batch(admitted);
+    for (size_t j = 0; j < results.size(); ++j) {
+        Ref<ChorusRequest> request = requests[positions[j]];
+        Ref<ChorusInferenceRequest> source = request;
+        out[positions[j]] = submit_result(source, results[j]);
     }
     return out;
 }
@@ -656,29 +667,6 @@ GodotChorus::ProviderChoice GodotChorus::get_provider() const {
     return _provider;
 }
 
-void GodotChorus::set_generation_defaults(const Ref<ChorusGenerationDefaults>& defaults) {
-    _generation_defaults = defaults;
-}
-
-Ref<ChorusGenerationDefaults> GodotChorus::get_generation_defaults() const {
-    return _generation_defaults;
-}
-
-Ref<ChorusGenerationDefaults> GodotChorus::effective_generation_defaults() {
-    if (_generation_defaults.is_valid())
-        return _generation_defaults;
-    if (_fallback_generation_defaults.is_null())
-        _fallback_generation_defaults.instantiate();
-    return _fallback_generation_defaults;
-}
-
-void GodotChorus::set_chat_template(const String& chat_template) {
-    _chat_template = chat_template;
-}
-String GodotChorus::get_chat_template() const {
-    return _chat_template;
-}
-
 void GodotChorus::set_override_log_level(bool enabled) {
     _override_log_level = enabled;
 }
@@ -693,18 +681,12 @@ int64_t GodotChorus::get_log_level() const {
 }
 
 bool GodotChorus::push_host_defaults(std::string& error) {
-    // Rebuild on every call because scripts can mutate the assigned
-    // `ChorusGenerationDefaults` resource in place without notifying this
-    // node.
-    auto patch = effective_generation_defaults()->to_patch(error);
-    if (!patch) {
-        error = "generation_defaults." + error;
+    Chorus::GenerationDefaults defaults;
+    if (!godot_chorus::project_generation_defaults(defaults, error)) {
         UtilityFunctions::push_error("[Chorus] " + to_godot_string(error));
         return false;
     }
-    _runtime.set_host_defaults(
-        {std::move(*patch), std::string(_chat_template.utf8().get_data())}
-    );
+    _runtime.set_generation_defaults(std::move(defaults));
     return true;
 }
 
@@ -885,22 +867,6 @@ void GodotChorus::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_provider"), &GodotChorus::get_provider);
     ADD_PROPERTY(
         PropertyInfo(Variant::INT, "provider", PROPERTY_HINT_ENUM, "Llama,Echo"), "set_provider", "get_provider"
-    );
-
-    ClassDB::bind_method(D_METHOD("set_generation_defaults", "defaults"), &GodotChorus::set_generation_defaults);
-    ClassDB::bind_method(D_METHOD("get_generation_defaults"), &GodotChorus::get_generation_defaults);
-    ADD_PROPERTY(
-        PropertyInfo(Variant::OBJECT, "generation_defaults", PROPERTY_HINT_RESOURCE_TYPE, "ChorusGenerationDefaults"),
-        "set_generation_defaults",
-        "get_generation_defaults"
-    );
-
-    ClassDB::bind_method(D_METHOD("set_chat_template", "chat_template"), &GodotChorus::set_chat_template);
-    ClassDB::bind_method(D_METHOD("get_chat_template"), &GodotChorus::get_chat_template);
-    ADD_PROPERTY(
-        PropertyInfo(Variant::STRING, "chat_template", PROPERTY_HINT_MULTILINE_TEXT, ""),
-        "set_chat_template",
-        "get_chat_template"
     );
 
     ClassDB::bind_method(D_METHOD("set_override_log_level", "enabled"), &GodotChorus::set_override_log_level);

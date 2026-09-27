@@ -49,27 +49,23 @@ struct GenerationRequest : InferenceRequest {
     // `Chorus::RuntimeEvent::Kind::StreamedReasoningToken` events.
     bool stream = false;
 
-    // Per-request changes layered over `Chorus::HostDefaults::config`.
-    GenerationConfigPatch overrides;
+    GenerationConfig options;
 
     // Ephemeral messages inserted into this turn without changing stored history.
     std::vector<InjectedMessage> inject;
 
-    // Per-request chat template. An empty value inherits `Chorus::HostDefaults::chat_template`.
-    std::string chat_template;
+    std::optional<std::string> chat_template;
 };
 
 /*
- * Ambient generation settings supplied by a host.
+ * Generation choices injected by a host.
  *
  * Changes apply only to requests submitted afterward. Chat controls apply
  * only to sessions; request-level chat controls still reject stateless requests.
  */
-struct HostDefaults {
-    GenerationConfigPatch config;
-
-    // Host chat template. An empty value delegates template selection to the engine.
-    std::string chat_template;
+struct GenerationDefaults {
+    GenerationConfig options;
+    std::optional<std::string> chat_template;
 };
 
 /// One event delivered on the host thread by `Chorus::ChorusRuntime::poll`.
@@ -213,8 +209,8 @@ class ChorusRuntime {
     // Copies the effective capabilities of the initialized engine.
     std::optional<EngineCapabilities> capabilities() const;
 
-    // Replaces the ambient settings layered beneath future requests.
-    void set_host_defaults(HostDefaults defaults);
+    // Replaces the injected choices for future requests.
+    void set_generation_defaults(GenerationDefaults defaults);
 
     /*
      * Submits a stateless generation or sessioned chat request.
@@ -411,7 +407,7 @@ class ChorusRuntime {
     struct ResolvedRequest {
         GenerationRequest request;
         GenerationConfig config;
-        std::string chat_template;
+        std::optional<std::string> chat_template;
     };
     ResolvedRequest resolve_request(const GenerationRequest& request) const;
     static ChorusRequest make_engine_request(const ResolvedRequest& resolved);
@@ -461,7 +457,7 @@ class ChorusRuntime {
 
     bool _engine_failure_reported = false;
 
-    HostDefaults _host_defaults;
+    GenerationDefaults _generation_defaults;
 
     RequestId _next_request_id = 0;
     uint64_t _next_content_identity = 0;

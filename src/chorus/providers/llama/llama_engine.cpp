@@ -99,7 +99,7 @@ std::optional<LoadedModelInfo> LlamaEngine::loaded_model_info() const {
 }
 
 std::optional<RenderedPrompt> LlamaEngine::render_chat_prompt(
-    const std::vector<ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+    const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
 ) const {
     auto current_scheduler = scheduler_snapshot();
     if (!current_scheduler || !current_scheduler->is_healthy())

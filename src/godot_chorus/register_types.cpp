@@ -1,5 +1,6 @@
 #include "godot_chorus/register_types.hpp"
-#include "godot_chorus/chorus_generation_defaults.hpp"
+#include "godot_chorus/project_generation_defaults.hpp"
+#include "godot_chorus/chorus_project_settings.hpp"
 #include "godot_chorus/chorus_types.hpp"
 #include "godot_chorus/godot_chorus.hpp"
 
@@ -15,7 +16,6 @@ void initialize_chorus_module(ModuleInitializationLevel p_level) {
         return;
     }
     GDREGISTER_ABSTRACT_CLASS(ChorusRole);
-    GDREGISTER_ABSTRACT_CLASS(ChorusOverrideState);
     GDREGISTER_ABSTRACT_CLASS(ChorusExecution);
     GDREGISTER_ABSTRACT_CLASS(ChorusConstraintFormat);
     GDREGISTER_ABSTRACT_CLASS(ChorusInferenceRequest);
@@ -27,15 +27,17 @@ void initialize_chorus_module(ModuleInitializationLevel p_level) {
     GDREGISTER_CLASS(ChorusLoadResult);
     GDREGISTER_CLASS(ChorusSubmitResult);
     GDREGISTER_CLASS(ChorusResult);
-    GDREGISTER_CLASS(ChorusGenerationDefaults);
     GDREGISTER_CLASS(GodotChorus);
+    GDREGISTER_CLASS(ChorusProjectSettings);
     GodotChorus::register_project_settings();
+    godot_chorus::initialize_project_generation_defaults();
 }
 
 void uninitialize_chorus_module(ModuleInitializationLevel p_level) {
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
         return;
     }
+    godot_chorus::shutdown_project_generation_defaults();
 }
 
 extern "C" {

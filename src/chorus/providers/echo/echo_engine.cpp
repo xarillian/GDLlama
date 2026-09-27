@@ -95,15 +95,12 @@ std::vector<float> make_echo_embedding(const std::string& prompt) {
 } // namespace
 
 struct EchoEngine::Preparation : RequestPreparation {
-    explicit Preparation(Logger logger) : _log(std::move(logger)) {}
     mutable std::mutex mutex;
     bool closed = false;
-    Logger _log;
-    mutable std::atomic<bool> _warned_ignored_content_controls{false};
 
     std::optional<RequestRejection> validate_request(const ChorusRequest& request) const override;
     std::variant<RenderedPrompt, RequestRejection> render_chat_prompt(
-        const std::vector<ChatMessage>&, const std::string&, bool
+        const std::vector<ChatMessage>&, const std::optional<std::string>&, std::optional<bool>
     ) const override {
         std::lock_guard<std::mutex> lock(mutex);
         return RequestRejection{closed ? ChorusError::EngineNotReady : ChorusError::UnsupportedFeature,
@@ -139,7 +136,7 @@ std::optional<InitializationFailure> EchoEngine::initialize(const ChorusConfig& 
     if (control.on_progress)
         control.on_progress({LoadPhase::InitializingEngine, std::nullopt});
     try {
-        _preparation = std::make_shared<Preparation>(_log);
+        _preparation = std::make_shared<Preparation>();
         if (control.stop_token.stop_requested()) {
             shutdown();
             return InitializationFailure{ChorusError::Cancelled, "Echo initialization cancelled."};
@@ -210,48 +207,25 @@ std::optional<RequestRejection> EchoEngine::Preparation::validate_request(const 
     const auto& c = request.gen_config;
     if (c.max_tokens && *c.max_tokens < -1)
         return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine max_tokens must be -1 or greater."};
-    // Options addressed to the Echo namespace are demands. The provider has no
-    // options, so any `echo` entry is a typo to catch.
-    if (request.gen_config.provider_options.count("echo"))
+    if (c.temperature || c.top_k || c.top_p || c.seed || c.frequency_penalty || c.presence_penalty)
+        return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine does not support sampling options."};
+    if (c.stop && !c.stop->empty())
+        return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine does not support stop markers."};
+    if (c.constraint && !std::holds_alternative<UnconstrainedOutput>(*c.constraint))
+        return RequestRejection{ChorusError::UnsupportedFeature, "EchoEngine does not support output constraints."};
+    if (c.show_thinking == true)
+        return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine does not support reasoning."};
+    if (request.chat_template) {
         return RequestRejection{
-            ChorusError::UnsupportedOption, "EchoEngine has no provider options; remove the 'echo' entry."
+            request.chat_template->empty() ? ChorusError::InvalidRequest : ChorusError::UnsupportedOption,
+            request.chat_template->empty() ? "EchoEngine chat_template must not be empty."
+                                           : "EchoEngine does not support chat templates."
         };
-
-    // Content controls are inert because echoed output makes no content claims.
-    // Accept them so real request pipelines can exercise the provider seam
-    // unmodified, then warn once per engine lifetime so the discard is not silent.
-    std::vector<const char*> ignored;
-    if (c.temperature)
-        ignored.push_back("temperature");
-    if (c.top_k)
-        ignored.push_back("top_k");
-    if (c.top_p)
-        ignored.push_back("top_p");
-    if (c.seed)
-        ignored.push_back("seed");
-    if (c.frequency_penalty)
-        ignored.push_back("frequency_penalty");
-    if (c.presence_penalty)
-        ignored.push_back("presence_penalty");
-    if (!c.stop.empty())
-        ignored.push_back("stop");
-    if (c.constraint)
-        ignored.push_back("constraint");
-    if (c.show_thinking.has_value())
-        ignored.push_back("show_thinking");
-    if (!request.chat_template.empty())
-        ignored.push_back("chat_template");
-    if (!request.gen_config.provider_options.empty())
-        ignored.push_back("provider_options");
-
-    if (!ignored.empty() && !_warned_ignored_content_controls.exchange(true)) {
-        std::string names;
-        for (size_t i = 0; i < ignored.size(); ++i) {
-            if (i)
-                names += ", ";
-            names += ignored[i];
-        }
-        _log.warn("Ignoring content controls; echoed output makes no content claims", {{"controls", names}});
+    }
+    if (auto found = c.provider_options.find("echo"); found != c.provider_options.end()) {
+        const auto* options = std::get_if<ProviderOptionMap>(&found->second);
+        if (!options || !options->empty())
+            return RequestRejection{ChorusError::UnsupportedOption, "EchoEngine has no provider options."};
     }
     return std::nullopt;
 }

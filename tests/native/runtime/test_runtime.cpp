@@ -105,7 +105,7 @@ TEST(Runtime, Runtime_preview_matches_the_prompt_submitted_without_mutation) {
     Chorus::GenerationRequest request;
     request.session_id = "preview";
     request.prompt = "new turn";
-    request.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(8);
+    request.options.max_tokens = 8;
     const auto preview = runtime.render_prompt(request);
     ASSERT_TRUE(preview.ok());
     const auto preview_events = drain_runtime_events(runtime);
@@ -113,7 +113,7 @@ TEST(Runtime, Runtime_preview_matches_the_prompt_submitted_without_mutation) {
     ASSERT_TRUE(submitted.ok());
     drain_runtime_events(runtime);
     const auto rendered_submission = observed->render_chat_prompt(
-        observed->last_messages, observed->last_chat_template, observed->last_config.show_thinking.value_or(true)
+        observed->last_messages, observed->last_chat_template, observed->last_config.show_thinking
     );
     ASSERT_TRUE(rendered_submission.has_value());
     ASSERT_EQ(preview_events.back().text, rendered_submission->text);
@@ -135,7 +135,7 @@ TEST(Runtime, Runtime_truncation_event_reports_durable_ids_in_history_order) {
     Chorus::GenerationRequest request;
     request.session_id = "npc";
     request.prompt = "new";
-    request.overrides.max_tokens = Chorus::ConfigPatch<int32_t>::set(0);
+    request.options.max_tokens = 0;
     const auto submitted = runtime.submit(request);
     ASSERT_TRUE(submitted.ok());
     const auto events = drain_runtime_events(runtime);
@@ -768,3 +768,158 @@ TEST(Runtime, Runtime_destruction_with_active_requests_shuts_down_engine_once) {
     ASSERT_EQ(shutdown_count, 1);
 }
 
+
+TEST(Runtime, Caller_choices_reach_provider_without_filling_absence_or_merging_option_values) {
+    using namespace Chorus;
+    ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* seen = engine.get();
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
+    auto request = make_request("first");
+    ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
+    EXPECT_FALSE(seen->last_config.max_tokens);
+    EXPECT_FALSE(seen->last_config.stop);
+    EXPECT_FALSE(seen->last_config.constraint);
+    EXPECT_FALSE(seen->last_config.show_thinking);
+    EXPECT_FALSE(seen->last_chat_template);
+    EXPECT_TRUE(seen->last_config.provider_options.empty());
+
+    GenerationDefaults defaults;
+    defaults.options.max_tokens = 7;
+    defaults.options.stop = std::vector<std::string>{"A"};
+    defaults.options.constraint = OutputConstraint{ConstraintFormat::Gbnf, "root ::= 'a'"};
+    defaults.options.show_thinking = false;
+    defaults.options.provider_options = {
+        {"mock", ProviderOptionMap{
+            {"map", ProviderOptionMap{{"old", int64_t{1}}}},
+            {"list", ProviderOptionList{int64_t{1}, int64_t{2}}},
+            {"untouched", false}
+        }},
+        {"unused", ProviderOptionMap{}}
+    };
+    runtime.set_generation_defaults(defaults);
+    request.session_id = "npc";
+    request.options.max_tokens = 0;
+    request.options.stop = std::vector<std::string>{};
+    request.options.constraint = UnconstrainedOutput{};
+    request.options.show_thinking = true;
+    request.options.provider_options = {
+        {"mock", ProviderOptionMap{
+            {"map", ProviderOptionMap{{"new", int64_t{2}}}}, {"list", ProviderOptionList{int64_t{3}}}
+        }},
+        {"empty", ProviderOptionMap{}}
+    };
+    ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
+    EXPECT_EQ(seen->last_config.max_tokens, 0);
+    ASSERT_TRUE(seen->last_config.stop);
+    EXPECT_TRUE(seen->last_config.stop->empty());
+    ASSERT_TRUE(seen->last_config.constraint);
+    EXPECT_TRUE(std::holds_alternative<UnconstrainedOutput>(*seen->last_config.constraint));
+    EXPECT_EQ(seen->last_config.show_thinking, true);
+    const auto& options = seen->last_config.provider_options;
+    EXPECT_EQ(options.size(), 1U);
+    const auto& entries = std::get<ProviderOptionMap>(options.at("mock"));
+    const auto& replaced_map = std::get<ProviderOptionMap>(entries.at("map"));
+    EXPECT_EQ(replaced_map.size(), 1U);
+    EXPECT_EQ(std::get<int64_t>(replaced_map.at("new")), 2);
+    EXPECT_FALSE(replaced_map.contains("old"));
+    EXPECT_EQ(std::get<ProviderOptionList>(entries.at("list")).size(), 1U);
+    EXPECT_EQ(std::get<int64_t>(std::get<ProviderOptionList>(entries.at("list"))[0]), 3);
+    EXPECT_EQ(std::get<bool>(entries.at("untouched")), false);
+
+    request.session_id = "second";
+    request.options.max_tokens.reset();
+    request.options.stop.reset();
+    request.options.constraint.reset();
+    request.options.show_thinking.reset();
+    request.options.provider_options = {{"mock", ProviderOptionMap{}}};
+    ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
+    EXPECT_EQ(seen->last_config.max_tokens, 7);
+    EXPECT_EQ(seen->last_config.stop, defaults.options.stop);
+    EXPECT_TRUE(std::holds_alternative<OutputConstraint>(*seen->last_config.constraint));
+    EXPECT_EQ(seen->last_config.show_thinking, false);
+    EXPECT_EQ(seen->last_config.provider_options.size(), 1U);
+    EXPECT_EQ(std::get<ProviderOptionMap>(seen->last_config.provider_options.at("mock")).size(), 3U);
+
+    runtime.set_generation_defaults({});
+    request.session_id = "third";
+    request.options.provider_options.clear();
+    ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
+    EXPECT_FALSE(seen->last_config.max_tokens);
+    EXPECT_FALSE(seen->last_config.stop);
+    EXPECT_FALSE(seen->last_config.constraint);
+    EXPECT_FALSE(seen->last_config.show_thinking);
+    EXPECT_TRUE(seen->last_config.provider_options.empty());
+}
+
+TEST(Runtime, Namespace_shape_collisions_replace_whole_but_empty_namespaces_supply_nothing) {
+    using namespace Chorus;
+    ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* seen = engine.get();
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
+    GenerationDefaults defaults;
+    defaults.options.provider_options = {{"mock", int64_t{9}}};
+    runtime.set_generation_defaults(defaults);
+    auto request = make_request("shape");
+    request.options.provider_options = {{"mock", ProviderOptionMap{}}};
+    ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
+    EXPECT_EQ(std::get<int64_t>(seen->last_config.provider_options.at("mock")), 9);
+    request.options.provider_options = {{"mock", ProviderOptionMap{{"key", false}}}};
+    ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
+    EXPECT_EQ(std::get<bool>(std::get<ProviderOptionMap>(seen->last_config.provider_options.at("mock")).at("key")), false);
+    defaults.options.provider_options = {{"mock", ProviderOptionMap{{"key", true}}}};
+    runtime.set_generation_defaults(defaults);
+    request.options.provider_options = {{"mock", int64_t{4}}};
+    ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
+    EXPECT_EQ(std::get<int64_t>(seen->last_config.provider_options.at("mock")), 4);
+}
+
+TEST(Runtime, Stateless_request_chat_controls_reject_but_injected_chat_defaults_do_not) {
+    using namespace Chorus;
+    ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* seen = engine.get();
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
+    GenerationDefaults defaults;
+    defaults.chat_template = "default";
+    defaults.options.show_thinking = false;
+    runtime.set_generation_defaults(defaults);
+    auto request = make_request("stateless");
+    ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
+    EXPECT_FALSE(seen->last_chat_template);
+    EXPECT_FALSE(seen->last_config.show_thinking);
+    request.options.show_thinking = false;
+    EXPECT_EQ(runtime.submit(request).error, ChorusError::InvalidRequest);
+    request.options.show_thinking.reset();
+    request.chat_template = "";
+    EXPECT_EQ(runtime.submit(request).error, ChorusError::InvalidRequest);
+}
+
+TEST(Runtime, Empty_option_value_replaces_whole_default_and_not_neighbor) {
+    using namespace Chorus;
+    ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* seen = engine.get();
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
+    GenerationDefaults defaults;
+    defaults.options.provider_options = {{"mock", ProviderOptionMap{
+        {"map", ProviderOptionMap{{"old", int64_t{1}}}}, {"neighbor", std::string{""}}
+    }}};
+    runtime.set_generation_defaults(defaults);
+    auto request = make_request("empty map");
+    request.options.provider_options = {{"mock", ProviderOptionMap{{"map", ProviderOptionMap{}}}}};
+    ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
+    const auto& entries = std::get<ProviderOptionMap>(seen->last_config.provider_options.at("mock"));
+    EXPECT_TRUE(std::get<ProviderOptionMap>(entries.at("map")).empty());
+    EXPECT_EQ(std::get<std::string>(entries.at("neighbor")), "");
+}

@@ -50,7 +50,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     std::vector<int64_t> submitted_ids;
     std::vector<Chorus::RequestId> cancelled_ids;
     std::vector<Chorus::ChatMessage> last_messages; // messages of the last submitted request
-    std::string last_chat_template;                 // template of the last submitted request
+    std::optional<std::string> last_chat_template;                 // template of the last submitted request
     Chorus::GenerationConfig last_config;           // resolved config of the last submitted request
     Chorus::ExecutionMode last_execution = Chorus::ExecutionMode::Shared;
 
@@ -98,7 +98,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         return mock_model_info;
     }
     std::optional<Chorus::RenderedPrompt> render_chat_prompt(
-        const std::vector<Chorus::ChatMessage>& messages, const std::string&, bool
+        const std::vector<Chorus::ChatMessage>& messages, const std::optional<std::string>&, std::optional<bool>
     ) const override {
         return supports_render ? render(messages) : std::nullopt;
     }
@@ -143,7 +143,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
             return rejection;
         }
         std::variant<Chorus::RenderedPrompt, Chorus::RequestRejection> render_chat_prompt(
-            const std::vector<Chorus::ChatMessage>& messages, const std::string&, bool
+            const std::vector<Chorus::ChatMessage>& messages, const std::optional<std::string>&, std::optional<bool>
         ) const override {
             if (closed)
                 return Chorus::RequestRejection{Chorus::ChorusError::EngineNotReady, "mock closed"};

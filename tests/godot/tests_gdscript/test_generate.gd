@@ -45,16 +45,112 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(documentation.contains('<param index="1" name="session" type="StringName" default="&quot;&quot;"/></method>'), "expected an empty StringName default in staged metadata")
 	)
 
-	await TestReport.run("invalid active defaults constraint rejects admission", func():
-		var defaults := ChorusGenerationDefaults.new()
-		defaults.override_constraint = true
-		defaults.constraint_format = 99
-		chorus.generation_defaults = defaults
-		TestReport.check(not chorus.generate(ChorusRequest.stateless("invalid defaults constraint")).accepted, "expected invalid active defaults constraint rejection")
-		defaults.override_seed = true
-		defaults.seed = -1
-		TestReport.check(not chorus.generate(ChorusRequest.stateless("invalid defaults seed")).accepted, "expected invalid active defaults seed rejection")
-		chorus.generation_defaults = null
+	await TestReport.run("generation settings selector rejects rooted paths without changing project choices", func():
+		var selector := "chorus/generation/settings_path"
+		var selected_path: String = ProjectSettings.get_setting(selector)
+		var selected_choice: Dictionary = ProjectSettings.get_setting("chorus/generation/max_tokens").duplicate(true)
+		var bridge := ChorusProjectSettings.new()
+		for rooted in ["res:///outside.json", "res://C:/outside.json", "res://\\\\server\\share\\settings.json"]:
+			ProjectSettings.set_setting(selector, rooted)
+			var result: Dictionary = bridge.reload_generation_defaults()
+			TestReport.check(result.status == ChorusProjectSettings.SOURCE_FAILED, "rooted settings selector must fail: " + rooted)
+			TestReport.check(ProjectSettings.get_setting(selector) == selected_path, "failed selection retains the prior path")
+			TestReport.check(ProjectSettings.get_setting("chorus/generation/max_tokens") == selected_choice, "failed selection retains prior choices")
+	)
+
+	await TestReport.run("shared project defaults freeze and request overrides clear locally", func():
+		var settings := ProjectSettings
+		settings.set_setting("chorus/generation/max_tokens", {})
+		var baseline := chorus.generate(ChorusRequest.stateless("provider fallback"))
+		TestReport.check(baseline.accepted, "absence reaches Echo")
+		if baseline.accepted:
+			var event := await wait_for_event(chorus, terminals, baseline.request_id)
+			TestReport.check(event[3].contains("provider fallback"), "provider supplies absent max_tokens")
+		settings.set_setting("chorus/generation/max_tokens", {"value": 0})
+		var frozen := chorus.generate(ChorusRequest.stateless("frozen"))
+		settings.set_setting("chorus/generation/max_tokens", {})
+		TestReport.check(frozen.accepted, "snapshot admitted")
+		if frozen.accepted:
+			var event := await wait_for_event(chorus, terminals, frozen.request_id)
+			TestReport.check(event[3] == "", "accepted work retains zero")
+		settings.set_setting("chorus/generation/max_tokens", {"value": 0})
+		var request := ChorusRequest.stateless("request wins")
+		request.max_tokens = 20
+		var override := chorus.generate(request)
+		TestReport.check(override.accepted, "request override admitted")
+		if override.accepted:
+			var event := await wait_for_event(chorus, terminals, override.request_id)
+			TestReport.check(event[3].contains("request wins"), "request wins")
+		request.clear_max_tokens()
+		var inherited := chorus.generate(request)
+		TestReport.check(inherited.accepted, "clear resumes project choice")
+		if inherited.accepted:
+			var event := await wait_for_event(chorus, terminals, inherited.request_id)
+			TestReport.check(event[3] == "", "project zero restored")
+		settings.set_setting("chorus/generation/max_tokens", {})
+	)
+
+	await TestReport.run("two nodes share one project choice without scene defaults", func():
+		var other: GodotChorus = ChorusNodeScene.instantiate()
+		other.provider = GodotChorus.PROVIDER_ECHO
+		parent.add_child(other)
+		await LoadWaiter.load(other)
+		var other_events := {}
+		other.generation_complete.connect(func(id, _session, _message_id, text, _reasoning): other_events[id] = text)
+		ProjectSettings.set_setting("chorus/generation/max_tokens", {"value": 0})
+		var first := chorus.generate(ChorusRequest.stateless("first node"))
+		var second := other.generate(ChorusRequest.stateless("second node"))
+		TestReport.check(first.accepted and second.accepted, "both nodes admit with project zero")
+		if first.accepted and second.accepted:
+			var first_event := await wait_for_event(chorus, terminals, first.request_id)
+			var deadline := Time.get_ticks_msec() + 10000
+			while not other_events.has(second.request_id) and Time.get_ticks_msec() < deadline:
+				await parent.get_tree().process_frame
+			TestReport.check(first_event[3] == "" and other_events.get(second.request_id, "missing") == "", "both nodes receive zero")
+		ProjectSettings.set_setting("chorus/generation/max_tokens", {})
+		other.stop_all()
+		other.queue_free()
+		await parent.get_tree().process_frame
+	)
+
+	await TestReport.run("project constraint and template respect provider boundary", func():
+		ProjectSettings.set_setting("chorus/generation/constraint", {"value": {"kind": "gbnf", "source": "root ::= \"ok\""}})
+		var grammar := chorus.generate(ChorusRequest.stateless("grammar"))
+		TestReport.check(grammar.accepted, "grammar reaches provider")
+		if grammar.accepted:
+			var event := await wait_for_event(chorus, terminals, grammar.request_id)
+			TestReport.check(event[2] == GodotChorus.ERR_UNSUPPORTED_FEATURE, "Echo rejects grammar")
+		ProjectSettings.set_setting("chorus/generation/constraint", {"value": {"kind": "unconstrained"}})
+		var unconstrained := chorus.generate(ChorusRequest.stateless("unconstrained"))
+		TestReport.check(unconstrained.accepted, "explicit unconstrained is present")
+		if unconstrained.accepted:
+			await wait_for_event(chorus, terminals, unconstrained.request_id)
+		ProjectSettings.set_setting("chorus/generation/constraint", {})
+		ProjectSettings.set_setting("chorus/generation/chat_template", {"value": ""})
+		var chat := ChorusRequest.chat(&"project-template", "hello")
+		var invalid := chorus.generate(chat)
+		TestReport.check(invalid.accepted, "invalid effective template reaches provider")
+		if invalid.accepted:
+			var event := await wait_for_event(chorus, terminals, invalid.request_id)
+			TestReport.check(event[2] == GodotChorus.ERR_INVALID_REQUEST, "empty effective template fails")
+		chat.chat_template = "request template"
+		var override := chorus.generate(chat)
+		TestReport.check(override.accepted, "request template overrides project template")
+		if override.accepted:
+			var event := await wait_for_event(chorus, terminals, override.request_id)
+			TestReport.check(event[2] == GodotChorus.ERR_UNSUPPORTED_OPTION, "Echo rejects selected request template")
+		ProjectSettings.set_setting("chorus/generation/chat_template", {})
+	)
+
+	await TestReport.run("batch freezes shared project choices", func():
+		ProjectSettings.set_setting("chorus/generation/max_tokens", {"value": 0})
+		var batch := chorus.generate_batch([ChorusRequest.stateless("first"), ChorusRequest.stateless("second")])
+		ProjectSettings.set_setting("chorus/generation/max_tokens", {})
+		for result in batch:
+			TestReport.check(result.accepted, "batch entry admitted")
+			if result.accepted:
+				var event := await wait_for_event(chorus, terminals, result.request_id)
+				TestReport.check(event[3] == "", "batch frozen zero")
 	)
 
 	await TestReport.run("typed collection metadata names every resource element", func():
@@ -82,39 +178,54 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(embedded[0] == embedding_result.request_id and embedded[1] == &"memory" and embedded[2].size() == 128, "expected embedding signal correlation")
 	)
 
-	await TestReport.run("override state distinguishes empty set and clear", func():
-		var request := ChorusRequest.stateless("state")
-		request.stop = PackedStringArray(["x"])
-		TestReport.check(request.stop_state == ChorusOverrideState.INHERIT, "value property must not activate override")
-		request.set_stop(PackedStringArray())
-		TestReport.check(request.stop_state == ChorusOverrideState.SET and request.stop.is_empty(), "expected empty SET")
-		request.clear_stop()
-		TestReport.check(request.stop_state == ChorusOverrideState.CLEAR, "expected CLEAR to remain distinct")
-		request.seed_state = ChorusOverrideState.SET
+	await TestReport.run("request assignment selects and clearing invalid choices restores absence", func():
+		var request := ChorusRequest.stateless("request choices")
+		request.max_tokens = 0
+		request.temperature = 0.0
+		request.top_k = 0
+		request.top_p = 0.0
+		request.seed = 0
+		request.frequency_penalty = 0.0
+		request.presence_penalty = 0.0
+		request.stop = PackedStringArray()
+		request.show_thinking = false
+		for name in ["max_tokens", "temperature", "top_k", "top_p", "seed", "frequency_penalty", "presence_penalty", "stop", "show_thinking"]:
+			TestReport.check(request.call("has_" + name), "assignment must select " + name)
+			request.call("clear_" + name)
+			TestReport.check(not request.call("has_" + name), "clear must remove " + name)
 		request.seed = -1
-		TestReport.check(not chorus.generate(request).accepted, "expected negative active seed rejection")
+		TestReport.check(not chorus.generate(request).accepted, "selected invalid seed must reject admission")
+		request.clear_seed()
+		request.max_tokens = 1 << 40
+		TestReport.check(not chorus.generate(request).accepted, "selected out-of-range max_tokens must reject admission")
+		request.clear_max_tokens()
+		request.top_k = 1 << 40
+		TestReport.check(not chorus.generate(request).accepted, "selected out-of-range top_k must reject admission")
+		request.clear_top_k()
+		var result := chorus.generate(request)
+		TestReport.check(result.accepted, "cleared invalid selections must not affect admission")
+		if result.accepted:
+			await wait_for_event(chorus, terminals, result.request_id)
 		request.execution = 99
-		TestReport.check(not chorus.generate(request).accepted, "expected invalid execution rejection")
+		TestReport.check(not chorus.generate(request).accepted, "invalid execution must still reject")
 	)
 
-	await TestReport.run("inactive integer overrides ignore stored out-of-range values", func():
-		for state in [ChorusOverrideState.INHERIT, ChorusOverrideState.CLEAR]:
-			var request := ChorusRequest.stateless("inactive integers")
-			request.max_tokens = 1 << 40
-			request.max_tokens_state = state
-			request.top_k = 1 << 40
-			request.top_k_state = state
-			var result := chorus.generate(request)
-			TestReport.check(result.accepted, "expected inactive out-of-range integers not to affect admission")
-			if result.accepted:
-				await wait_for_event(chorus, terminals, result.request_id)
-
-		var max_tokens := ChorusRequest.stateless("active max tokens")
-		max_tokens.set_max_tokens(1 << 40)
-		TestReport.check(not chorus.generate(max_tokens).accepted, "expected an active out-of-range max_tokens value to reject admission")
-		var top_k := ChorusRequest.stateless("active top k")
-		top_k.set_top_k(1 << 40)
-		TestReport.check(not chorus.generate(top_k).accepted, "expected an active out-of-range top_k value to reject admission")
+	await TestReport.run("request selected zero, empty stop and false reasoning reach Echo", func():
+		var request := ChorusRequest.chat(&"request-values", "selected choices")
+		request.max_tokens = 0
+		request.stop = PackedStringArray()
+		request.show_thinking = false
+		var result := chorus.generate(request)
+		TestReport.check(result.accepted, "zero and empty selections must pass admission")
+		if result.accepted:
+			var event := await wait_for_event(chorus, terminals, result.request_id)
+			TestReport.check(event.size() == 5 and event[3] == "" and event[4] == "", "zero tokens must produce empty output and no reasoning")
+		request.stop = PackedStringArray(["selected stop"])
+		var unsupported := chorus.generate(request)
+		TestReport.check(unsupported.accepted, "unsupported selected stop is a provider error after admission")
+		if unsupported.accepted:
+			var error_event := await wait_for_event(chorus, terminals, unsupported.request_id)
+			TestReport.check(error_event.size() == 4 and error_event[2] == GodotChorus.ERR_UNSUPPORTED_OPTION, "Echo must reject nonempty selected stop")
 	)
 
 	await TestReport.run("batches isolate entries and preserve positions", func():
@@ -128,6 +239,20 @@ static func run_tests(parent: Node) -> void:
 		for result in results:
 			if result.accepted:
 				await wait_for_event(chorus, terminals, result.request_id)
+	)
+
+	await TestReport.run("regenerate reads project defaults", func():
+		var initial := chorus.generate(ChorusRequest.chat(&"regen-defaults", "original"))
+		TestReport.check(initial.accepted, "initial turn admitted")
+		if initial.accepted:
+			await wait_for_event(chorus, terminals, initial.request_id)
+		ProjectSettings.set_setting("chorus/generation/max_tokens", {"value": 0})
+		var regenerated := chorus.regenerate(ChorusRequest.regeneration(&"regen-defaults"))
+		ProjectSettings.set_setting("chorus/generation/max_tokens", {})
+		TestReport.check(regenerated.accepted, "regeneration admitted")
+		if regenerated.accepted:
+			var event := await wait_for_event(chorus, terminals, regenerated.request_id)
+			TestReport.check(event[3] == "", "regeneration retains admission zero")
 	)
 
 	await TestReport.run("embedding batches preserve positions and accept null entries independently", func():
@@ -144,16 +269,11 @@ static func run_tests(parent: Node) -> void:
 				await wait_for_event(chorus, terminals, result.request_id)
 	)
 
-	await TestReport.run("invalid shared defaults reject every generation batch element", func():
-		var defaults := ChorusGenerationDefaults.new()
-		defaults.provider_options = {"llama": {"repeat_penalty": Vector2.ONE}}
-		chorus.generation_defaults = defaults
-		var first := ChorusRequest.stateless("first")
-		var second := ChorusRequest.stateless("second")
-		var results := chorus.generate_batch([first, second])
-		TestReport.check(results.size() == 2 and not results[0].accepted and not results[1].accepted, "expected no batch dispatch when shared defaults fail")
-		TestReport.check(results[0].request == first and results[1].request == second, "expected rejected batch source identity")
-		chorus.generation_defaults = null
+	await TestReport.run("invalid project defaults reject each batch entry", func():
+		ProjectSettings.set_setting("chorus/generation/provider_options", {"llama": {"repeat_penalty": Vector2.ONE}})
+		var results := chorus.generate_batch([ChorusRequest.stateless("first"), ChorusRequest.stateless("second")])
+		TestReport.check(results.size() == 2 and not results[0].accepted and not results[1].accepted, "invalid project options reject batch")
+		ProjectSettings.set_setting("chorus/generation/provider_options", {})
 	)
 
 	await TestReport.run("provider option dictionaries require string keys recursively", func():

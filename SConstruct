@@ -7,14 +7,17 @@ sys.dont_write_bytecode = True
 from tools.materialize_llama import materialize
 
 needs_googletest = any(target in COMMAND_LINE_TARGETS for target in ("test", "compiledb"))
-required_submodules = ["godot-cpp", "llama.cpp"]
+required_submodules = ["godot-cpp", "llama.cpp", "nlohmann-json"]
 if needs_googletest:
     required_submodules.append("googletest")
 
 missing_submodules = [
     module
     for module in required_submodules
-    if not os.path.exists(f"third-party/{module}/CMakeLists.txt")
+    if not os.path.exists(
+        f"third-party/{module}/single_include/nlohmann/json.hpp" if module == "nlohmann-json"
+        else f"third-party/{module}/CMakeLists.txt"
+    )
 ]
 if missing_submodules:
     raise SystemExit(
@@ -137,12 +140,18 @@ def with_llama_includes(base_env):
     scoped.Append(CPPPATH=llama_cpppath)
     return scoped
 
+def with_host_json_includes(base_env):
+    scoped = base_env.Clone()
+    scoped.Append(CPPPATH=["third-party/nlohmann-json/single_include"])
+    return scoped
+
 # Layer source sets
 # VariantDir redirects intermediate build artifacts (.os/.o) into bin/obj/
 # so they don't clutter the source tree. duplicate=0 keeps sources in place.
 VariantDir("bin/obj/chorus",       "src/chorus",       duplicate=0)
 VariantDir("bin/obj/godot_chorus", "src/godot_chorus", duplicate=0)
 VariantDir("bin/obj/chorus_c",     "src/chorus_c",     duplicate=0)
+VariantDir("bin/obj/host_settings", "src/host_settings", duplicate=0)
 VariantDir("bin/obj/tests",        "tests",            duplicate=0)
 if needs_googletest:
     VariantDir("bin/obj/googletest", "third-party/googletest/googletest", duplicate=0)
@@ -154,6 +163,7 @@ sources_echo    = Glob("bin/obj/chorus/providers/echo/*.cpp")
 sources_llama   = Glob("bin/obj/chorus/providers/llama/*.cpp")
 sources_godot   = Glob("bin/obj/godot_chorus/*.cpp")
 sources_c       = Glob("bin/obj/chorus_c/*.cpp")
+sources_host_settings = Glob("bin/obj/host_settings/*.cpp")
 sources_chorus  = sources_echo + sources_core + sources_factory + sources_runtime
 sources_tests   = (
     Glob("bin/obj/tests/native/*.cpp") +
@@ -161,6 +171,7 @@ sources_tests   = (
     Glob("bin/obj/tests/native/wlib/*.cpp") +
     Glob("bin/obj/tests/native/core/*.cpp") +
     Glob("bin/obj/tests/native/chorus_c/*.cpp") +
+    Glob("bin/obj/tests/native/host_settings/*.cpp") +
     Glob("bin/obj/tests/native/factory/*.cpp") +
     Glob("bin/obj/tests/native/providers/echo/*.cpp") +
     Glob("bin/obj/tests/native/runtime/*.cpp")
@@ -289,6 +300,7 @@ if "compiledb" in COMMAND_LINE_TARGETS:
     env.Tool("compilation_db")
     compiledb = env.CompilationDatabase("compile_commands.json")
     env.Object(sources_core + sources_factory + sources_runtime + sources_echo + sources_godot)
+    with_host_json_includes(env).Object(sources_host_settings)
     make_chorus_c_build_env(env).SharedObject(sources_c)
     with_llama_includes(env).Object(sources_llama)
     compiledb_test_env = make_chorus_c_build_env(make_test_env(env))
@@ -308,11 +320,12 @@ if "test" in COMMAND_LINE_TARGETS:
 
     llama_test_objects = with_llama_includes(test_env).Object(sources_llama + sources_tests_llama)
     chorus_c_test_objects = test_env.Object(sources_c)
+    host_codec_test_objects = with_host_json_includes(test_env).Object(sources_host_settings)
     googletest_objects = test_env.Object(sources_googletest)
 
     test_program = test_env.Program(
         target="bin/run_tests",
-        source=sources_chorus + chorus_c_test_objects + sources_tests + sources_tests_c + llama_test_objects + googletest_objects,
+        source=sources_chorus + chorus_c_test_objects + host_codec_test_objects + sources_tests + sources_tests_c + llama_test_objects + googletest_objects,
     )
 
     test_env.Depends(test_program, cmake_target)
@@ -334,14 +347,15 @@ else:
     llama_objects = with_llama_includes(env).SharedObject(sources_llama)
 
     chorus_c_objects = make_chorus_c_build_env(env).SharedObject(sources_c)
+    host_codec_objects = with_host_json_includes(env).SharedObject(sources_host_settings)
 
     godot_library = env.SharedLibrary(
         target="bin/libgodot_chorus",
-        source=sources_chorus + sources_godot + llama_objects
+        source=sources_chorus + sources_godot + host_codec_objects + llama_objects
     )
     chorus_c_library = env.SharedLibrary(
         target="bin/libchorus_c",
-        source=sources_chorus + chorus_c_objects + llama_objects
+        source=sources_chorus + chorus_c_objects + host_codec_objects + llama_objects
     )
     env.Depends([godot_library, chorus_c_library], cmake_target)
     Default(godot_library, chorus_c_library)

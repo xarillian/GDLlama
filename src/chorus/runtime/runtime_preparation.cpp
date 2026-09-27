@@ -151,7 +151,7 @@ void ChorusRuntime::fit_turn_messages(PreparationState& state, PreparationJob& j
         auto messages = materialize(boundaries[index]);
         check_cancelled(job.control->cancelled);
         auto result = state.service->render_chat_prompt(messages, job.resolved.chat_template,
-                                                       job.resolved.config.show_thinking.value_or(true));
+                                                       job.resolved.config.show_thinking);
         check_cancelled(job.control->cancelled);
         if (auto* failure = std::get_if<RequestRejection>(&result))
             throw *failure;

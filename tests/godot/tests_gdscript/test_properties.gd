@@ -104,4 +104,25 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(chorus.max_concurrent_requests == 7, "expected max_concurrent_requests to survive a provider round-trip")
 	)
 
+	await TestReport.run("node scenes cannot store obsolete generation defaults", func():
+		var properties := chorus.get_property_list()
+		for item in properties:
+			TestReport.check(item.name != &"generation_defaults" and item.name != &"chat_template" and item.name != &"_generation_choices", "no obsolete node property")
+		var methods := {}
+		for item in ClassDB.class_get_method_list("GodotChorus"):
+			methods[item.name] = true
+		for obsolete in ["set_generation_defaults", "get_generation_defaults", "set_chat_template", "get_chat_template", "has_chat_template", "clear_chat_template"]:
+			TestReport.check(not methods.has(obsolete), "no obsolete node method: %s" % obsolete)
+		var bridge_methods := {}
+		for item in ClassDB.class_get_method_list("ChorusProjectSettings"):
+			bridge_methods[item.name] = true
+		for required in ["sync_generation_defaults", "reload_generation_defaults", "save_generation_defaults"]:
+			TestReport.check(bridge_methods.has(required), "editor bridge exports %s" % required)
+		var source := GodotChorus.new()
+		var copy := source.duplicate()
+		TestReport.check(copy.get_property_list().all(func(item): return item.name != &"_generation_choices"), "duplication cannot restore node defaults")
+		copy.free()
+		source.free()
+	)
+
 	chorus.queue_free()

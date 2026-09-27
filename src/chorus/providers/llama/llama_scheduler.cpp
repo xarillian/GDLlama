@@ -174,7 +174,7 @@ void LlamaScheduler::shutdown() {
 }
 
 std::variant<Chorus::RenderedPrompt, Chorus::RequestRejection> LlamaScheduler::render_chat_prompt(
-    const std::vector<Chorus::ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+    const std::vector<Chorus::ChatMessage>& messages, const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
 ) const {
     std::shared_lock<std::shared_mutex> resource_lock(_preparation_fence);
     if (!is_healthy())
@@ -344,13 +344,13 @@ LlamaScheduler::PreparedRequestResult LlamaScheduler::prepare_request(PendingReq
         return prepared;
     }
     prepared.max_tokens = pending.resolved->max_tokens;
-    prepared.stop_sequences = std::move(pending.resolved->stop);
+    prepared.stop_sequences = std::move(pending.resolved->stop).value_or(std::vector<std::string>{});
     auto sampler = Chorus::make_llama_sampler(model, std::move(*pending.resolved));
     std::optional<Chorus::RequestRejection> render_rejection;
     if (!pending.request.messages.empty()) {
         std::lock_guard<std::mutex> lock(_template_mutex);
         auto rendered = Chorus::render_llama_chat(model, _model_default_chat_templates.get(), pending.request.chat_template,
-                                                   pending.request.messages, pending.request.gen_config.show_thinking.value_or(true));
+                                                   pending.request.messages, pending.request.gen_config.show_thinking);
         if (auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered))
             render_rejection = *rejection;
         else {

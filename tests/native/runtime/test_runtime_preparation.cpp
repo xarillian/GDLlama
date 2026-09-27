@@ -30,6 +30,12 @@ class GatedPreparation : public RequestPreparation {
     std::atomic<bool> closed{false};
     mutable std::atomic<bool> gate_exited{false};
     mutable std::vector<GenerationConfig> validated_configs;
+    mutable std::vector<std::optional<std::string>> validated_templates;
+    struct RenderProbe {
+        std::optional<std::string> chat_template;
+        std::optional<bool> show_thinking;
+    };
+    mutable std::vector<RenderProbe> render_probes;
     std::function<std::variant<RenderedPrompt, RequestRejection>(const std::vector<ChatMessage>&)> render;
     std::optional<int64_t> count_override;
     std::optional<RequestRejection> count_rejection;
@@ -63,13 +69,18 @@ class GatedPreparation : public RequestPreparation {
         if (closed) return RequestRejection{ChorusError::EngineNotReady, "closed"};
         std::lock_guard<std::mutex> lock(mutex);
         validated_configs.push_back(request.gen_config);
+        validated_templates.push_back(request.chat_template);
         return std::nullopt;
     }
     std::variant<RenderedPrompt, RequestRejection> render_chat_prompt(
-        const std::vector<ChatMessage>& messages, const std::string&, bool
+        const std::vector<ChatMessage>& messages, const std::optional<std::string>& chat_template, std::optional<bool> show_thinking
     ) const override {
         hook(Hook::Render);
         if (closed) return RequestRejection{ChorusError::EngineNotReady, "closed"};
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            render_probes.push_back({chat_template, show_thinking});
+        }
         if (render) return render(messages);
         RenderedPrompt value;
         for (const auto& message : messages) {
@@ -153,7 +164,7 @@ GenerationRequest chat(const char* session = "npc", std::string prompt = "new") 
     GenerationRequest request;
     request.session_id = session;
     request.prompt = std::move(prompt);
-    request.overrides.max_tokens = ConfigPatch<int32_t>::set(0);
+    request.options.max_tokens = 0;
     return request;
 }
 GenerationRequest raw(std::string text) {
@@ -233,9 +244,9 @@ TEST(RuntimePreparation, Preview_freezes_history_defaults_and_source_without_occ
     ASSERT_FALSE(runtime.active_request_for_session("npc"));
     ASSERT_FALSE(runtime.edit_message("npc", 0, MessageContent::text("edited")).has_value());
     request.prompt = "changed";
-    HostDefaults defaults;
-    defaults.config.max_tokens = ConfigPatch<int32_t>::set(INT32_MAX);
-    runtime.set_host_defaults(defaults);
+    GenerationDefaults defaults;
+    defaults.options.max_tokens = INT32_MAX;
+    runtime.set_generation_defaults(defaults);
     ASSERT_EQ(runtime.last_turn_outcome("npc"), TurnOutcome::None);
     service->release();
     auto events = drain_runtime_events(runtime);
@@ -558,19 +569,120 @@ TEST(RuntimePreparation, Batch_defaults_are_frozen_before_a_gated_worker_can_obs
     service->gate_at = 1;
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
-    HostDefaults defaults;
-    defaults.config.temperature = ConfigPatch<float>::set(0.25f);
-    runtime.set_host_defaults(defaults);
+    GenerationDefaults defaults;
+    defaults.options.temperature = 0.25f;
+    runtime.set_generation_defaults(defaults);
     auto results = runtime.submit_batch(std::vector<GenerationRequest>{raw("first"), raw("second"), raw("third")});
     ASSERT_TRUE(service->wait_entered());
-    defaults.config.temperature = ConfigPatch<float>::set(0.75f);
-    runtime.set_host_defaults(defaults);
+    defaults.options.temperature = 0.75f;
+    runtime.set_generation_defaults(defaults);
     service->release();
     auto events = drain_runtime_events(runtime, 3);
     ASSERT_EQ(events.size(), 3U);
     ASSERT_EQ(service->validated_configs.size(), 3U);
     for (const auto& config : service->validated_configs)
         ASSERT_EQ(config.temperature, 0.25f);
+}
+
+TEST(RuntimePreparation, Preview_and_generation_preserve_optional_chat_controls) {
+    ChorusRuntime runtime;
+    auto engine = std::make_unique<PreparationEngine>();
+    auto* observed = engine.get();
+    auto service = engine->service;
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
+    auto request = chat();
+    ASSERT_TRUE(runtime.render_prompt(request).ok());
+    ASSERT_EQ(drain_runtime_events(runtime).back().kind, RuntimeEvent::Kind::PromptRendered);
+    ASSERT_FALSE(service->render_probes.back().show_thinking);
+    ASSERT_FALSE(service->render_probes.back().chat_template);
+    ASSERT_FALSE(service->validated_configs.back().show_thinking);
+    ASSERT_FALSE(service->validated_templates.back());
+    GenerationDefaults defaults;
+    defaults.chat_template = "host";
+    defaults.options.show_thinking = false;
+    runtime.set_generation_defaults(defaults);
+    ASSERT_TRUE(runtime.render_prompt(request).ok());
+    drain_runtime_events(runtime);
+    ASSERT_EQ(service->render_probes.back().show_thinking, false);
+    ASSERT_EQ(service->render_probes.back().chat_template, "host");
+    request.options.show_thinking = true;
+    request.chat_template = "request";
+    ASSERT_TRUE(runtime.submit(request).ok());
+    drain_runtime_events(runtime);
+    ASSERT_EQ(service->render_probes.back().show_thinking, true);
+    ASSERT_EQ(service->render_probes.back().chat_template, "request");
+    ASSERT_EQ(service->validated_configs.back().show_thinking, true);
+    ASSERT_EQ(service->validated_templates.back(), "request");
+    ASSERT_EQ(observed->last_config.show_thinking, true);
+    ASSERT_EQ(observed->last_chat_template, "request");
+    request.session_id = "cleared";
+    request.options.show_thinking.reset();
+    request.chat_template.reset();
+    ASSERT_TRUE(runtime.render_prompt(request).ok());
+    drain_runtime_events(runtime);
+    ASSERT_EQ(service->render_probes.back().show_thinking, false);
+    ASSERT_EQ(service->render_probes.back().chat_template, "host");
+    request.chat_template = "";
+    ASSERT_TRUE(runtime.render_prompt(request).ok());
+    drain_runtime_events(runtime);
+    ASSERT_EQ(service->render_probes.back().chat_template, "");
+    ASSERT_EQ(service->validated_templates.back(), "");
+}
+
+TEST(RuntimePreparation, Admitted_request_and_batch_keep_earlier_defaults_after_replacement) {
+    ChorusRuntime runtime;
+    auto engine = std::make_unique<PreparationEngine>();
+    auto* observed = engine.get();
+    auto service = engine->service;
+    service->gate_at = 1;
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
+    ReleaseGate release{service};
+    GenerationDefaults defaults;
+    defaults.options.max_tokens = 0;
+    defaults.options.stop = std::vector<std::string>{"old"};
+    defaults.options.show_thinking = false;
+    defaults.chat_template = "old template";
+    runtime.set_generation_defaults(defaults);
+    auto first = chat("first");
+    first.options.max_tokens.reset();
+    auto accepted = runtime.submit(first);
+    ASSERT_TRUE(accepted.ok());
+    ASSERT_TRUE(service->wait_entered());
+    auto second = chat("second");
+    second.options.max_tokens.reset();
+    auto third = chat("third");
+    third.options.max_tokens = 3;
+    auto batch = runtime.submit_batch(std::vector<GenerationRequest>{second, third});
+    ASSERT_EQ(batch.size(), 2U);
+    ASSERT_TRUE(batch[0].ok() && batch[1].ok());
+    defaults.options.max_tokens = 12;
+    defaults.options.stop = std::vector<std::string>{"new"};
+    defaults.options.show_thinking = true;
+    defaults.chat_template = "new template";
+    runtime.set_generation_defaults(defaults);
+    service->release();
+    auto events = drain_runtime_events(runtime, 3);
+    ASSERT_EQ(events.size(), 3U);
+    ASSERT_EQ(service->validated_configs.size(), 3U);
+    ASSERT_EQ(service->render_probes.size(), 3U);
+    for (size_t i = 0; i < 3; ++i) {
+        ASSERT_EQ(service->validated_configs[i].stop, (std::vector<std::string>{"old"}));
+        ASSERT_EQ(service->validated_configs[i].show_thinking, false);
+        ASSERT_EQ(service->validated_templates[i], "old template");
+        ASSERT_EQ(service->render_probes[i].chat_template, "old template");
+        ASSERT_EQ(service->render_probes[i].show_thinking, false);
+    }
+    ASSERT_EQ(service->validated_configs[0].max_tokens, 0);
+    ASSERT_EQ(service->validated_configs[1].max_tokens, 0);
+    ASSERT_EQ(service->validated_configs[2].max_tokens, 3);
+    ASSERT_EQ(observed->last_chat_template, "old template");
+    ASSERT_EQ(observed->last_config.stop, (std::vector<std::string>{"old"}));
+    auto next = chat("fourth");
+    next.options.max_tokens.reset();
+    ASSERT_TRUE(runtime.submit(next).ok());
+    drain_runtime_events(runtime);
+    ASSERT_EQ(observed->last_config.max_tokens, 12);
+    ASSERT_EQ(observed->last_chat_template, "new template");
 }
 
 TEST(RuntimePreparation, Progress_is_coalesced_and_invalid_samples_do_not_publish_readiness) {

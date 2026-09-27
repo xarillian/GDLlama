@@ -19,7 +19,7 @@ RequestRejection common_option_rejection(
 );
 std::optional<RequestRejection> validate_common(const GenerationConfig& config);
 std::optional<RequestRejection>
-resolve_constraint(common_params_sampling& sampling, const std::optional<OutputConstraint>& constraint);
+resolve_constraint(common_params_sampling& sampling, const std::optional<ConstraintChoice>& constraint);
 } // namespace
 
 std::optional<RequestRejection> validate_llama_request(const ChorusRequest& request) {
@@ -29,8 +29,10 @@ std::optional<RequestRejection> validate_llama_request(const ChorusRequest& requ
         if (!joined_text(message.content))
             return RequestRejection{ChorusError::UnsupportedFeature, "Llama accepts text-only chat content."};
     }
+    if (request.chat_template && request.chat_template->empty())
+        return RequestRejection{ChorusError::InvalidRequest, "Llama chat_template must not be empty."};
     if (request.messages.empty()) {
-        if (!request.chat_template.empty()) {
+        if (request.chat_template.has_value()) {
             return RequestRejection{
                 ChorusError::UnsupportedOption,
                 "Llama chat_template requires non-empty messages; unset it for raw-prompt generation.",
@@ -161,31 +163,34 @@ RequestRejection common_option_rejection(
             return common_option_rejection("frequency_penalty", "float", "float", "finite float range");
         if (config.presence_penalty && !std::isfinite(*config.presence_penalty))
             return common_option_rejection("presence_penalty", "float", "float", "finite float range");
-        if (auto rejection = validate_stop_sequences(config.stop))
-            return rejection;
+        if (config.stop) {
+            if (auto rejection = validate_stop_sequences(*config.stop))
+                return rejection;
+        }
         return std::nullopt;
     }
 
     std::optional<RequestRejection>
-    resolve_constraint(common_params_sampling& sampling, const std::optional<OutputConstraint>& constraint) {
-        if (!constraint)
+    resolve_constraint(common_params_sampling& sampling, const std::optional<ConstraintChoice>& constraint) {
+        if (!constraint || std::holds_alternative<UnconstrainedOutput>(*constraint))
             return std::nullopt;
+        const auto& selected = std::get<OutputConstraint>(*constraint);
 
-        switch (constraint->format) {
+        switch (selected.format) {
         case ConstraintFormat::Gbnf:
-            if (constraint->source.empty()) {
+            if (selected.source.empty()) {
                 return RequestRejection{ChorusError::InvalidRequest, "GBNF constraint source must not be empty."};
             }
-            sampling.grammar = common_grammar{COMMON_GRAMMAR_TYPE_USER, constraint->source};
+            sampling.grammar = common_grammar{COMMON_GRAMMAR_TYPE_USER, selected.source};
             return std::nullopt;
         case ConstraintFormat::JsonSchema:
-            if (constraint->source.empty()) {
+            if (selected.source.empty()) {
                 return RequestRejection{
                     ChorusError::InvalidRequest, "JSON Schema constraint source must not be empty."
                 };
             }
             try {
-                const auto schema = common_json::parse(constraint->source);
+                const auto schema = common_json::parse(selected.source);
                 sampling.grammar =
                     common_grammar{COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT, json_schema_to_grammar(schema, true)};
             } catch (const std::exception& error) {

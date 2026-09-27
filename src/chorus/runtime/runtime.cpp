@@ -20,6 +20,40 @@ bool valid_content(const MessageContent& content) {
     return std::ranges::all_of(content.parts, [](const auto& part) { return std::holds_alternative<std::string>(part); });
 }
 
+GenerationConfig compose_choices(const GenerationConfig& defaults, const GenerationConfig& request) {
+    GenerationConfig result = defaults;
+    if (request.max_tokens) result.max_tokens = request.max_tokens;
+    if (request.temperature) result.temperature = request.temperature;
+    if (request.top_k) result.top_k = request.top_k;
+    if (request.top_p) result.top_p = request.top_p;
+    if (request.seed) result.seed = request.seed;
+    if (request.frequency_penalty) result.frequency_penalty = request.frequency_penalty;
+    if (request.presence_penalty) result.presence_penalty = request.presence_penalty;
+    if (request.stop) result.stop = request.stop;
+    if (request.constraint) result.constraint = request.constraint;
+    if (request.show_thinking) result.show_thinking = request.show_thinking;
+
+    for (auto it = result.provider_options.begin(); it != result.provider_options.end();) {
+        const auto* entries = std::get_if<ProviderOptionMap>(&it->second);
+        if (entries && entries->empty()) it = result.provider_options.erase(it);
+        else ++it;
+    }
+    for (const auto& [provider, choice] : request.provider_options) {
+        const auto* incoming = std::get_if<ProviderOptionMap>(&choice);
+        if (incoming && incoming->empty()) continue;
+        auto existing = result.provider_options.find(provider);
+        if (existing != result.provider_options.end() && incoming) {
+            if (auto* entries = std::get_if<ProviderOptionMap>(&existing->second)) {
+                for (const auto& [key, value] : *incoming)
+                    (*entries)[key] = value;
+                continue;
+            }
+        }
+        result.provider_options[provider] = choice;
+    }
+    return result;
+}
+
 } // namespace
 
 ChorusRuntime::ChorusRuntime() = default;
@@ -50,22 +84,18 @@ std::optional<EngineCapabilities> ChorusRuntime::capabilities() const {
     return is_loaded() ? std::optional<EngineCapabilities>{_lifetime->preparation->capabilities} : std::nullopt;
 }
 
-void ChorusRuntime::set_host_defaults(HostDefaults defaults) {
+void ChorusRuntime::set_generation_defaults(GenerationDefaults defaults) {
     assert_host_thread();
-    _host_defaults = std::move(defaults);
+    _generation_defaults = std::move(defaults);
 }
 
 ChorusRuntime::ResolvedRequest ChorusRuntime::resolve_request(const GenerationRequest& request) const {
-    ResolvedRequest resolved{
-        request,
-        apply_generation_patch(apply_generation_patch(GenerationConfig{}, _host_defaults.config), request.overrides),
-        request.chat_template
-    };
+    ResolvedRequest resolved{request, compose_choices(_generation_defaults.options, request.options), request.chat_template};
     if (!request.session_id) {
-        if (request.overrides.show_thinking.action == PatchAction::Inherit)
+        if (!request.options.show_thinking)
             resolved.config.show_thinking.reset();
-    } else if (resolved.chat_template.empty()) {
-        resolved.chat_template = _host_defaults.chat_template;
+    } else if (!resolved.chat_template) {
+        resolved.chat_template = _generation_defaults.chat_template;
     }
     return resolved;
 }
@@ -117,7 +147,7 @@ SubmitResult ChorusRuntime::admit_generation(const GenerationRequest& request, O
     job->operation = operation;
     job->resolved = resolve_request(request);
     const auto& resolved = job->resolved;
-    if (!request.session_id && (!request.inject.empty() || !resolved.chat_template.empty() || resolved.config.show_thinking.has_value()))
+    if (!request.session_id && (!request.inject.empty() || request.chat_template.has_value() || request.options.show_thinking.has_value()))
         return rejection(ChorusError::InvalidRequest, "inject/chat_template/show_thinking require a session.");
     job->request = make_engine_request(resolved);
     MessageNodePtr replaced;

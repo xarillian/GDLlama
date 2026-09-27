@@ -8,16 +8,9 @@ void TYPE::_bind_methods() { __VA_ARGS__ }
     ClassDB::bind_method(D_METHOD(#SETTER, "value"), &TYPE::SETTER); \
     ClassDB::bind_method(D_METHOD(#GETTER), &TYPE::GETTER); \
     ADD_PROPERTY(PropertyInfo(VARIANT_TYPE, NAME), #SETTER, #GETTER)
-#define BIND_STATE(TYPE, NAME, SETTER, GETTER) \
-    ClassDB::bind_method(D_METHOD(#SETTER, "value"), &TYPE::SETTER); \
-    ClassDB::bind_method(D_METHOD(#GETTER), &TYPE::GETTER); \
-    ADD_PROPERTY(PropertyInfo(Variant::INT, NAME, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT, "ChorusOverrideState.Value"), #SETTER, #GETTER)
 
 BIND_NAMESPACE(ChorusRole,
     BIND_ENUM_CONSTANT(SYSTEM); BIND_ENUM_CONSTANT(USER); BIND_ENUM_CONSTANT(ASSISTANT);
-)
-BIND_NAMESPACE(ChorusOverrideState,
-    BIND_ENUM_CONSTANT(INHERIT); BIND_ENUM_CONSTANT(SET); BIND_ENUM_CONSTANT(CLEAR);
 )
 BIND_NAMESPACE(ChorusExecution,
     BIND_ENUM_CONSTANT(SHARED); BIND_ENUM_CONSTANT(EXCLUSIVE);
@@ -101,13 +94,10 @@ Ref<ChorusRequest> ChorusRequest::chat(const StringName& session, const String& 
 Ref<ChorusRequest> ChorusRequest::stateless(const String& content) { Ref<ChorusRequest> value; value.instantiate(); value->_content = content; return value; }
 Ref<ChorusRequest> ChorusRequest::regeneration(const StringName& session) { Ref<ChorusRequest> value; value.instantiate(); value->_session = session; return value; }
 #define IMPLEMENT_FIELD(NAME, TYPE) \
-void ChorusRequest::set_##NAME##_state(ChorusOverrideState::Value value) { _##NAME##_state = value; } \
-ChorusOverrideState::Value ChorusRequest::get_##NAME##_state() const { return _##NAME##_state; } \
-void ChorusRequest::set_##NAME##_value(TYPE value) { _##NAME = value; } \
+void ChorusRequest::set_##NAME(TYPE value) { _##NAME = value; _has_##NAME = true; } \
 TYPE ChorusRequest::get_##NAME() const { return _##NAME; } \
-void ChorusRequest::set_##NAME(TYPE value) { _##NAME = value; _##NAME##_state = ChorusOverrideState::SET; } \
-void ChorusRequest::clear_##NAME() { _##NAME##_state = ChorusOverrideState::CLEAR; } \
-void ChorusRequest::inherit_##NAME() { _##NAME##_state = ChorusOverrideState::INHERIT; }
+bool ChorusRequest::has_##NAME() const { return _has_##NAME; } \
+void ChorusRequest::clear_##NAME() { _has_##NAME = false; }
 IMPLEMENT_FIELD(max_tokens, int64_t)
 IMPLEMENT_FIELD(temperature, double)
 IMPLEMENT_FIELD(top_k, int64_t)
@@ -119,44 +109,110 @@ IMPLEMENT_FIELD(stop, PackedStringArray)
 IMPLEMENT_FIELD(show_thinking, bool)
 #undef IMPLEMENT_FIELD
 void ChorusRequest::set_stream(bool value) { _stream = value; } bool ChorusRequest::get_stream() const { return _stream; }
-void ChorusRequest::set_constraint_state(ChorusOverrideState::Value value) { _constraint_state = value; }
-ChorusOverrideState::Value ChorusRequest::get_constraint_state() const { return _constraint_state; }
-void ChorusRequest::set_constraint_format(ChorusConstraintFormat::Value value) { _constraint_format = value; }
+void ChorusRequest::set_constraint(ChorusConstraintFormat::Value format, const String& source) { _constraint_format = format; _constraint_source = source; _unconstrained = false; _has_constraint = true; }
+void ChorusRequest::set_unconstrained() { _unconstrained = true; _has_constraint = true; }
+bool ChorusRequest::has_constraint() const { return _has_constraint; }
+bool ChorusRequest::is_unconstrained() const { return _has_constraint && _unconstrained; }
+void ChorusRequest::clear_constraint() { _has_constraint = false; }
 ChorusConstraintFormat::Value ChorusRequest::get_constraint_format() const { return _constraint_format; }
-void ChorusRequest::set_constraint_source(const String& value) { _constraint_source = value; }
 String ChorusRequest::get_constraint_source() const { return _constraint_source; }
-void ChorusRequest::set_constraint(ChorusConstraintFormat::Value format, const String& source) { _constraint_format = format; _constraint_source = source; _constraint_state = ChorusOverrideState::SET; }
-void ChorusRequest::clear_constraint() { _constraint_state = ChorusOverrideState::CLEAR; }
-void ChorusRequest::inherit_constraint() { _constraint_state = ChorusOverrideState::INHERIT; }
-void ChorusRequest::set_provider_options(const Dictionary& value) { _provider_options = value; } Dictionary ChorusRequest::get_provider_options() const { return _provider_options; }
-void ChorusRequest::set_provider_option_erasures(const PackedStringArray& value) { _provider_option_erasures = value; } PackedStringArray ChorusRequest::get_provider_option_erasures() const { return _provider_option_erasures; }
+void ChorusRequest::set_provider_options(const Dictionary& value) { _provider_options = value.duplicate(false); }
+Dictionary ChorusRequest::get_provider_options() const { return _provider_options; }
+void ChorusRequest::clear_provider_options() { _provider_options = Dictionary(); }
+void ChorusRequest::clear_provider_option(const String& provider, const String& key) {
+    const Variant namespace_value = _provider_options.get(provider, Variant());
+    if (namespace_value.get_type() != Variant::DICTIONARY) return;
+    Dictionary names = ((Dictionary)namespace_value).duplicate(false);
+    names.erase(key);
+    if (names.is_empty()) _provider_options.erase(provider);
+    else _provider_options[provider] = names;
+}
 void ChorusRequest::set_inject(const TypedArray<ChorusInjectedMessage>& value) { _inject = value; } TypedArray<ChorusInjectedMessage> ChorusRequest::get_inject() const { return _inject; }
 bool ChorusRequest::requires_nonempty_session() const { return _chat_session_required; }
-void ChorusRequest::set_chat_template(const String& value) { _chat_template = value; } String ChorusRequest::get_chat_template() const { return _chat_template; }
+void ChorusRequest::set_chat_template(const String& value) { _chat_template = value; _has_chat_template = true; }
+String ChorusRequest::get_chat_template() const { return _chat_template; }
+bool ChorusRequest::has_chat_template() const { return _has_chat_template; }
+void ChorusRequest::clear_chat_template() { _has_chat_template = false; }
 #define BIND_OPTION(NAME, VARIANT_TYPE) \
-    BIND_STATE(ChorusRequest, #NAME "_state", set_##NAME##_state, get_##NAME##_state); \
-    ClassDB::bind_method(D_METHOD("set_" #NAME "_value", "value"), &ChorusRequest::set_##NAME##_value); ClassDB::bind_method(D_METHOD("get_" #NAME), &ChorusRequest::get_##NAME); \
-    ADD_PROPERTY(PropertyInfo(VARIANT_TYPE, #NAME), "set_" #NAME "_value", "get_" #NAME); \
-    ClassDB::bind_method(D_METHOD("set_" #NAME, "value"), &ChorusRequest::set_##NAME); ClassDB::bind_method(D_METHOD("clear_" #NAME), &ChorusRequest::clear_##NAME); ClassDB::bind_method(D_METHOD("inherit_" #NAME), &ChorusRequest::inherit_##NAME)
+    ClassDB::bind_method(D_METHOD("set_" #NAME, "value"), &ChorusRequest::set_##NAME); \
+    ClassDB::bind_method(D_METHOD("get_" #NAME), &ChorusRequest::get_##NAME); \
+    ClassDB::bind_method(D_METHOD("has_" #NAME), &ChorusRequest::has_##NAME); \
+    ClassDB::bind_method(D_METHOD("clear_" #NAME), &ChorusRequest::clear_##NAME); \
+    ADD_PROPERTY(PropertyInfo(VARIANT_TYPE, #NAME, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR), "set_" #NAME, "get_" #NAME)
 void ChorusRequest::_bind_methods() {
     ClassDB::bind_static_method("ChorusRequest", D_METHOD("chat", "session", "content"), &ChorusRequest::chat);
     ClassDB::bind_static_method("ChorusRequest", D_METHOD("stateless", "content"), &ChorusRequest::stateless);
     ClassDB::bind_static_method("ChorusRequest", D_METHOD("regeneration", "session"), &ChorusRequest::regeneration);
     BIND_VALUE(ChorusRequest, "stream", set_stream, get_stream, Variant::BOOL);
     BIND_OPTION(max_tokens, Variant::INT); BIND_OPTION(temperature, Variant::FLOAT); BIND_OPTION(top_k, Variant::INT); BIND_OPTION(top_p, Variant::FLOAT); BIND_OPTION(seed, Variant::INT); BIND_OPTION(frequency_penalty, Variant::FLOAT); BIND_OPTION(presence_penalty, Variant::FLOAT); BIND_OPTION(stop, Variant::PACKED_STRING_ARRAY); BIND_OPTION(show_thinking, Variant::BOOL);
-    BIND_STATE(ChorusRequest, "constraint_state", set_constraint_state, get_constraint_state);
-    ClassDB::bind_method(D_METHOD("set_constraint_format", "value"), &ChorusRequest::set_constraint_format); ClassDB::bind_method(D_METHOD("get_constraint_format"), &ChorusRequest::get_constraint_format);
-    ADD_PROPERTY(PropertyInfo(Variant::INT, "constraint_format", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT, "ChorusConstraintFormat.Value"), "set_constraint_format", "get_constraint_format");
-    BIND_VALUE(ChorusRequest, "constraint_source", set_constraint_source, get_constraint_source, Variant::STRING);
-    ClassDB::bind_method(D_METHOD("set_constraint", "format", "source"), &ChorusRequest::set_constraint); ClassDB::bind_method(D_METHOD("clear_constraint"), &ChorusRequest::clear_constraint); ClassDB::bind_method(D_METHOD("inherit_constraint"), &ChorusRequest::inherit_constraint);
+    ClassDB::bind_method(D_METHOD("get_constraint_format"), &ChorusRequest::get_constraint_format);
+    ADD_PROPERTY(PropertyInfo(Variant::INT, "constraint_format", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY, "ChorusConstraintFormat.Value"), "", "get_constraint_format");
+    ClassDB::bind_method(D_METHOD("get_constraint_source"), &ChorusRequest::get_constraint_source);
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "constraint_source", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY), "", "get_constraint_source");
+    ClassDB::bind_method(D_METHOD("set_constraint", "format", "source"), &ChorusRequest::set_constraint);
+    ClassDB::bind_method(D_METHOD("set_unconstrained"), &ChorusRequest::set_unconstrained);
+    ClassDB::bind_method(D_METHOD("has_constraint"), &ChorusRequest::has_constraint);
+    ClassDB::bind_method(D_METHOD("is_unconstrained"), &ChorusRequest::is_unconstrained);
+    ClassDB::bind_method(D_METHOD("clear_constraint"), &ChorusRequest::clear_constraint);
     BIND_VALUE(ChorusRequest, "provider_options", set_provider_options, get_provider_options, Variant::DICTIONARY);
-    BIND_VALUE(ChorusRequest, "provider_option_erasures", set_provider_option_erasures, get_provider_option_erasures, Variant::PACKED_STRING_ARRAY);
+    ClassDB::bind_method(D_METHOD("clear_provider_options"), &ChorusRequest::clear_provider_options);
+    ClassDB::bind_method(D_METHOD("clear_provider_option", "provider", "key"), &ChorusRequest::clear_provider_option);
     ClassDB::bind_method(D_METHOD("set_inject", "value"), &ChorusRequest::set_inject);
     ClassDB::bind_method(D_METHOD("get_inject"), &ChorusRequest::get_inject);
     ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "inject", PROPERTY_HINT_ARRAY_TYPE, "ChorusInjectedMessage"), "set_inject", "get_inject");
-    BIND_VALUE(ChorusRequest, "chat_template", set_chat_template, get_chat_template, Variant::STRING);
+    ClassDB::bind_method(D_METHOD("set_chat_template", "value"), &ChorusRequest::set_chat_template);
+    ClassDB::bind_method(D_METHOD("get_chat_template"), &ChorusRequest::get_chat_template);
+    ClassDB::bind_method(D_METHOD("has_chat_template"), &ChorusRequest::has_chat_template);
+    ClassDB::bind_method(D_METHOD("clear_chat_template"), &ChorusRequest::clear_chat_template);
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "chat_template", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_EDITOR), "set_chat_template", "get_chat_template");
 }
 #undef BIND_OPTION
+
+void ChorusRequest::_get_property_list(List<PropertyInfo>* list) const {
+    list->push_back(PropertyInfo(Variant::DICTIONARY, "_choices", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_INTERNAL));
+}
+
+bool ChorusRequest::_get(const StringName& property, Variant& value) const {
+    if (property != StringName("_choices")) return false;
+    Dictionary choices;
+#define STORE_CHOICE(NAME) if (_has_##NAME) choices[#NAME] = _##NAME
+    STORE_CHOICE(max_tokens); STORE_CHOICE(temperature); STORE_CHOICE(top_k); STORE_CHOICE(top_p);
+    STORE_CHOICE(seed); STORE_CHOICE(frequency_penalty); STORE_CHOICE(presence_penalty);
+    STORE_CHOICE(stop); STORE_CHOICE(show_thinking);
+#undef STORE_CHOICE
+    if (_has_constraint) {
+        Dictionary constraint;
+        constraint["unconstrained"] = _unconstrained;
+        if (!_unconstrained) {
+            constraint["format"] = (int64_t)_constraint_format;
+            constraint["source"] = _constraint_source;
+        }
+        choices["constraint"] = constraint;
+    }
+    if (_has_chat_template) choices["chat_template"] = _chat_template;
+    value = choices;
+    return true;
+}
+
+bool ChorusRequest::_set(const StringName& property, const Variant& value) {
+    if (property != StringName("_choices")) return false;
+    if (value.get_type() != Variant::DICTIONARY) return false;
+    const Dictionary choices = value;
+#define RESTORE_CHOICE(NAME, TYPE) if (choices.has(#NAME)) set_##NAME((TYPE)choices[#NAME]); else clear_##NAME()
+    RESTORE_CHOICE(max_tokens, int64_t); RESTORE_CHOICE(temperature, double);
+    RESTORE_CHOICE(top_k, int64_t); RESTORE_CHOICE(top_p, double); RESTORE_CHOICE(seed, int64_t);
+    RESTORE_CHOICE(frequency_penalty, double); RESTORE_CHOICE(presence_penalty, double);
+    RESTORE_CHOICE(stop, PackedStringArray); RESTORE_CHOICE(show_thinking, bool);
+#undef RESTORE_CHOICE
+    if (choices.has("constraint")) {
+        const Dictionary constraint = choices["constraint"];
+        if (constraint.get("unconstrained", false)) set_unconstrained();
+        else set_constraint((ChorusConstraintFormat::Value)(int64_t)constraint["format"], constraint["source"]);
+    } else clear_constraint();
+    if (choices.has("chat_template")) set_chat_template(choices["chat_template"]);
+    else clear_chat_template();
+    return true;
+}
 
 Ref<ChorusEmbeddingRequest> ChorusEmbeddingRequest::create(const String& content, const StringName& session) { Ref<ChorusEmbeddingRequest> value; value.instantiate(); value->_content = content; value->_session = session; return value; }
 void ChorusEmbeddingRequest::_bind_methods() { ClassDB::bind_static_method("ChorusEmbeddingRequest", D_METHOD("create", "content", "session"), &ChorusEmbeddingRequest::create, DEFVAL(StringName())); }

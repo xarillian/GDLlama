@@ -14,7 +14,6 @@
 #include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 #include "chorus/runtime/runtime.hpp"
-#include "godot_chorus/chorus_generation_defaults.hpp"
 #include "godot_chorus/chorus_types.hpp"
 
 /*
@@ -155,20 +154,6 @@ class GodotChorus : public godot::Node {
     godot::String get_model_path() const;
     void set_provider(ProviderChoice provider);
     ProviderChoice get_provider() const;
-    void set_generation_defaults(const godot::Ref<ChorusGenerationDefaults>& defaults);
-    godot::Ref<ChorusGenerationDefaults> get_generation_defaults() const;
-
-    /*
-     * Sets the node-level Jinja chat template for sessioned turns.
-     *
-     * An empty string selects the model's embedded template. Stateless
-     * `GodotChorus::generate` calls ignore this setting. The Echo provider
-     * accepts it as inert because content controls are vacuous on the test
-     * double.
-     */
-    void set_chat_template(const godot::String& chat_template);
-    godot::String get_chat_template() const;
-
     /*
      * Selects the least severe `Chorus::LogLevel` for the next engine.
      *
@@ -194,14 +179,7 @@ class GodotChorus : public godot::Node {
     float similarity_cos(godot::PackedFloat32Array array1, godot::PackedFloat32Array array2) const;
 
   private:
-    // Returns the assigned resource or lazily constructs an internal resource
-    // with `max_tokens` set to 128, ensuring the host layer always contributes
-    // generation defaults.
-    godot::Ref<ChorusGenerationDefaults> effective_generation_defaults();
-
-    // Sends the node's ambient settings to the runtime before every submission
-    // and render operation, leaving the runtime to decide where each value
-    // applies.
+    // Copies project choices before admission, so later edits cannot alter accepted work.
     bool push_host_defaults(std::string& error);
 
     void drain_logs();
@@ -228,16 +206,9 @@ class GodotChorus : public godot::Node {
     mutable Chorus::EngineCapabilities _cached_capabilities;
     mutable std::optional<ProviderChoice> _cached_capabilities_provider;
 
-    godot::String _chat_template;
-
     bool _override_log_level = false;
     int64_t _log_level = (int64_t)Chorus::log_level_default;
 
-    // Remains null until the user assigns a resource, keeping scene
-    // serialization clean. `GodotChorus::effective_generation_defaults`
-    // supplies the internal fallback.
-    godot::Ref<ChorusGenerationDefaults> _generation_defaults;
-    godot::Ref<ChorusGenerationDefaults> _fallback_generation_defaults;
 };
 
 VARIANT_ENUM_CAST(GodotChorus::ErrorCode);

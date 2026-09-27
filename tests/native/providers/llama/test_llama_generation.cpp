@@ -103,7 +103,7 @@ TEST(LlamaGeneration, Llama_generation_preserves_upstream_defaults) {
         [](auto&) {},
         [&](const auto& value) {
             ASSERT_EQ(value.max_tokens, -1);
-            ASSERT_TRUE(value.stop.empty());
+            ASSERT_FALSE(value.stop.has_value());
             ASSERT_EQ(value.sampling.seed, upstream.seed);
             ASSERT_EQ(value.sampling.min_keep, upstream.min_keep);
             ASSERT_EQ(value.sampling.top_k, upstream.top_k);
@@ -362,6 +362,36 @@ TEST_F(LlamaGenerationModelTest, Llama_sampler_constructs_for_vocabulary_and_rej
         ASSERT_TRUE(rejection->message.find(std::to_string(outside)) != std::string::npos);
         ASSERT_TRUE(rejection->message.find("vocabulary") != std::string::npos);
     }
+}
+
+TEST(LlamaGeneration, Llama_distinguishes_absent_and_empty_stop_at_provider_resolution) {
+    Chorus::GenerationConfig config;
+    auto absent = Chorus::resolve_llama_generation(config);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(absent));
+    EXPECT_FALSE(std::get<Chorus::ResolvedLlamaGeneration>(absent).stop.has_value());
+
+    config.stop = std::vector<std::string>{};
+    auto empty = Chorus::resolve_llama_generation(config);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(empty));
+    ASSERT_TRUE(std::get<Chorus::ResolvedLlamaGeneration>(empty).stop.has_value());
+    EXPECT_TRUE(std::get<Chorus::ResolvedLlamaGeneration>(empty).stop->empty());
+    config.stop = std::vector<std::string>{""};
+    auto invalid = Chorus::resolve_llama_generation(config);
+    ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(invalid));
+    EXPECT_EQ(std::get<Chorus::RequestRejection>(invalid).error, Chorus::ChorusError::InvalidRequest);
+}
+
+TEST(LlamaGeneration, Llama_constraint_absence_and_explicit_unconstrained_retain_provider_grammar_policy) {
+    Chorus::GenerationConfig config;
+    auto absent = Chorus::resolve_llama_generation(config);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(absent));
+    const common_params_sampling defaults;
+    EXPECT_EQ(std::get<Chorus::ResolvedLlamaGeneration>(absent).sampling.grammar.type, defaults.grammar.type);
+    config.constraint = Chorus::UnconstrainedOutput{};
+    auto unconstrained = Chorus::resolve_llama_generation(config);
+    ASSERT_TRUE(std::holds_alternative<Chorus::ResolvedLlamaGeneration>(unconstrained));
+    EXPECT_EQ(std::get<Chorus::ResolvedLlamaGeneration>(unconstrained).sampling.grammar.type, COMMON_GRAMMAR_TYPE_NONE);
+    EXPECT_TRUE(std::get<Chorus::ResolvedLlamaGeneration>(unconstrained).sampling.grammar.grammar.empty());
 }
 
 TEST(LlamaGeneration, Llama_rejects_empty_constraint_sources) {
@@ -700,6 +730,15 @@ TEST(LlamaGeneration, Llama_request_rejects_chat_controls_without_messages) {
     ASSERT_TRUE(rejection.has_value());
     ASSERT_TRUE(rejection->error == Chorus::ChorusError::UnsupportedOption);
     ASSERT_TRUE(rejection->message.find("show_thinking") != std::string::npos);
+}
+
+TEST(LlamaGeneration, Llama_request_rejects_selected_empty_template_with_messages) {
+    Chorus::ChorusRequest request;
+    request.messages = {{Chorus::MessageRole::User, Chorus::MessageContent::text("hello")}};
+    request.chat_template = "";
+    auto rejection = Chorus::validate_llama_request(request);
+    ASSERT_TRUE(rejection.has_value());
+    EXPECT_EQ(rejection->error, Chorus::ChorusError::InvalidRequest);
 }
 
 TEST(LlamaGeneration, Llama_request_accepts_chat_controls_with_messages) {

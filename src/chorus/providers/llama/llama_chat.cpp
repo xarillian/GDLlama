@@ -26,15 +26,17 @@ std::variant<common_chat_msg, RequestRejection> to_common(const ChatMessage& mes
 std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
     const llama_model* model,
     const common_chat_templates* model_default_chat_templates,
-    const std::string& template_override,
+    const std::optional<std::string>& template_override,
     const std::vector<ChatMessage>& messages,
-    bool enable_thinking
+    std::optional<bool> enable_thinking
 ) {
     common_chat_templates_ptr override_chat_templates;
     const common_chat_templates* selected_chat_templates = model_default_chat_templates;
-    if (!template_override.empty()) {
+    if (template_override) {
+        if (template_override->empty())
+            return RequestRejection{ChorusError::InvalidRequest, "Llama chat_template must not be empty."};
         try {
-            override_chat_templates = common_chat_templates_init(model, template_override);
+            override_chat_templates = common_chat_templates_init(model, *template_override);
             selected_chat_templates = override_chat_templates.get();
         } catch (const std::exception& e) {
             return RequestRejection{ChorusError::InvalidRequest, std::string("Invalid chat_template: ") + e.what()};
@@ -53,7 +55,7 @@ std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
     }
     inputs.add_generation_prompt = true;
     inputs.use_jinja = true;
-    inputs.enable_thinking = enable_thinking;
+    inputs.enable_thinking = enable_thinking.value_or(true);
     inputs.reasoning_format = COMMON_REASONING_FORMAT_AUTO;
 
     try {

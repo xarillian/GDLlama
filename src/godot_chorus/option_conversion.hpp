@@ -43,8 +43,10 @@ class OptionValueConversion {
             return Chorus::ProviderOptionValue{(int64_t)value};
         case Variant::FLOAT:
             return Chorus::ProviderOptionValue{(double)value};
-        case Variant::STRING:
-            return Chorus::ProviderOptionValue{std::string(((String)value).utf8().get_data())};
+        case Variant::STRING: {
+            const godot::CharString bytes = ((String)value).utf8();
+            return Chorus::ProviderOptionValue{std::string(bytes.get_data(), static_cast<size_t>(bytes.length()))};
+        }
         case Variant::ARRAY:
         case Variant::DICTIONARY:
             break;
@@ -100,7 +102,8 @@ class OptionValueConversion {
             auto item = convert(dict[key]);
             if (!item)
                 return std::nullopt;
-            map[std::string(((String)key).utf8().get_data())] = std::move(*item);
+            const godot::CharString bytes = ((String)key).utf8();
+            map[std::string(bytes.get_data(), static_cast<size_t>(bytes.length()))] = std::move(*item);
         }
         return Chorus::ProviderOptionValue{std::move(map)};
     }

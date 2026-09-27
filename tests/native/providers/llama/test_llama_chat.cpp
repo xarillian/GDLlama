@@ -56,7 +56,7 @@ static common_chat_parser_params think_parser_params() {
 TEST(LlamaChat, LlamaChat_render_produces_role_scaffolding) {
     auto tmpls = make_templates();
     std::vector<Chorus::ChatMessage> messages{{Chorus::MessageRole::System, Chorus::MessageContent::text("You are Brunn.")}, {Chorus::MessageRole::User, Chorus::MessageContent::text("Hello there!")}};
-    auto result = Chorus::render_llama_chat(nullptr, tmpls.get(), "", messages, /*enable_thinking=*/true);
+    auto result = Chorus::render_llama_chat(nullptr, tmpls.get(), std::nullopt, messages, /*enable_thinking=*/true);
     ASSERT_TRUE(std::holds_alternative<Chorus::LlamaChatRender>(result));
     const auto& render = std::get<Chorus::LlamaChatRender>(result);
     ASSERT_TRUE(render.prompt.find("<|im_start|>system") != std::string::npos);
@@ -64,6 +64,21 @@ TEST(LlamaChat, LlamaChat_render_produces_role_scaffolding) {
     ASSERT_TRUE(render.prompt.find("<|im_start|>user") != std::string::npos);
     // Generation prompt appended (assistant turn opened, not closed).
     ASSERT_TRUE(render.prompt.rfind("<|im_start|>assistant") != std::string::npos);
+}
+
+TEST(LlamaChat, LlamaChat_absent_thinking_defaults_to_true_and_false_is_honored) {
+    auto tmpls = make_templates();
+    const std::vector<Chorus::ChatMessage> messages{
+        {Chorus::MessageRole::User, Chorus::MessageContent::text("Hello there!")}
+    };
+    auto absent = Chorus::render_llama_chat(nullptr, tmpls.get(), std::nullopt, messages, std::nullopt);
+    auto enabled = Chorus::render_llama_chat(nullptr, tmpls.get(), std::nullopt, messages, true);
+    auto disabled = Chorus::render_llama_chat(nullptr, tmpls.get(), std::nullopt, messages, false);
+    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaChatRender>(absent));
+    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaChatRender>(enabled));
+    ASSERT_TRUE(std::holds_alternative<Chorus::LlamaChatRender>(disabled));
+    EXPECT_EQ(std::get<Chorus::LlamaChatRender>(absent).prompt, std::get<Chorus::LlamaChatRender>(enabled).prompt);
+    EXPECT_NE(std::get<Chorus::LlamaChatRender>(enabled).prompt, std::get<Chorus::LlamaChatRender>(disabled).prompt);
 }
 
 TEST(LlamaChat, LlamaChat_explicit_override_without_defaults) {
@@ -75,8 +90,18 @@ TEST(LlamaChat, LlamaChat_explicit_override_without_defaults) {
     ASSERT_TRUE(render.prompt.find("<|im_start|>user") != std::string::npos);
 }
 
+TEST(LlamaChat, LlamaChat_selected_empty_template_does_not_fall_back_to_model_default) {
+    auto tmpls = make_templates();
+    auto result = Chorus::render_llama_chat(
+        nullptr, tmpls.get(), std::string{},
+        {{Chorus::MessageRole::User, Chorus::MessageContent::text("Hello there!")}}, std::nullopt
+    );
+    ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(result));
+    EXPECT_EQ(std::get<Chorus::RequestRejection>(result).error, Chorus::ChorusError::InvalidRequest);
+}
+
 TEST(LlamaChat, LlamaChat_missing_template_rejected) {
-    auto result = Chorus::render_llama_chat(nullptr, nullptr, "", {{Chorus::MessageRole::User, Chorus::MessageContent::text("Hello there!")}}, /*enable_thinking=*/true);
+    auto result = Chorus::render_llama_chat(nullptr, nullptr, std::nullopt, {{Chorus::MessageRole::User, Chorus::MessageContent::text("Hello there!")}}, /*enable_thinking=*/true);
     ASSERT_TRUE(std::holds_alternative<Chorus::RequestRejection>(result));
     const auto& rejection = std::get<Chorus::RequestRejection>(result);
     ASSERT_TRUE(rejection.error == Chorus::ChorusError::InvalidRequest);
@@ -191,7 +216,7 @@ TEST(LlamaChat, LlamaChat_deepseek_thinking_off_separates_reasoning) {
     ASSERT_TRUE(file.good());
     const std::string source{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
     auto templates = common_chat_templates_init(nullptr, source);
-    auto result = Chorus::render_llama_chat(nullptr, templates.get(), "", {{Chorus::MessageRole::User, Chorus::MessageContent::text("hello")}}, false);
+    auto result = Chorus::render_llama_chat(nullptr, templates.get(), std::nullopt, {{Chorus::MessageRole::User, Chorus::MessageContent::text("hello")}}, false);
     ASSERT_TRUE(std::holds_alternative<Chorus::LlamaChatRender>(result));
     const auto& render = std::get<Chorus::LlamaChatRender>(result);
     ASSERT_TRUE(render.supports_thinking);

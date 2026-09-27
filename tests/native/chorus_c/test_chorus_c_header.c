@@ -10,7 +10,7 @@ int chorus_c_header_smoke(void) {
     chorus_load_id (*active_load)(const chorus_runtime*) = chorus_active_load_id;
     chorus_error (*render)(chorus_runtime*, const chorus_request*, chorus_submit_result*) = chorus_render_prompt;
 
-    if (chorus_abi_version() != 6 || strcmp(chorus_error_name(CHORUS_ERR_SESSION_BUSY), "SessionBusy") != 0)
+    if (chorus_abi_version() != 8 || strcmp(chorus_error_name(CHORUS_ERR_SESSION_BUSY), "SessionBusy") != 0)
         return 1;
     if (chorus_request_set_prompt(NULL, "prompt") != CHORUS_ERR_INVALID_REQUEST)
         return 2;
@@ -32,6 +32,33 @@ int chorus_c_header_smoke(void) {
     if (count(NULL, NULL, NULL) != CHORUS_ERR_INVALID_REQUEST)
         return 7;
 
+    if (chorus_request_clear_max_tokens(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_temperature(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_top_k(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_top_p(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_seed(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_frequency_penalty(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_presence_penalty(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_stop(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_set_empty_stop(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_constraint(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_set_unconstrained(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_show_thinking(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_chat_template(NULL) != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_provider_option(NULL, "echo", "key") != CHORUS_ERR_INVALID_REQUEST ||
+        chorus_request_clear_provider_options(NULL) != CHORUS_ERR_INVALID_REQUEST)
+        return 10;
+
+    chorus_error (*load_defaults)(chorus_runtime*, const char*) = chorus_generation_defaults_load_file;
+    chorus_error (*apply_defaults)(chorus_runtime*, const char*, size_t) = chorus_generation_defaults_apply_json;
+    chorus_error (*export_defaults)(const chorus_runtime*, char**) = chorus_generation_defaults_export_json;
+    chorus_error (*save_defaults)(chorus_runtime*, const char*) = chorus_generation_defaults_save_file;
+    char* json = (char*)1;
+    if (load_defaults(NULL, "path") != CHORUS_ERR_INVALID_REQUEST ||
+        apply_defaults(NULL, "{}", 2) != CHORUS_ERR_INVALID_REQUEST ||
+        export_defaults(NULL, &json) != CHORUS_ERR_INVALID_REQUEST || json != NULL ||
+        save_defaults(NULL, "path") != CHORUS_ERR_INVALID_REQUEST)
+        return 11;
     chorus_runtime_free(NULL);
     chorus_options_free(NULL);
     chorus_request_free(NULL);

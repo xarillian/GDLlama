@@ -2,6 +2,9 @@
 #include "gtest_utils.hpp"
 
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <memory>
@@ -75,10 +78,115 @@ std::vector<EventSnapshot> wait_events(chorus_runtime* runtime, size_t expected 
     return result;
 }
 
-TEST(ChorusC, Header_is_pure_c_and_uses_abi_six) {
+TEST(ChorusC, Header_is_pure_c_and_uses_abi_eight) {
     ASSERT_EQ(chorus_c_header_smoke(), 0);
-    ASSERT_EQ(chorus_abi_version(), uint32_t{6});
+    ASSERT_EQ(chorus_abi_version(), uint32_t{8});
 }
+
+TEST(ChorusC, Builder_local_clears_restore_fresh_echo_request_behavior) {
+    RuntimePtr runtime = loaded_runtime();
+    RequestPtr request = request_with_prompt("echoed");
+    chorus_submit_result result{};
+    auto generate = [&](chorus_error expected_error, const char* expected_text = nullptr) {
+        EXPECT_EQ(chorus_generate(runtime.get(), request.get(), &result), CHORUS_OK);
+        EXPECT_EQ(result.error, CHORUS_OK);
+        if (result.error != CHORUS_OK)
+            return;
+        const auto events = wait_events(runtime.get());
+        ASSERT_EQ(events.size(), 1U);
+        EXPECT_EQ(events[0].error, expected_error);
+        if (expected_text)
+            EXPECT_EQ(events[0].text, expected_text);
+    };
+
+    ASSERT_EQ(chorus_request_set_max_tokens(request.get(), 0), CHORUS_OK);
+    generate(CHORUS_OK, "");
+    ASSERT_EQ(chorus_request_clear_max_tokens(request.get()), CHORUS_OK);
+    generate(CHORUS_OK, "echoed");
+
+    ASSERT_EQ(chorus_request_set_empty_stop(request.get()), CHORUS_OK);
+    generate(CHORUS_OK, "echoed");
+    ASSERT_EQ(chorus_request_add_stop(request.get(), "x"), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_stop(request.get()), CHORUS_OK);
+    generate(CHORUS_OK, "echoed");
+    ASSERT_EQ(chorus_request_add_stop(request.get(), "y"), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_set_empty_stop(request.get()), CHORUS_OK);
+    generate(CHORUS_OK, "echoed");
+    ASSERT_EQ(chorus_request_clear_stop(request.get()), CHORUS_OK);
+
+    ASSERT_EQ(chorus_request_set_constraint(request.get(), CHORUS_CONSTRAINT_GBNF, "root ::= 'x'"), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_FEATURE);
+    ASSERT_EQ(chorus_request_set_unconstrained(request.get()), CHORUS_OK);
+    generate(CHORUS_OK, "echoed");
+    ASSERT_EQ(chorus_request_clear_constraint(request.get()), CHORUS_OK);
+    generate(CHORUS_OK, "echoed");
+
+    ASSERT_EQ(chorus_request_set_temperature(request.get(), 0), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_temperature(request.get()), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_top_k(request.get(), 0), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_top_k(request.get()), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_top_p(request.get(), 0), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_top_p(request.get()), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_seed(request.get(), 0), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_seed(request.get()), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_frequency_penalty(request.get(), 0), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_frequency_penalty(request.get()), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_presence_penalty(request.get(), 0), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_presence_penalty(request.get()), CHORUS_OK);
+    generate(CHORUS_OK, "echoed");
+
+    ASSERT_EQ(chorus_request_set_provider_option_bool(request.get(), "echo", "flag", false), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_provider_option(request.get(), "echo", "flag"), CHORUS_OK);
+    generate(CHORUS_OK, "echoed");
+    ASSERT_EQ(chorus_request_set_provider_option_int(request.get(), "echo", "count", 0), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_provider_option_string(request.get(), "echo", "text", ""), CHORUS_OK);
+    ASSERT_EQ(chorus_request_clear_provider_option(request.get(), "echo", "count"), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_provider_options(request.get()), CHORUS_OK);
+    generate(CHORUS_OK, "echoed");
+}
+
+TEST(ChorusC, Chat_choices_clear_locally_and_invalid_builder_inputs_do_not_change_them) {
+    RuntimePtr runtime = loaded_runtime();
+    RequestPtr request = request_with_prompt("chat");
+    ASSERT_EQ(chorus_request_set_session(request.get(), "npc"), CHORUS_OK);
+    chorus_submit_result result{};
+    auto generate = [&](chorus_error expected) {
+        ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &result), CHORUS_OK);
+        ASSERT_EQ(result.error, CHORUS_OK);
+        const auto events = wait_events(runtime.get());
+        ASSERT_EQ(events.size(), 1U);
+        EXPECT_EQ(events[0].error, expected);
+    };
+    ASSERT_EQ(chorus_request_set_show_thinking(request.get(), false), CHORUS_OK);
+    generate(CHORUS_OK);
+    ASSERT_EQ(chorus_request_clear_show_thinking(request.get()), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_chat_template(request.get(), ""), CHORUS_OK);
+    generate(CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(chorus_request_set_chat_template(request.get(), nullptr), CHORUS_ERR_INVALID_REQUEST);
+    generate(CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(chorus_request_clear_chat_template(request.get()), CHORUS_OK);
+    generate(CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_chat_template(request.get(), "template"), CHORUS_OK);
+    generate(CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_chat_template(request.get()), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_constraint(request.get(), static_cast<chorus_constraint_format>(99), "x"), CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(chorus_request_set_constraint(request.get(), CHORUS_CONSTRAINT_GBNF, nullptr), CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(chorus_request_add_stop(request.get(), nullptr), CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(chorus_request_clear_provider_option(request.get(), nullptr, "key"), CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(chorus_request_clear_provider_option(request.get(), "echo", nullptr), CHORUS_ERR_INVALID_REQUEST);
+    generate(CHORUS_OK);
+}
+
 
 TEST(ChorusC, Load_admission_cancellation_and_retry_are_identified_and_keep_event_storage) {
     RuntimePtr runtime = loaded_runtime();
@@ -415,6 +523,223 @@ TEST(ChorusC, Count_rejection_initializes_outputs_and_echo_does_not_claim_a_toke
     ASSERT_EQ(chorus_count_message_tokens(runtime.get(), "x", &result), CHORUS_OK);
     ASSERT_EQ(result.error, CHORUS_ERR_UNSUPPORTED_FEATURE);
     ASSERT_EQ(result.request_id, -1);
+}
+
+std::string defaults_json(chorus_runtime* runtime) {
+    char* output = nullptr;
+    EXPECT_EQ(chorus_generation_defaults_export_json(runtime, &output), CHORUS_OK);
+    std::string result = output ? output : "";
+    chorus_string_free(output);
+    return result;
+}
+
+std::string read_bytes(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+void write_bytes(const std::filesystem::path& path, const std::string& bytes) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
+std::filesystem::path disposable_dir() {
+    static std::atomic<unsigned> next{0};
+    auto path = std::filesystem::path("_project/verification/adr-compliance-2026-09-25/adr-007") /
+        ("c-files-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+         "-" + std::to_string(next++));
+    std::filesystem::create_directories(path);
+    return path;
+}
+
+EventSnapshot generate_echo(chorus_runtime* runtime, chorus_request* request) {
+    chorus_submit_result result{};
+    EXPECT_EQ(chorus_generate(runtime, request, &result), CHORUS_OK);
+    EXPECT_EQ(result.error, CHORUS_OK);
+    auto events = wait_events(runtime);
+    return events.empty() ? EventSnapshot{-1, CHORUS_EVENT_ERROR, CHORUS_ERR_UNKNOWN, ""} : events.front();
+}
+
+TEST(ChorusC, Defaults_content_file_and_two_runtimes_preserve_presence_and_priority) {
+    auto first = loaded_runtime();
+    auto second = loaded_runtime();
+    auto request = request_with_prompt("hello");
+    const auto directory = disposable_dir();
+    const auto path = directory / "selected.json";
+    const std::string content = R"({"version":1,"generation":{"max_tokens":0,"stop":[],"show_thinking":false,"provider_options":{"llama":{"logit_bias":{}}}}})";
+    write_bytes(path, content);
+    ASSERT_EQ(chorus_generation_defaults_load_file(first.get(), path.c_str()), CHORUS_OK);
+    ASSERT_EQ(chorus_generation_defaults_apply_json(second.get(), content.data(), content.size()), CHORUS_OK);
+    EXPECT_EQ(defaults_json(first.get()), defaults_json(second.get()));
+    EXPECT_NE(defaults_json(first.get()).find("\"logit_bias\":{}"), std::string::npos);
+    EXPECT_EQ(generate_echo(first.get(), request.get()).text, "");
+    EXPECT_EQ(generate_echo(second.get(), request.get()).text, "");
+    ASSERT_EQ(chorus_request_set_max_tokens(request.get(), 2), CHORUS_OK);
+    EXPECT_EQ(generate_echo(first.get(), request.get()).text, "hello");
+    ASSERT_EQ(chorus_request_clear_max_tokens(request.get()), CHORUS_OK);
+    EXPECT_EQ(generate_echo(first.get(), request.get()).text, "");
+    const std::string empty = R"({"version":1,"generation":{}})";
+    ASSERT_EQ(chorus_generation_defaults_apply_json(second.get(), empty.data(), empty.size()), CHORUS_OK);
+    EXPECT_EQ(generate_echo(second.get(), request.get()).text, "hello");
+    EXPECT_EQ(generate_echo(first.get(), request.get()).text, "");
+    EXPECT_EQ(read_bytes(path), content);
+}
+
+TEST(ChorusC, Defaults_validation_failure_does_not_replace_runtime_or_destination) {
+    auto runtime = loaded_runtime();
+    auto request = request_with_prompt("hello");
+    const std::string selected = R"({"version":1,"generation":{"max_tokens":0}})";
+    ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), selected.data(), selected.size()), CHORUS_OK);
+    const std::string escaped_nul = R"({"version":1,"generation":{"max_tokens":0,"provider_options":{"foreign":{"a\u0000b":"x\u0000y"}}}})";
+    ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), escaped_nul.data(), escaped_nul.size()), CHORUS_OK);
+    EXPECT_NE(defaults_json(runtime.get()).find("\\u0000"), std::string::npos);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).text, "");
+    ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), selected.data(), selected.size()), CHORUS_OK);
+    const auto directory = disposable_dir();
+    const auto invalid = directory / "invalid.json";
+    const std::string bad = R"({"version":1,"generation":{"max_tokens":1,"max_tokens":2}})";
+    write_bytes(invalid, bad);
+    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), invalid.c_str()), CHORUS_ERR_INVALID_REQUEST);
+    EXPECT_FALSE(std::string(chorus_last_error_message(runtime.get())).empty());
+    EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), invalid.c_str()), CHORUS_ERR_INVALID_REQUEST);
+    EXPECT_EQ(read_bytes(invalid), bad);
+#if !defined(_WIN32)
+    const auto unreadable = directory / "unreadable.json";
+    write_bytes(unreadable, selected);
+    std::filesystem::permissions(unreadable, std::filesystem::perms::none);
+    if (!std::ifstream(unreadable)) {
+        EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), unreadable.c_str()), CHORUS_ERR_UNKNOWN);
+        EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), unreadable.c_str()), CHORUS_ERR_UNKNOWN);
+    }
+    std::filesystem::permissions(unreadable, std::filesystem::perms::owner_all);
+    EXPECT_EQ(read_bytes(unreadable), selected);
+#endif
+    EXPECT_EQ(chorus_generation_defaults_apply_json(runtime.get(), bad.data(), bad.size()), CHORUS_ERR_INVALID_REQUEST);
+    for (const auto& suffix : {std::string(1, '\0'), std::string("\0garbage", 8)}) {
+        const auto invalid_bytes = selected + suffix;
+        EXPECT_EQ(chorus_generation_defaults_apply_json(runtime.get(), invalid_bytes.data(), invalid_bytes.size()), CHORUS_ERR_INVALID_REQUEST);
+        EXPECT_EQ(defaults_json(runtime.get()), selected);
+    }
+    EXPECT_EQ(chorus_generation_defaults_apply_json(runtime.get(), "", 0), CHORUS_ERR_INVALID_REQUEST);
+    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), directory.c_str()), CHORUS_ERR_UNKNOWN);
+    EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), directory.c_str()), CHORUS_ERR_UNKNOWN);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).text, "");
+    EXPECT_EQ(defaults_json(runtime.get()), selected);
+    EXPECT_STREQ(chorus_last_error_message(runtime.get()), "");
+    EXPECT_EQ(read_bytes(invalid), bad);
+    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), nullptr), CHORUS_ERR_INVALID_REQUEST);
+    EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), ""), CHORUS_ERR_INVALID_REQUEST);
+    char* output = reinterpret_cast<char*>(1);
+    EXPECT_EQ(chorus_generation_defaults_export_json(runtime.get(), nullptr), CHORUS_ERR_INVALID_REQUEST);
+    EXPECT_EQ(chorus_generation_defaults_export_json(nullptr, &output), CHORUS_ERR_INVALID_REQUEST);
+    EXPECT_EQ(output, nullptr);
+}
+
+TEST(ChorusC, Defaults_missing_file_creation_and_explicit_save_do_not_write_on_apply) {
+    RuntimePtr runtime(chorus_runtime_new());
+    const auto directory = disposable_dir();
+    const auto selected = directory / "nested" / "missing.json";
+    ASSERT_EQ(chorus_generation_defaults_load_file(runtime.get(), selected.c_str()), CHORUS_OK);
+    EXPECT_EQ(read_bytes(selected), R"({"version":1,"generation":{}})");
+    EXPECT_EQ(defaults_json(runtime.get()), read_bytes(selected));
+    const std::string content = R"({"version":1,"generation":{"max_tokens":0,"seed":18446744073709551615,"constraint":{"kind":"unconstrained"},"chat_template":""}})";
+    ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), content.data(), content.size()), CHORUS_OK);
+    EXPECT_EQ(read_bytes(selected), R"({"version":1,"generation":{}})");
+    ASSERT_EQ(chorus_generation_defaults_save_file(runtime.get(), selected.c_str()), CHORUS_OK);
+    EXPECT_EQ(read_bytes(selected), defaults_json(runtime.get()));
+    const auto other = directory / "new.json";
+    ASSERT_EQ(chorus_generation_defaults_save_file(runtime.get(), other.c_str()), CHORUS_OK);
+    EXPECT_EQ(read_bytes(other), read_bytes(selected));
+    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), other.c_str()), CHORUS_OK);
+    const auto cannot_create = directory / "blocker" / "child.json";
+    write_bytes(directory / "blocker", "unchanged");
+    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), cannot_create.c_str()), CHORUS_ERR_UNKNOWN);
+    EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), cannot_create.c_str()), CHORUS_ERR_UNKNOWN);
+    EXPECT_EQ(read_bytes(directory / "blocker"), "unchanged");
+    EXPECT_EQ(defaults_json(runtime.get()), read_bytes(other));
+}
+
+TEST(ChorusC, Defaults_concurrent_missing_file_selection_adopts_one_complete_document) {
+    const auto selected = disposable_dir() / "shared.json";
+    constexpr int callers = 8;
+    std::atomic<int> ready{0};
+    std::atomic<bool> start{false};
+    std::vector<std::thread> threads;
+    std::vector<chorus_error> errors(callers, CHORUS_ERR_UNKNOWN);
+    std::vector<std::string> exports(callers);
+    std::vector<std::string> diagnostics(callers);
+    for (int i = 0; i < callers; ++i) {
+        threads.emplace_back([&, i] {
+            RuntimePtr runtime(chorus_runtime_new());
+            ready.fetch_add(1);
+            while (!start.load()) std::this_thread::yield();
+            errors[i] = chorus_generation_defaults_load_file(runtime.get(), selected.c_str());
+            if (errors[i] != CHORUS_OK)
+                diagnostics[i] = chorus_last_error_message(runtime.get());
+            if (errors[i] == CHORUS_OK) {
+                char* json = nullptr;
+                errors[i] = chorus_generation_defaults_export_json(runtime.get(), &json);
+                if (json) exports[i] = json;
+                chorus_string_free(json);
+            }
+        });
+    }
+    while (ready.load() != callers) std::this_thread::yield();
+    start.store(true);
+    for (auto& thread : threads) thread.join();
+    for (int i = 0; i < callers; ++i) {
+        EXPECT_EQ(errors[i], CHORUS_OK) << i << ": " << diagnostics[i];
+        EXPECT_EQ(exports[i], R"({"version":1,"generation":{}})") << i;
+    }
+    EXPECT_EQ(read_bytes(selected), R"({"version":1,"generation":{}})");
+}
+
+TEST(ChorusC, Defaults_freeze_admitted_work_and_provider_validation_stays_async) {
+    auto runtime = loaded_runtime();
+    auto request = request_with_prompt("hello");
+    const std::string zero = R"({"version":1,"generation":{"max_tokens":0}})";
+    const std::string empty = R"({"version":1,"generation":{}})";
+    ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), zero.data(), zero.size()), CHORUS_OK);
+    chorus_submit_result single{}, batch[2]{};
+    const chorus_request* requests[] = {request.get(), request.get()};
+    ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &single), CHORUS_OK);
+    ASSERT_EQ(chorus_generate_batch(runtime.get(), requests, 2, batch), CHORUS_OK);
+    ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), empty.data(), empty.size()), CHORUS_OK);
+    const auto frozen = wait_events(runtime.get(), 3);
+    ASSERT_EQ(frozen.size(), 3U);
+    for (const auto& event : frozen) {
+        EXPECT_EQ(event.error, CHORUS_OK);
+        EXPECT_EQ(event.text, "");
+    }
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).text, "hello");
+    const std::string grammar = R"({"version":1,"generation":{"constraint":{"kind":"gbnf","source":"root ::= 'x'"}}})";
+    ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), grammar.data(), grammar.size()), CHORUS_OK);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).error, CHORUS_ERR_UNSUPPORTED_FEATURE);
+    ASSERT_EQ(chorus_request_set_unconstrained(request.get()), CHORUS_OK);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).text, "hello");
+    ASSERT_EQ(chorus_request_clear_constraint(request.get()), CHORUS_OK);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).error, CHORUS_ERR_UNSUPPORTED_FEATURE);
+    const std::string chat = R"({"version":1,"generation":{"chat_template":""}})";
+    ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), chat.data(), chat.size()), CHORUS_OK);
+    ASSERT_EQ(chorus_request_set_session(request.get(), "npc"), CHORUS_OK);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).error, CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(chorus_request_set_chat_template(request.get(), ""), CHORUS_OK);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).error, CHORUS_ERR_INVALID_REQUEST);
+}
+
+TEST(ChorusC, Defaults_echo_namespace_is_provider_validated_and_request_overrides_one_option) {
+    auto runtime = loaded_runtime();
+    auto request = request_with_prompt("hello");
+    const std::string foreign = R"({"version":1,"generation":{"provider_options":{"llama":{"repeat_penalty":1.0}}}})";
+    ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), foreign.data(), foreign.size()), CHORUS_OK);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).text, "hello");
+    const std::string echo = R"({"version":1,"generation":{"provider_options":{"echo":{"flag":true}}}})";
+    ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), echo.data(), echo.size()), CHORUS_OK);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).error, CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_set_provider_option_bool(request.get(), "echo", "flag", false), CHORUS_OK);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).error, CHORUS_ERR_UNSUPPORTED_OPTION);
+    ASSERT_EQ(chorus_request_clear_provider_option(request.get(), "echo", "flag"), CHORUS_OK);
+    EXPECT_EQ(generate_echo(runtime.get(), request.get()).error, CHORUS_ERR_UNSUPPORTED_OPTION);
 }
 
 class ChorusCModelTest : public ChorusModelTest {};

@@ -68,7 +68,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     std::optional<Chorus::RequestRejection> validate_request(const Chorus::ChorusRequest& request) const override;
     std::variant<int64_t, Chorus::RequestRejection> count_message_tokens(const std::string& text) const override;
     std::variant<Chorus::RenderedPrompt, Chorus::RequestRejection> render_chat_prompt(
-        const std::vector<Chorus::ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+        const std::vector<Chorus::ChatMessage>& messages, const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
     ) const;
 
   private:

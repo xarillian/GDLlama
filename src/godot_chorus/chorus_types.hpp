@@ -18,14 +18,6 @@ class ChorusRole : public godot::RefCounted {
     enum Value { SYSTEM, USER, ASSISTANT };
 };
 
-class ChorusOverrideState : public godot::RefCounted {
-    GDCLASS(ChorusOverrideState, godot::RefCounted);
-  protected:
-    static void _bind_methods();
-  public:
-    enum Value { INHERIT, SET, CLEAR };
-};
-
 class ChorusExecution : public godot::RefCounted {
     GDCLASS(ChorusExecution, godot::RefCounted);
   protected:
@@ -108,59 +100,43 @@ class ChorusRequest : public ChorusInferenceRequest {
     static godot::Ref<ChorusRequest> regeneration(const godot::StringName& session);
 
     void set_stream(bool value); bool get_stream() const;
-    void set_max_tokens_state(ChorusOverrideState::Value value); ChorusOverrideState::Value get_max_tokens_state() const;
-    void set_max_tokens_value(int64_t value); int64_t get_max_tokens() const;
-    void set_temperature_state(ChorusOverrideState::Value value); ChorusOverrideState::Value get_temperature_state() const;
-    void set_temperature_value(double value); double get_temperature() const;
-    void set_top_k_state(ChorusOverrideState::Value value); ChorusOverrideState::Value get_top_k_state() const;
-    void set_top_k_value(int64_t value); int64_t get_top_k() const;
-    void set_top_p_state(ChorusOverrideState::Value value); ChorusOverrideState::Value get_top_p_state() const;
-    void set_top_p_value(double value); double get_top_p() const;
-    void set_seed_state(ChorusOverrideState::Value value); ChorusOverrideState::Value get_seed_state() const;
-    void set_seed_value(int64_t value); int64_t get_seed() const;
-    void set_frequency_penalty_state(ChorusOverrideState::Value value); ChorusOverrideState::Value get_frequency_penalty_state() const;
-    void set_frequency_penalty_value(double value); double get_frequency_penalty() const;
-    void set_presence_penalty_state(ChorusOverrideState::Value value); ChorusOverrideState::Value get_presence_penalty_state() const;
-    void set_presence_penalty_value(double value); double get_presence_penalty() const;
-    void set_stop_state(ChorusOverrideState::Value value); ChorusOverrideState::Value get_stop_state() const;
-    void set_stop_value(godot::PackedStringArray value); godot::PackedStringArray get_stop() const;
-    void set_constraint_state(ChorusOverrideState::Value value); ChorusOverrideState::Value get_constraint_state() const;
-    void set_constraint_format(ChorusConstraintFormat::Value value); ChorusConstraintFormat::Value get_constraint_format() const;
-    void set_constraint_source(const godot::String& value); godot::String get_constraint_source() const;
-    void set_show_thinking_state(ChorusOverrideState::Value value); ChorusOverrideState::Value get_show_thinking_state() const;
-    void set_show_thinking_value(bool value); bool get_show_thinking() const;
+    void set_max_tokens(int64_t value); int64_t get_max_tokens() const; bool has_max_tokens() const; void clear_max_tokens();
+    void set_temperature(double value); double get_temperature() const; bool has_temperature() const; void clear_temperature();
+    void set_top_k(int64_t value); int64_t get_top_k() const; bool has_top_k() const; void clear_top_k();
+    void set_top_p(double value); double get_top_p() const; bool has_top_p() const; void clear_top_p();
+    void set_seed(int64_t value); int64_t get_seed() const; bool has_seed() const; void clear_seed();
+    void set_frequency_penalty(double value); double get_frequency_penalty() const; bool has_frequency_penalty() const; void clear_frequency_penalty();
+    void set_presence_penalty(double value); double get_presence_penalty() const; bool has_presence_penalty() const; void clear_presence_penalty();
+    void set_stop(godot::PackedStringArray value); godot::PackedStringArray get_stop() const; bool has_stop() const; void clear_stop();
+    void set_show_thinking(bool value); bool get_show_thinking() const; bool has_show_thinking() const; void clear_show_thinking();
+    void set_constraint(ChorusConstraintFormat::Value format, const godot::String& source);
+    void set_unconstrained(); bool has_constraint() const; bool is_unconstrained() const; void clear_constraint();
+    ChorusConstraintFormat::Value get_constraint_format() const; godot::String get_constraint_source() const;
     void set_provider_options(const godot::Dictionary& value); godot::Dictionary get_provider_options() const;
-    void set_provider_option_erasures(const godot::PackedStringArray& value); godot::PackedStringArray get_provider_option_erasures() const;
+    void clear_provider_options(); void clear_provider_option(const godot::String& provider, const godot::String& key);
     void set_inject(const godot::TypedArray<ChorusInjectedMessage>& value); godot::TypedArray<ChorusInjectedMessage> get_inject() const;
     void set_chat_template(const godot::String& value); godot::String get_chat_template() const;
-
-    void set_max_tokens(int64_t value); void clear_max_tokens(); void inherit_max_tokens();
-    void set_temperature(double value); void clear_temperature(); void inherit_temperature();
-    void set_top_k(int64_t value); void clear_top_k(); void inherit_top_k();
-    void set_top_p(double value); void clear_top_p(); void inherit_top_p();
-    void set_seed(int64_t value); void clear_seed(); void inherit_seed();
-    void set_frequency_penalty(double value); void clear_frequency_penalty(); void inherit_frequency_penalty();
-    void set_presence_penalty(double value); void clear_presence_penalty(); void inherit_presence_penalty();
-    void set_stop(godot::PackedStringArray value); void clear_stop(); void inherit_stop();
-    void set_constraint(ChorusConstraintFormat::Value format, const godot::String& source); void clear_constraint(); void inherit_constraint();
-    void set_show_thinking(bool value); void clear_show_thinking(); void inherit_show_thinking();
+    bool has_chat_template() const; void clear_chat_template();
     bool requires_nonempty_session() const;
+    bool _set(const godot::StringName& property, const godot::Variant& value);
+    bool _get(const godot::StringName& property, godot::Variant& value) const;
+    void _get_property_list(godot::List<godot::PropertyInfo>* list) const;
   private:
     bool _stream = false;
-    ChorusOverrideState::Value _max_tokens_state = ChorusOverrideState::INHERIT; int64_t _max_tokens = 0;
-    ChorusOverrideState::Value _temperature_state = ChorusOverrideState::INHERIT; double _temperature = 0.0;
-    ChorusOverrideState::Value _top_k_state = ChorusOverrideState::INHERIT; int64_t _top_k = 0;
-    ChorusOverrideState::Value _top_p_state = ChorusOverrideState::INHERIT; double _top_p = 0.0;
-    ChorusOverrideState::Value _seed_state = ChorusOverrideState::INHERIT; int64_t _seed = 0;
-    ChorusOverrideState::Value _frequency_penalty_state = ChorusOverrideState::INHERIT; double _frequency_penalty = 0.0;
-    ChorusOverrideState::Value _presence_penalty_state = ChorusOverrideState::INHERIT; double _presence_penalty = 0.0;
-    ChorusOverrideState::Value _stop_state = ChorusOverrideState::INHERIT; godot::PackedStringArray _stop;
-    ChorusOverrideState::Value _constraint_state = ChorusOverrideState::INHERIT; ChorusConstraintFormat::Value _constraint_format = ChorusConstraintFormat::GBNF; godot::String _constraint_source;
-    ChorusOverrideState::Value _show_thinking_state = ChorusOverrideState::INHERIT; bool _show_thinking = false;
+    bool _has_max_tokens = false; int64_t _max_tokens = 0;
+    bool _has_temperature = false; double _temperature = 0.0;
+    bool _has_top_k = false; int64_t _top_k = 0;
+    bool _has_top_p = false; double _top_p = 0.0;
+    bool _has_seed = false; int64_t _seed = 0;
+    bool _has_frequency_penalty = false; double _frequency_penalty = 0.0;
+    bool _has_presence_penalty = false; double _presence_penalty = 0.0;
+    bool _has_stop = false; godot::PackedStringArray _stop;
+    bool _has_constraint = false; bool _unconstrained = false;
+    ChorusConstraintFormat::Value _constraint_format = ChorusConstraintFormat::GBNF; godot::String _constraint_source;
+    bool _has_show_thinking = false; bool _show_thinking = false;
     godot::Dictionary _provider_options;
-    godot::PackedStringArray _provider_option_erasures;
     godot::TypedArray<ChorusInjectedMessage> _inject;
-    godot::String _chat_template;
+    bool _has_chat_template = false; godot::String _chat_template;
     bool _chat_session_required = false;
 };
 
@@ -220,6 +196,5 @@ class ChorusResult : public godot::RefCounted {
 
 VARIANT_ENUM_CAST(ChorusLoadPhase::Value);
 VARIANT_ENUM_CAST(ChorusRole::Value);
-VARIANT_ENUM_CAST(ChorusOverrideState::Value);
 VARIANT_ENUM_CAST(ChorusExecution::Value);
 VARIANT_ENUM_CAST(ChorusConstraintFormat::Value);

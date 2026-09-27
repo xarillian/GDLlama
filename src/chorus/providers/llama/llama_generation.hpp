@@ -21,7 +21,7 @@ namespace Chorus {
 struct ResolvedLlamaGeneration {
     int32_t max_tokens = -1;
     common_params_sampling sampling;
-    std::vector<std::string> stop;
+    std::optional<std::vector<std::string>> stop;
 };
 
 /*

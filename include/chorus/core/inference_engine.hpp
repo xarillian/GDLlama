@@ -22,7 +22,7 @@ class RequestPreparation {
     virtual ~RequestPreparation() = default;
     virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
     virtual std::variant<RenderedPrompt, RequestRejection> render_chat_prompt(
-        const std::vector<ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+        const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
     ) const = 0;
 
     /*
@@ -105,7 +105,7 @@ class InferenceEngine {
      *  - `std::nullopt`: no local render is available.
      */
     virtual std::optional<RenderedPrompt> render_chat_prompt(
-        const std::vector<ChatMessage>& messages, const std::string& template_override, bool enable_thinking
+        const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
     ) const {
         (void)messages;
         (void)template_override;
