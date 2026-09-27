@@ -1,14 +1,12 @@
-name: Test with Latest Llama
-description: The "oh my god, it broke again" workflow
+name: Latest llama.cpp build
 
 on:
-  schedule:
-    - cron: '0 0 * * 0' # Weekly on Sundays at midnight to conserve precious github minutes
-  workflow_dispatch:
+  workflow_call:
 
 jobs:
   build_and_test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
     - name: Checkout repository
@@ -33,11 +31,3 @@ jobs:
 
     - name: Build (fails if the maintained upload patch no longer applies)
       run: scons test -j4
-
-    # Disabled test running.
-    # We want this workflow to be a canary for build issues without being overly reactive.
-    # Triggering failures on build failures only is a late-advisor approach. If the build breaks,
-    # we can investigate and upgrade llama.cpp at that time without the pressure of failing tests
-    # (which may fail more frequently due to API changes, etc).
-    # - name: Run Tests
-    #   run: ./bin/run_tests

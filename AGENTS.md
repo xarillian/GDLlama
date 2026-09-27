@@ -5,8 +5,7 @@
 ## Structure
 
 Start at `include/chorus/runtime/runtime.hpp` for the public C++ API and
-`docs/ARCHITECTURE.md` for the dependency rules. The repository follows those
-layers:
+`docs/ARCHITECTURE.md` for the dependency rules. The repository follows those layers:
 
 - `include/chorus/core/`, `src/chorus/core/`: provider-independent domain contracts and their implementations.
 - `include/chorus/runtime/`, `src/chorus/runtime/`: host-independent orchestration built only on core contracts.
@@ -63,6 +62,10 @@ Google-style Python sections come last, after the descriptive body, e.g.:
 ```
 
 Ensure every symbol is backticked and fully qualified, e.g. `ChorusError::Cancelled`, `ChorusRequest::on_event`, `EventType::Stop`. Ensure `Returns:` names what comes back, one bullet per case. `Errors:` should name error vocabulary, and `Raises:` is for code that throws.
+
+### Documentation
+
+Documentation serves its audience, not the implementation history. Keep each document within its purpose. Prefer omission to duplication; code and Git already preserve many details.
 
 ## Decisions
 

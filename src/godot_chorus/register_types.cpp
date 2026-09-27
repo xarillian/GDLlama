@@ -1,10 +1,12 @@
 #include "godot_chorus/register_types.hpp"
+#include "godot_chorus/editor_import_guard.hpp"
 #include "godot_chorus/project_generation_defaults.hpp"
 #include "godot_chorus/chorus_project_settings.hpp"
 #include "godot_chorus/chorus_types.hpp"
 #include "godot_chorus/godot_chorus.hpp"
 
 #include <gdextension_interface.h>
+#include <godot_cpp/classes/editor_plugin_registration.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
@@ -12,6 +14,11 @@
 using namespace godot;
 
 void initialize_chorus_module(ModuleInitializationLevel p_level) {
+    if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
+        GDREGISTER_INTERNAL_CLASS(godot_chorus::ChorusEditorImportGuard);
+        EditorPlugins::add_by_type<godot_chorus::ChorusEditorImportGuard>();
+        return;
+    }
     if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
         return;
     }

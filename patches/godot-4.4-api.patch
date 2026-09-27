@@ -1,0 +1,121 @@
+diff --git a/extension_api.json b/extension_api.json
+index a4a1b56..d80c52c 100644
+--- a/extension_api.json
++++ b/extension_api.json
+@@ -2,10 +2,10 @@
+ 	"header": {
+ 		"version_major": 4,
+ 		"version_minor": 4,
+-		"version_patch": 1,
++		"version_patch": 0,
+ 		"version_status": "stable",
+ 		"version_build": "official",
+-		"version_full_name": "Godot Engine v4.4.1.stable.official"
++		"version_full_name": "Godot Engine v4.4.stable.official"
+ 	},
+ 	"builtin_class_sizes": [
+ 		{
+@@ -165923,10 +165923,6 @@
+ 					"name": "NOTIFICATION_VP_MOUSE_EXIT",
+ 					"value": 1011
+ 				},
+-				{
+-					"name": "NOTIFICATION_WM_POSITION_CHANGED",
+-					"value": 1012
+-				},
+ 				{
+ 					"name": "NOTIFICATION_OS_MEMORY_WARNING",
+ 					"value": 2009
+@@ -174697,7 +174693,7 @@
+ 			"is_refcounted": false,
+ 			"is_instantiable": true,
+ 			"inherits": "PanelContainer",
+-			"api_type": "editor",
++			"api_type": "core",
+ 			"methods": [
+ 				{
+ 					"name": "get_binding_modifier",
+@@ -176930,14 +176926,14 @@
+ 			"is_refcounted": false,
+ 			"is_instantiable": true,
+ 			"inherits": "OpenXRInteractionProfileEditorBase",
+-			"api_type": "editor"
++			"api_type": "core"
+ 		},
+ 		{
+ 			"name": "OpenXRInteractionProfileEditorBase",
+ 			"is_refcounted": false,
+ 			"is_instantiable": false,
+ 			"inherits": "HBoxContainer",
+-			"api_type": "editor",
++			"api_type": "core",
+ 			"methods": [
+ 				{
+ 					"name": "setup",
+@@ -218768,65 +218764,9 @@
+ 							"name": "DATA_FORMAT_G16_B16_R16_3PLANE_444_UNORM",
+ 							"value": 217
+ 						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_4x4_SFLOAT_BLOCK",
+-							"value": 218
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_5x4_SFLOAT_BLOCK",
+-							"value": 219
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_5x5_SFLOAT_BLOCK",
+-							"value": 220
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_6x5_SFLOAT_BLOCK",
+-							"value": 221
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_6x6_SFLOAT_BLOCK",
+-							"value": 222
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_8x5_SFLOAT_BLOCK",
+-							"value": 223
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_8x6_SFLOAT_BLOCK",
+-							"value": 224
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_8x8_SFLOAT_BLOCK",
+-							"value": 225
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_10x5_SFLOAT_BLOCK",
+-							"value": 226
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_10x6_SFLOAT_BLOCK",
+-							"value": 227
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_10x8_SFLOAT_BLOCK",
+-							"value": 228
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_10x10_SFLOAT_BLOCK",
+-							"value": 229
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_12x10_SFLOAT_BLOCK",
+-							"value": 230
+-						},
+-						{
+-							"name": "DATA_FORMAT_ASTC_12x12_SFLOAT_BLOCK",
+-							"value": 231
+-						},
+ 						{
+ 							"name": "DATA_FORMAT_MAX",
+-							"value": 232
++							"value": 218
+ 						}
+ 					]
+ 				},

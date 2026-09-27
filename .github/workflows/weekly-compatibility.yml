@@ -1,0 +1,15 @@
+name: Weekly compatibility
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  llama:
+    uses: ./.github/workflows/test-latest-llama.yml
+
+  godot:
+    needs: llama
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/godot-compatibility.yml

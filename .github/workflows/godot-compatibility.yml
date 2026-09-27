@@ -1,0 +1,50 @@
+name: Godot compatibility
+
+on:
+  workflow_call:
+
+jobs:
+  editor:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-22.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build and stage the native CPU addon
+        shell: bash
+        run: |
+          python -m pip install scons
+          scons -j2
+          python tools/stage_godot.py
+      - name: Check standard and .NET editors
+        run: >-
+          python tools/check_godot_compatibility.py --editor-only --repetitions 1
+          --output bin/godot-compatibility-ci --versions
+          4.4 4.4.1 4.5 4.5.1 4.5.2 4.6 4.6.1 4.6.2 4.6.3 4.7 4.7.1 4.7.2
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: godot-compatibility-${{ matrix.os }}
+          path: |
+            bin/godot-compatibility-ci/**/results.json
+            bin/godot-compatibility-ci/**/*.log
+          if-no-files-found: ignore

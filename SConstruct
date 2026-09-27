@@ -2,9 +2,10 @@
 import os
 import sys
 import subprocess
-from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, Glob, SConscript, Value
+from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, GetOption, Glob, SConscript, Value
 sys.dont_write_bytecode = True
 from tools.materialize_llama import materialize
+from tools.materialize_godot_api import materialize as materialize_godot_api
 
 needs_googletest = any(target in COMMAND_LINE_TARGETS for target in ("test", "compiledb"))
 required_submodules = ["godot-cpp", "llama.cpp", "nlohmann-json"]
@@ -29,6 +30,11 @@ if missing_submodules:
 use_vulkan = ARGUMENTS.pop("use_vulkan", "no") == "yes"
 use_metal = ARGUMENTS.pop("use_metal", "no") == "yes"
 host_test = ARGUMENTS.pop("host_test", "no") == "yes"
+if not ARGUMENTS.get("custom_api_file"):
+    try:
+        ARGUMENTS["custom_api_file"] = str(materialize_godot_api())
+    except (OSError, subprocess.CalledProcessError, RuntimeError) as error:
+        raise SystemExit(f">>> [SCons] Godot API materialization failed: {error}")
 env = SConscript("third-party/godot-cpp/SConstruct")
 
 llama_variant_parts = []
@@ -253,7 +259,7 @@ def build_llama_with_cmake(target, source, env):
             "--build", build_dir, 
             "--config", "Release", 
             "--target"
-    ] + targets_to_build + ["-j", "16"]
+    ] + targets_to_build + ["-j", str(GetOption("num_jobs"))]
 
     try:
         print(">>> [SCons] Configuring Llama.cpp via CMake...")
