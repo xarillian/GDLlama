@@ -1,4 +1,8 @@
 # Version
+
+## [2.0.0] - Oct 2026
+- TODO
+
 ## [1.0.0] - Oct 2025
 ### Added
 - Initial stable release

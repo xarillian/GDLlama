@@ -1,13 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ChorusConstraintFormat" inherits="RefCounted" api_type="extension">
 	<brief_description>Structured output constraint formats.</brief_description>
-	<description>Structured output constraint formats.</description>
-	<methods></methods>
-	<members></members>
+	<description>Selects the source syntax passed to [method ChorusRequest.set_constraint]. Support depends on the provider; unsupported formats fail with [constant GodotChorus.ERR_UNSUPPORTED_FEATURE] rather than falling back to unconstrained output.</description>
 	<constants>
-		<constant name="GBNF" value="0" enum="ChorusConstraintFormat.Value" />
-		<constant name="JSON_SCHEMA" value="1" enum="ChorusConstraintFormat.Value" />
-		<constant name="REGEX" value="2" enum="ChorusConstraintFormat.Value" />
-		<constant name="LARK" value="3" enum="ChorusConstraintFormat.Value" />
+		<constant name="GBNF" value="0" enum="Value">A grammar in GGML Backus-Naur Form.</constant>
+		<constant name="JSON_SCHEMA" value="1" enum="Value">A JSON Schema document describing the allowed output.</constant>
+		<constant name="REGEX" value="2" enum="Value">A regular expression describing the allowed output.</constant>
+		<constant name="LARK" value="3" enum="Value">A grammar in Lark syntax.</constant>
 	</constants>
 </class>

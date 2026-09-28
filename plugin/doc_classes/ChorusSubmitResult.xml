@@ -1,17 +1,14 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ChorusSubmitResult" inherits="RefCounted" api_type="extension">
 	<brief_description>Immutable result of generation, embedding, preview or token-count admission.</brief_description>
-	<description>Immutable result of generation, embedding, preview or token-count admission.</description>
-	<methods></methods>
+	<description>Immediate, read-only admission result from [GodotChorus]. Acceptance means the request was queued, not that generation or validation succeeded. Each accepted request later receives one terminal success or [signal GodotChorus.generation_error]. Rejected requests emit no request signals. Correlate signals using [member request_id], not the mutable source resource.</description>
 	<members>
-		<member name="request" type="ChorusInferenceRequest">Original request resource, or null for token counts.</member>
-		<member name="request_id" type="int">Read-only result value.</member>
-		<member name="request_message_id" type="int">Read-only result value.</member>
-		<member name="response_message_id" type="int">Read-only result value.</member>
-		<member name="error" type="int" enum="GodotChorus.ErrorCode">Read-only result value.</member>
-		<member name="message" type="String">Read-only result value.</member>
-		<member name="accepted" type="bool">Read-only result value.</member>
+		<member name="request" type="ChorusInferenceRequest" setter="" getter="get_request">Original request resource, or [code]null[/code] for token counting. This is not the frozen runtime snapshot; changing it does not change accepted work.</member>
+		<member name="request_id" type="int" setter="" getter="get_request_id">Nonnegative identity used by request signals and cancellation, or [code]-1[/code] on rejection.</member>
+		<member name="request_message_id" type="int" setter="" getter="get_request_message_id">Durable ID of the new user message for an accepted chat turn. Otherwise [code]-1[/code], including regeneration, stateless generation, embeddings, previews and counts.</member>
+		<member name="response_message_id" type="int" setter="" getter="get_response_message_id">Reserved assistant message ID for accepted sessioned generation. Regeneration reuses the replaced reply ID. Other operations and rejected submissions return [code]-1[/code]. A reserved ID does not imply successful completion.</member>
+		<member name="error" type="int" setter="" getter="get_error">Immediate admission error from [enum GodotChorus.ErrorCode], or [constant GodotChorus.ERR_NONE] on acceptance. Later failures arrive through [signal GodotChorus.generation_error].</member>
+		<member name="message" type="String" setter="" getter="get_message">Admission rejection diagnostic, or an empty string on acceptance.</member>
+		<member name="accepted" type="bool" setter="" getter="get_accepted">Whether work was admitted. Check this before waiting for a terminal signal.</member>
 	</members>
-	<constants>
-	</constants>
 </class>

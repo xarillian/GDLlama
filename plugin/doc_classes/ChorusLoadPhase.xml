@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ChorusLoadPhase" inherits="RefCounted" api_type="extension">
 	<brief_description>Phase of an accepted model load.</brief_description>
-	<description>Fractions are optional and refer only to the reported phase, never to total time or readiness.</description>
-	<methods></methods>
-	<members></members>
+	<description>Phase reported by [signal GodotChorus.model_load_progress]. A fraction, when available, describes only that phase, not total time. Even a fraction of [code]1.0[/code] does not mean the engine is ready; wait for [signal GodotChorus.model_loaded].</description>
 	<constants>
-		<constant name="RELEASING_ENGINE" value="0" enum="ChorusLoadPhase.Value">Fencing the previous engine, without fractional progress.</constant>
-		<constant name="LOADING_MODEL" value="1" enum="ChorusLoadPhase.Value">Loading provider assets; a fraction may be available.</constant>
-		<constant name="INITIALIZING_ENGINE" value="2" enum="ChorusLoadPhase.Value">Preparing the engine after weights; currently no fraction.</constant>
+		<constant name="RELEASING_ENGINE" value="0" enum="Value">Waiting for previous work to stop and releasing the old engine. No fractional progress is reported.</constant>
+		<constant name="LOADING_MODEL" value="1" enum="Value">Loading provider assets such as model weights. A fraction may be available.</constant>
+		<constant name="INITIALIZING_ENGINE" value="2" enum="Value">Preparing the engine after loading its assets. No fractional progress is currently reported.</constant>
 	</constants>
 </class>

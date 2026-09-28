@@ -355,6 +355,11 @@ else:
     chorus_c_objects = make_chorus_c_build_env(env).SharedObject(sources_c)
     host_codec_objects = with_host_json_includes(env).SharedObject(sources_host_settings)
 
+    if env["target"] in ("editor", "template_debug"):
+        sources_godot += env.GodotCPPDocData(
+            "bin/gen/doc_data.gen.cpp", source=Glob("plugin/doc_classes/*.xml")
+        )
+
     godot_library = env.SharedLibrary(
         target="bin/libgodot_chorus",
         source=sources_chorus + sources_godot + host_codec_objects + llama_objects

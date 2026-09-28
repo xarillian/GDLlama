@@ -1,13 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ChorusLoadResult" inherits="RefCounted" api_type="extension">
 	<brief_description>Read-only identified model-load admission result.</brief_description>
-	<description>Acceptance does not mean readiness. A rejected result has load_id -1 and emits no terminal signal. An accepted load completes through model_loaded or model_load_failed on the GodotChorus node.</description>
-	<methods></methods>
+	<description>Immediate, read-only result from [method GodotChorus.load_model]. Acceptance does not mean readiness. A rejected load has no terminal signal. An accepted load completes through [signal GodotChorus.model_loaded] or [signal GodotChorus.model_load_failed]; use [member load_id] to correlate both.</description>
 	<members>
-		<member name="accepted" type="bool">True only if the attempt was admitted.</member>
-		<member name="load_id" type="int">Accepted identity, or -1 on rejection.</member>
-		<member name="error" type="int" enum="GodotChorus.ErrorCode">Immediate admission error, or ERR_NONE on acceptance.</member>
-		<member name="message" type="String">Immediate rejection diagnostic.</member>
+		<member name="accepted" type="bool" setter="" getter="get_accepted">Whether the load was admitted. Wait for [signal GodotChorus.model_loaded] before submitting inference.</member>
+		<member name="load_id" type="int" setter="" getter="get_load_id">Nonnegative load identity, or [code]-1[/code] on rejection. Pass this to [method GodotChorus.cancel_load] to request cancellation.</member>
+		<member name="error" type="int" setter="" getter="get_error">Immediate rejection code from [enum GodotChorus.ErrorCode], or [constant GodotChorus.ERR_NONE] on acceptance.</member>
+		<member name="message" type="String" setter="" getter="get_message">Immediate rejection diagnostic, or an empty string on acceptance.</member>
 	</members>
-	<constants></constants>
 </class>

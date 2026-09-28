@@ -1,39 +1,162 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ChorusRequest" inherits="ChorusInferenceRequest" api_type="extension">
 	<brief_description>Mutable typed generation resource.</brief_description>
-	<description>Assigning a generation property selects it immediately. Clearing removes only this request choice, returning to node defaults or provider selection. Absent Inspector values are display values, not choices.</description>
+	<description>Generation input for [method GodotChorus.generate], [method GodotChorus.regenerate] or [method GodotChorus.render_prompt]. Use [method ChorusRequest.chat] for a conversation or [method ChorusRequest.stateless] for a raw prompt.
+Assigning an optional generation property selects it, even when assigning zero, [code]false[/code] or an empty array. A matching [code]has_*()[/code] method reports whether it is selected; [code]clear_*()[/code] removes only this request's choice. Unselected Inspector values are display values, not effective defaults. Request choices override project-wide generation settings, which override provider defaults. Providers honor selected options or reject them; they do not silently ignore unsupported choices.
+Admission freezes the values and history used for this request. You may reuse or change the resource afterward without changing accepted work.
+[codeblock]
+var request = ChorusRequest.chat(&amp;"innkeeper", "What happened here?")
+request.max_tokens = 128
+request.stream = true
+var submission = chorus.generate(request)
+if not submission.accepted:
+    push_error(submission.message)
+[/codeblock]</description>
 	<methods>
-		<method name="chat" qualifiers="static"><return type="ChorusRequest"/><param index="0" name="session" type="StringName"/><param index="1" name="content" type="String"/></method>
-		<method name="stateless" qualifiers="static"><return type="ChorusRequest"/><param index="0" name="content" type="String"/></method>
-		<method name="regeneration" qualifiers="static"><return type="ChorusRequest"/><param index="0" name="session" type="StringName"/></method>
-		<method name="has_max_tokens" qualifiers="const"><return type="bool"/></method><method name="clear_max_tokens"/>
-		<method name="has_temperature" qualifiers="const"><return type="bool"/></method><method name="clear_temperature"/>
-		<method name="has_top_k" qualifiers="const"><return type="bool"/></method><method name="clear_top_k"/>
-		<method name="has_top_p" qualifiers="const"><return type="bool"/></method><method name="clear_top_p"/>
-		<method name="has_seed" qualifiers="const"><return type="bool"/></method><method name="clear_seed"/>
-		<method name="has_frequency_penalty" qualifiers="const"><return type="bool"/></method><method name="clear_frequency_penalty"/>
-		<method name="has_presence_penalty" qualifiers="const"><return type="bool"/></method><method name="clear_presence_penalty"/>
-		<method name="has_stop" qualifiers="const"><return type="bool"/></method><method name="clear_stop"/>
-		<method name="has_show_thinking" qualifiers="const"><return type="bool"/></method><method name="clear_show_thinking"/>
-		<method name="set_constraint"><param index="0" name="format" type="int" enum="ChorusConstraintFormat.Value"/><param index="1" name="source" type="String"/></method><method name="set_unconstrained"/><method name="has_constraint" qualifiers="const"><return type="bool"/></method><method name="is_unconstrained" qualifiers="const"><return type="bool"/></method><method name="clear_constraint"/>
-		<method name="clear_provider_options"/><method name="clear_provider_option"><param index="0" name="provider" type="String"/><param index="1" name="key" type="String"/></method>
-		<method name="has_chat_template" qualifiers="const"><return type="bool"/></method><method name="clear_chat_template"/>
-
+		<method name="chat" qualifiers="static">
+			<return type="ChorusRequest" />
+			<param index="0" name="session" type="StringName" />
+			<param index="1" name="content" type="String" />
+			<description>Creates a new chat-turn request. The session must be nonempty when submitted. The content becomes a user message in that conversation. Submit with [method GodotChorus.generate]; this factory alone starts no work.</description>
+		</method>
+		<method name="stateless" qualifiers="static">
+			<return type="ChorusRequest" />
+			<param index="0" name="content" type="String" />
+			<description>Creates a request with no session. The content is a raw prompt, without conversation history or chat-template rendering. Submit with [method GodotChorus.generate].</description>
+		</method>
+		<method name="regeneration" qualifiers="static">
+			<return type="ChorusRequest" />
+			<param index="0" name="session" type="StringName" />
+			<description>Creates an empty-content request for replacing the latest assistant reply in a nonempty session. Submit with [method GodotChorus.regenerate], not [method GodotChorus.generate].</description>
+		</method>
+		<method name="has_max_tokens" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether [member ChorusRequest.max_tokens] is explicitly selected on this resource. It does not inspect project or provider defaults.</description>
+		</method>
+		<method name="clear_max_tokens">
+			<return type="void" />
+			<description>Removes the request-level [member ChorusRequest.max_tokens] choice so later submissions inherit project or provider defaults. The displayed value is not reset and is no longer selected.</description>
+		</method>
+		<method name="has_temperature" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether [member ChorusRequest.temperature] is explicitly selected on this resource. It does not inspect project or provider defaults.</description>
+		</method>
+		<method name="clear_temperature">
+			<return type="void" />
+			<description>Removes the request-level [member ChorusRequest.temperature] choice so later submissions inherit project or provider defaults. The displayed value is not reset and is no longer selected.</description>
+		</method>
+		<method name="has_top_k" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether [member ChorusRequest.top_k] is explicitly selected on this resource. It does not inspect project or provider defaults.</description>
+		</method>
+		<method name="clear_top_k">
+			<return type="void" />
+			<description>Removes the request-level [member ChorusRequest.top_k] choice so later submissions inherit project or provider defaults. The displayed value is not reset and is no longer selected.</description>
+		</method>
+		<method name="has_top_p" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether [member ChorusRequest.top_p] is explicitly selected on this resource. It does not inspect project or provider defaults.</description>
+		</method>
+		<method name="clear_top_p">
+			<return type="void" />
+			<description>Removes the request-level [member ChorusRequest.top_p] choice so later submissions inherit project or provider defaults. The displayed value is not reset and is no longer selected.</description>
+		</method>
+		<method name="has_seed" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether [member ChorusRequest.seed] is explicitly selected on this resource. It does not inspect project or provider defaults.</description>
+		</method>
+		<method name="clear_seed">
+			<return type="void" />
+			<description>Removes the request-level [member ChorusRequest.seed] choice so later submissions inherit project or provider defaults. The displayed value is not reset and is no longer selected.</description>
+		</method>
+		<method name="has_frequency_penalty" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether [member ChorusRequest.frequency_penalty] is explicitly selected on this resource. It does not inspect project or provider defaults.</description>
+		</method>
+		<method name="clear_frequency_penalty">
+			<return type="void" />
+			<description>Removes the request-level [member ChorusRequest.frequency_penalty] choice so later submissions inherit project or provider defaults. The displayed value is not reset and is no longer selected.</description>
+		</method>
+		<method name="has_presence_penalty" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether [member ChorusRequest.presence_penalty] is explicitly selected on this resource. It does not inspect project or provider defaults.</description>
+		</method>
+		<method name="clear_presence_penalty">
+			<return type="void" />
+			<description>Removes the request-level [member ChorusRequest.presence_penalty] choice so later submissions inherit project or provider defaults. The displayed value is not reset and is no longer selected.</description>
+		</method>
+		<method name="has_stop" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether [member ChorusRequest.stop] is explicitly selected on this resource. It does not inspect project or provider defaults.</description>
+		</method>
+		<method name="clear_stop">
+			<return type="void" />
+			<description>Removes the request-level [member ChorusRequest.stop] choice so later submissions inherit project or provider defaults. The displayed value is not reset and is no longer selected.</description>
+		</method>
+		<method name="has_show_thinking" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether [member ChorusRequest.show_thinking] is explicitly selected on this resource. It does not inspect project or provider defaults.</description>
+		</method>
+		<method name="clear_show_thinking">
+			<return type="void" />
+			<description>Removes the request-level [member ChorusRequest.show_thinking] choice so later submissions inherit project or provider defaults. The displayed value is not reset and is no longer selected.</description>
+		</method>
+		<method name="set_constraint">
+			<return type="void" />
+			<param index="0" name="format" type="int" enum="ChorusConstraintFormat.Value" />
+			<param index="1" name="source" type="String" />
+			<description>Selects an output constraint using the supplied format and source, overriding inherited constraints. Unsupported formats or invalid sources fail validation. See [enum ChorusConstraintFormat.Value].</description>
+		</method>
+		<method name="set_unconstrained">
+			<return type="void" />
+			<description>Explicitly disables any inherited output constraint for this request. Unlike [method ChorusRequest.clear_constraint], this selects an override.</description>
+		</method>
+		<method name="has_constraint" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether a constraint choice is selected on this resource, including explicit unconstrained output. It does not inspect inherited defaults.</description>
+		</method>
+		<method name="is_unconstrained" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether this resource explicitly disables output constraints. False does not imply that an inherited constraint exists.</description>
+		</method>
+		<method name="clear_constraint">
+			<return type="void" />
+			<description>Removes the request-level constraint choice, including explicit unconstrained output, restoring inheritance from project or provider defaults.</description>
+		</method>
+		<method name="clear_provider_options">
+			<return type="void" />
+			<description>Removes all request-level provider choices. Project-level provider choices remain eligible for inheritance.</description>
+		</method>
+		<method name="clear_provider_option">
+			<return type="void" />
+			<param index="0" name="provider" type="String" />
+			<param index="1" name="key" type="String" />
+			<description>Removes one request-level key from the named provider namespace. Missing keys are ignored. A matching project choice is inherited again.</description>
+		</method>
+		<method name="has_chat_template" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether [member ChorusRequest.chat_template] is explicitly selected on this resource. It does not inspect project or provider defaults.</description>
+		</method>
+		<method name="clear_chat_template">
+			<return type="void" />
+			<description>Removes the request-level [member ChorusRequest.chat_template] choice so later submissions inherit project or provider defaults. The displayed value is not reset and is no longer selected.</description>
+		</method>
 	</methods>
 	<members>
-		<member name="stream" type="bool"/>
-		<member name="max_tokens" type="int"/>
-		<member name="temperature" type="float"/>
-		<member name="top_k" type="int"/>
-		<member name="top_p" type="float"/>
-		<member name="seed" type="int"/>
-		<member name="frequency_penalty" type="float"/>
-		<member name="presence_penalty" type="float"/>
-		<member name="stop" type="PackedStringArray"/>
-		<member name="show_thinking" type="bool"/>
-		<member name="constraint_format" type="int" enum="ChorusConstraintFormat.Value"/><member name="constraint_source" type="String"/>
-		<member name="provider_options" type="Dictionary"/><member name="inject" type="Array[ChorusInjectedMessage]"/><member name="chat_template" type="String">An explicitly selected empty template is invalid. Clear the choice to use defaults.</member>
-
+		<member name="stream" type="bool" setter="set_stream" getter="get_stream" default="false">Whether to emit incremental visible and reasoning text signals. The terminal completion still carries the full output. This flag is not an optional generation default.</member>
+		<member name="max_tokens" type="int" setter="set_max_tokens" getter="get_max_tokens" default="0">Maximum generated tokens, including reasoning. Select [code]-1[/code] to remove the cap, or [code]0[/code] to finish immediately with empty output. Clearing the choice restores inherited defaults; it does not select zero.</member>
+		<member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="0.0">Sampling temperature. Lower values favor more likely tokens; zero requests greedy sampling where supported. Must be finite and fit a 32-bit float. The provider validates its supported range.</member>
+		<member name="top_k" type="int" setter="set_top_k" getter="get_top_k" default="0">Number of highest-scoring token candidates retained for sampling. The provider defines the supported range and disabling value. Must fit a signed 32-bit integer.</member>
+		<member name="top_p" type="float" setter="set_top_p" getter="get_top_p" default="0.0">Cumulative probability threshold for nucleus sampling. The provider validates the supported range. Must be finite and fit a 32-bit float.</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">Nonnegative random seed. A provider rejects values outside its supported range rather than truncating them. Clear the choice to inherit defaults; a selected zero is a real seed.</member>
+		<member name="frequency_penalty" type="float" setter="set_frequency_penalty" getter="get_frequency_penalty" default="0.0">Token-score adjustment proportional to prior occurrence count. Positive values discourage repetition, negative values encourage it, and zero disables the adjustment. Must be finite and fit a 32-bit float.</member>
+		<member name="presence_penalty" type="float" setter="set_presence_penalty" getter="get_presence_penalty" default="0.0">Token-score adjustment applied once to tokens that have already appeared. Positive values discourage repetition, negative values encourage it, and zero disables the adjustment. Must be finite and fit a 32-bit float.</member>
+		<member name="stop" type="PackedStringArray" setter="set_stop" getter="get_stop" default="PackedStringArray()">Text markers that end generation. A matched marker is withheld from visible output. Markers apply only to the content channel, not reasoning. Selecting an empty array disables inherited stop markers; clearing the choice restores inheritance.</member>
+		<member name="show_thinking" type="bool" setter="set_show_thinking" getter="get_show_thinking" default="false">Whether reasoning output is exposed separately from visible content. Provider support and model behavior determine availability. Reasoning tokens still count toward [member ChorusRequest.max_tokens].</member>
+		<member name="constraint_format" type="int" setter="" getter="get_constraint_format" enum="ChorusConstraintFormat.Value" default="0">Read-only syntax of the selected output constraint. Meaningful only when [method ChorusRequest.has_constraint] is true and [method ChorusRequest.is_unconstrained] is false. Change it with [method ChorusRequest.set_constraint].</member>
+		<member name="constraint_source" type="String" setter="" getter="get_constraint_source" default="&quot;&quot;">Read-only source of the selected output constraint. Meaningful only for an explicitly selected constraint, not inherited defaults or explicit unconstrained output.</member>
+		<member name="provider_options" type="Dictionary" setter="set_provider_options" getter="get_provider_options" default="{}">Provider-specific generation choices grouped by namespace, for example [code]{"llama": {"repeat_penalty": 1.1}}[/code]. Request values override matching project choices by key. Unknown namespaces, unsupported keys and invalid values are errors. Removing a request key restores inheritance rather than disabling a project choice.</member>
+		<member name="inject" type="ChorusInjectedMessage[]" setter="set_inject" getter="get_inject" default="[]">Ephemeral messages for this sessioned request. They do not change stored history. Stateless requests reject injections. See [ChorusInjectedMessage] for placement rules.</member>
+		<member name="chat_template" type="String" setter="set_chat_template" getter="get_chat_template" default="&quot;&quot;">Explicit chat template for a sessioned request. An explicitly selected empty string is invalid; use [method ChorusRequest.clear_chat_template] to inherit defaults. Stateless requests reject an explicit chat template.</member>
 	</members>
-	<constants></constants>
 </class>

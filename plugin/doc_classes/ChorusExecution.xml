@@ -1,11 +1,9 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="ChorusExecution" inherits="RefCounted" api_type="extension">
 	<brief_description>Inference execution modes.</brief_description>
-	<description>Inference execution modes.</description>
-	<methods></methods>
-	<members></members>
+	<description>Controls whether inference may run alongside other work on the same engine. Set [member ChorusInferenceRequest.execution] before submission. This does not change session ownership: a session can still have only one active inference request.</description>
 	<constants>
-		<constant name="SHARED" value="0" enum="ChorusExecution.Value" />
-		<constant name="EXCLUSIVE" value="1" enum="ChorusExecution.Value" />
+		<constant name="SHARED" value="0" enum="Value">Allows the provider to schedule this request alongside other shared requests.</constant>
+		<constant name="EXCLUSIVE" value="1" enum="Value">Runs without other inference requests active on the same engine. Queued work waits until the exclusive request finishes.</constant>
 	</constants>
 </class>

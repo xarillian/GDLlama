@@ -46,8 +46,7 @@ python tools/stage_godot.py
 
 The staged addon is written to `plugin/addons/chorus`.
 
-## Usage
-<Link to Godot integration guidance and a minimal C example that each demonstrate working inference.>
+See the [Godot guide](docs/GODOT.md) for installation and your first response.
 
 ## Architecture
 See [Architecture](docs/ARCHITECTURE.md) for the dependency model, service
