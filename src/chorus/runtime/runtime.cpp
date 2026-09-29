@@ -174,7 +174,7 @@ SubmitResult ChorusRuntime::submit(const EmbeddingRequest& request) {
     if (request.session_id && _request_by_session.contains(*request.session_id))
         return rejection(ChorusError::SessionBusy, "Session already has a live request.");
     if (!_lifetime->preparation->capabilities.embeddings)
-        return rejection(ChorusError::UnsupportedFeature, "The provider cannot produce embeddings.");
+        return rejection(ChorusError::UnsupportedFeature, "The loaded engine does not serve embeddings.");
     if (request.prompt.empty())
         return rejection(ChorusError::InvalidRequest, "Embedding prompts must not be empty.");
     auto job = std::make_unique<PreparationJob>();

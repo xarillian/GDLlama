@@ -41,7 +41,8 @@ bool LlamaScheduler::load_model_from_file(const Chorus::LlamaLoadConfig& config,
 }
 
 bool LlamaScheduler::init_context(const Chorus::LlamaLoadConfig& config) {
-    context = llama_init_from_model(model, Chorus::make_llama_context_params(config));
+    _serves_embeddings = Chorus::llama_model_serves_embeddings(model, config);
+    context = llama_init_from_model(model, Chorus::make_llama_context_params(config, _serves_embeddings));
     if (!context)
         _log.error("Failed to create the inference context", {{"context_size", (int64_t)config.context_size}});
     return context != nullptr;
@@ -104,12 +105,15 @@ LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger lo
         _embedding_dimensions = llama_model_n_embd_out(model);
         _has_encoder = llama_model_has_encoder(model);
         _has_decoder = llama_model_has_decoder(model);
+        _compacts_sequence_ids =
+            _max_concurrent_requests > 1 && !llama_model_is_recurrent(model) && !llama_model_is_hybrid(model);
         if (_pooling == LLAMA_POOLING_TYPE_RANK) {
             return fail({Chorus::ChorusError::UnsupportedFeature, "The model's rank pooling is not an embedding output."});
         }
         if (control.stop_token.stop_requested())
             return fail(cancelled());
         batch.initialize(_batch_capacity, 0, _max_concurrent_requests);
+        _batch_sampler.emplace(static_cast<size_t>(load_config.thread_count), llama_vocab_n_tokens(llama_model_get_vocab(model)));
         _sequence_ids.reset(static_cast<int>(_max_concurrent_requests));
 
         Chorus::LoadedModelInfo info;
@@ -123,11 +127,13 @@ LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger lo
         info.input_modalities = {Chorus::Modality::Text};
         info.output_modalities = {Chorus::Modality::Text};
         _model_info = std::move(info);
+        common_chat_templates_ptr model_default_chat_templates;
         try {
-            _model_default_chat_templates = common_chat_templates_init(model, "");
+            model_default_chat_templates = common_chat_templates_init(model, "");
         } catch (const std::exception& e) {
             _log.warn("Chat templates unavailable", {{"detail", e.what()}});
         }
+        _chat_renderer.emplace(model, std::move(model_default_chat_templates));
         if (control.stop_token.stop_requested())
             return fail(cancelled());
         {
@@ -158,6 +164,7 @@ void LlamaScheduler::shutdown() {
     _terminal_deliveries.clear();
     _cancel_requested.clear();
     batch.reset();
+    _batch_sampler.reset();
     _active_sequences.clear();
     _sequence_ids.reset();
     if (context) {
@@ -168,7 +175,7 @@ void LlamaScheduler::shutdown() {
         llama_model_free(model);
         model = nullptr;
     }
-    _model_default_chat_templates.reset();
+    _chat_renderer.reset();
     _model_info.reset();
     _llama_log_bridge.reset();
 }
@@ -179,15 +186,11 @@ std::variant<Chorus::RenderedPrompt, Chorus::RequestRejection> LlamaScheduler::r
     std::shared_lock<std::shared_mutex> resource_lock(_preparation_fence);
     if (!is_healthy())
         return Chorus::RequestRejection{Chorus::ChorusError::EngineNotReady, "Llama preparation is closed."};
-    std::lock_guard<std::mutex> lock(_template_mutex);
-    auto rendered = Chorus::render_llama_chat(model, _model_default_chat_templates.get(), template_override, messages, enable_thinking);
+    auto rendered = _chat_renderer->render(messages, template_override, enable_thinking);
     if (auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered))
         return *rejection;
-    auto& value = std::get<Chorus::LlamaChatRender>(rendered);
-    auto tokens = Chorus::LlamaUtils::tokenize_vocabulary(llama_model_get_vocab(model), value.prompt, true, true);
-    if (!tokens)
-        return Chorus::RequestRejection{Chorus::ChorusError::Tokenize, "Rendered prompt tokenization failed."};
-    return Chorus::RenderedPrompt{std::move(value.prompt), static_cast<int32_t>(tokens->size())};
+    auto& value = std::get<Chorus::LlamaPreparedChat>(rendered);
+    return Chorus::RenderedPrompt{std::move(value.render.prompt), static_cast<int32_t>(value.tokens.size())};
 }
 
 std::variant<int64_t, Chorus::RequestRejection> LlamaScheduler::count_message_tokens(const std::string& text) const {
@@ -216,7 +219,7 @@ bool LlamaScheduler::is_healthy() const { return is_running.load(); }
 Chorus::EngineCapabilities LlamaScheduler::capabilities() const {
     auto caps = Chorus::llama_provider_capabilities();
     caps.streaming = _has_decoder;
-    caps.embeddings = Chorus::llama_embedding_architecture_supported(_has_encoder, _has_decoder) &&
+    caps.embeddings = _serves_embeddings && Chorus::llama_embedding_architecture_supported(_has_encoder, _has_decoder) &&
                       _embedding_dimensions > 0 && _pooling != LLAMA_POOLING_TYPE_RANK;
     caps.prompt_rendering = _has_decoder;
     return caps;
@@ -345,20 +348,20 @@ LlamaScheduler::PreparedRequestResult LlamaScheduler::prepare_request(PendingReq
     }
     prepared.max_tokens = pending.resolved->max_tokens;
     prepared.stop_sequences = std::move(pending.resolved->stop).value_or(std::vector<std::string>{});
+    const bool context_free_sampling = Chorus::llama_sampling_is_context_free(pending.resolved->sampling);
     auto sampler = Chorus::make_llama_sampler(model, std::move(*pending.resolved));
     std::optional<Chorus::RequestRejection> render_rejection;
     if (!pending.request.messages.empty()) {
-        std::lock_guard<std::mutex> lock(_template_mutex);
-        auto rendered = Chorus::render_llama_chat(model, _model_default_chat_templates.get(), pending.request.chat_template,
-                                                   pending.request.messages, pending.request.gen_config.show_thinking);
+        auto rendered = _chat_renderer->take(pending.request.messages, pending.request.chat_template,
+                                             pending.request.gen_config.show_thinking);
         if (auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered))
             render_rejection = *rejection;
         else {
-            auto& value = std::get<Chorus::LlamaChatRender>(rendered);
-            prepared.tokens = Chorus::LlamaUtils::tokenize(context, value.prompt, true, true);
-            for (auto& stop : value.template_stop_sequences)
+            auto& value = std::get<Chorus::LlamaPreparedChat>(rendered);
+            prepared.tokens = std::move(value.tokens);
+            for (auto& stop : value.render.template_stop_sequences)
                 prepared.stop_sequences.push_back(std::move(stop));
-            prepared.parse_stream = Chorus::make_llama_chat_parse_stream(value);
+            prepared.parse_stream = Chorus::make_llama_chat_parse_stream(value.render);
         }
     } else {
         prepared.tokens = Chorus::LlamaUtils::tokenize(context, pending.request.prompt, true);
@@ -373,6 +376,10 @@ LlamaScheduler::PreparedRequestResult LlamaScheduler::prepare_request(PendingReq
         static_cast<int64_t>(prepared.tokens.size()) > *pending.request.exact_prompt_budget)
         return Chorus::RequestRejection{Chorus::ChorusError::InvalidRequest, "Provider rendering exceeds the prepared prompt budget."};
     prepared.sampler = std::get<common_sampler_ptr>(std::move(sampler));
+    if (context_free_sampling)
+        prepared.sampling_path = Chorus::llama_sampler_selects_first_maximum(prepared.sampler.get())
+                                     ? Chorus::LlamaSamplingPath::FirstMaximum
+                                     : Chorus::LlamaSamplingPath::Chain;
     return prepared;
 }
 
@@ -445,6 +452,7 @@ void LlamaScheduler::admit_available() {
             sequence.prompt_tokens = std::move(prepared.tokens);
             sequence.max_tokens = prepared.max_tokens;
             sequence.sampler = std::move(prepared.sampler);
+            sequence.sampling_path = prepared.sampling_path;
             sequence.parse_stream = std::move(prepared.parse_stream);
             if (!prepared.stop_sequences.empty())
                 sequence.stop_filter.emplace(std::move(prepared.stop_sequences));
@@ -452,6 +460,27 @@ void LlamaScheduler::admit_available() {
         }
     }
     emit_signals(std::move(signals));
+}
+
+// Each sequence owns a KV stream, and llama.cpp micro-batches only runs of consecutive
+// sequence ids. Gaps left by retired requests would split every later decode step into
+// several full passes over the weights.
+void LlamaScheduler::compact_sequence_ids() {
+    if (!_compacts_sequence_ids)
+        return;
+    while (const auto move = _sequence_ids.compaction_move()) {
+        const auto [from, to] = *move;
+        auto node = _active_sequences.extract(from);
+        if (node.empty())
+            throw std::logic_error("allocated sequence identifier has no active sequence");
+        llama_memory_t memory = llama_get_memory(context);
+        llama_memory_seq_cp(memory, from, to, -1, -1);
+        llama_memory_seq_rm(memory, from, -1, -1);
+        node.key() = to;
+        node.mapped().id = to;
+        _active_sequences.insert(std::move(node));
+        _sequence_ids.move(from, to);
+    }
 }
 
 std::vector<int> LlamaScheduler::ordered_active_sequence_ids() const {
@@ -508,21 +537,20 @@ std::optional<LlamaScheduler::BatchPlan> LlamaScheduler::build_plan(int32_t gene
     plan.type = planned->type;
     plan.contested_type = planned->contested_type;
     plan.decode_fairness = planned->decode_fairness;
-    auto delta_for = [&plan](int id) -> SequenceDelta& {
-        auto found = std::ranges::find(plan.deltas, id, &SequenceDelta::sequence_id);
-        if (found == plan.deltas.end()) {
-            plan.participants.push_back(id);
-            plan.deltas.push_back({id});
-            return plan.deltas.back();
-        }
-        return *found;
-    };
-    for (const auto& entry : planned->entries) {
+    for (int id : planned->participants) {
+        plan.participants.push_back(id);
+        plan.deltas.push_back({id});
+    }
+    // Non-unified KV caches place only consecutive sequence ids in one micro-batch, so
+    // planner order would split a single decode step into many graph executions.
+    auto entries = planned->entries;
+    std::ranges::stable_sort(entries, {}, &Chorus::LlamaPlannerEntry::sequence_id);
+    for (const auto& entry : entries) {
         const auto found = _active_sequences.find(entry.sequence_id);
         if (found == _active_sequences.end())
             throw std::logic_error("planner selected an unknown sequence");
         const Sequence& sequence = found->second;
-        auto& delta = delta_for(sequence.id);
+        auto& delta = *std::ranges::find(plan.deltas, sequence.id, &SequenceDelta::sequence_id);
         const int32_t token = entry.decode ? sequence.pending_token : sequence.prompt_tokens.at(entry.prompt_offset);
         const int32_t position = entry.decode ? sequence.n_past
                                                : sequence.n_past + static_cast<int32_t>(entry.prompt_offset - sequence.prompt_cursor);
@@ -586,43 +614,53 @@ void LlamaScheduler::commit_plan(const BatchPlan& plan) {
 }
 
 void LlamaScheduler::process_generation_plan(const BatchPlan& plan) {
-    const llama_vocab* vocab = llama_model_get_vocab(model);
+    std::vector<int> sampled_ids;
+    std::vector<Chorus::LlamaSamplingSlot> slots;
     for (size_t index = 0; index < plan.entries.size(); ++index) {
         if (!plan.entries[index].logits)
             continue;
         auto found = _active_sequences.find(plan.entries[index].sequence_id);
         if (found == _active_sequences.end())
             continue;
-        Sequence& sequence = found->second;
-        llama_token token = common_sampler_sample(sequence.sampler.get(), context, static_cast<int>(index));
-        common_sampler_accept(sequence.sampler.get(), token, true);
-        ++sequence.n_decoded;
-        if (llama_vocab_is_eog(vocab, token)) {
-            complete_sequence(sequence.id, true);
-            continue;
-        }
-        std::string piece = Chorus::LlamaUtils::token_to_piece(context, token);
-        if (sequence.parse_stream) {
-            auto delta = sequence.parse_stream->push(piece);
-            if (!delta.reasoning.empty())
-                emit_token(sequence, sequence.reasoning_chunker.push(delta.reasoning), Chorus::TokenChannel::Reasoning);
-            piece = std::move(delta.content);
-        }
-        bool stopped = false;
-        if (sequence.stop_filter) {
-            auto filtered = sequence.stop_filter->push(piece);
-            emit_token(sequence, std::move(filtered.safe_text));
-            stopped = filtered.matched;
-        } else {
-            emit_token(sequence, sequence.content_chunker.push(piece));
-        }
-        if (stopped || (sequence.max_tokens > 0 && sequence.n_decoded >= sequence.max_tokens)) {
-            complete_sequence(sequence.id, !stopped);
-            continue;
-        }
-        sequence.phase = GenerationPhase::Decode;
-        sequence.pending_token = token;
+        const Sequence& sequence = found->second;
+        sampled_ids.push_back(sequence.id);
+        slots.push_back({sequence.sampler.get(), static_cast<int32_t>(index), sequence.sampling_path});
     }
+    const auto tokens = _batch_sampler->sample(context, slots);
+    for (size_t index = 0; index < tokens.size(); ++index) {
+        auto found = _active_sequences.find(sampled_ids[index]);
+        if (found != _active_sequences.end())
+            advance_sequence(found->second, tokens[index]);
+    }
+}
+
+void LlamaScheduler::advance_sequence(Sequence& sequence, llama_token token) {
+    ++sequence.n_decoded;
+    if (llama_vocab_is_eog(llama_model_get_vocab(model), token)) {
+        complete_sequence(sequence.id, true);
+        return;
+    }
+    std::string piece = Chorus::LlamaUtils::token_to_piece(context, token);
+    if (sequence.parse_stream) {
+        auto delta = sequence.parse_stream->push(piece);
+        if (!delta.reasoning.empty())
+            emit_token(sequence, sequence.reasoning_chunker.push(delta.reasoning), Chorus::TokenChannel::Reasoning);
+        piece = std::move(delta.content);
+    }
+    bool stopped = false;
+    if (sequence.stop_filter) {
+        auto filtered = sequence.stop_filter->push(piece);
+        emit_token(sequence, std::move(filtered.safe_text));
+        stopped = filtered.matched;
+    } else {
+        emit_token(sequence, sequence.content_chunker.push(piece));
+    }
+    if (stopped || (sequence.max_tokens > 0 && sequence.n_decoded >= sequence.max_tokens)) {
+        complete_sequence(sequence.id, !stopped);
+        return;
+    }
+    sequence.phase = GenerationPhase::Decode;
+    sequence.pending_token = token;
 }
 
 void LlamaScheduler::process_embedding_plan(const BatchPlan& plan) {
@@ -769,6 +807,7 @@ void LlamaScheduler::run_worker() {
         admit_available();
         if (process_control_requests())
             return;
+        compact_sequence_ids();
         auto plan = build_plan(_batch_capacity, _micro_batch_capacity);
         if (!plan) {
             std::unique_lock<std::mutex> lock(queue_mutex);

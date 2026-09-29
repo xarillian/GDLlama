@@ -4,6 +4,7 @@
 ### Inference
 - Perform generation against a local model.
 - Generate normalized embeddings from a local model.
+- Opt a generation model into serving embeddings, if capable; otherwise it skips the memory embedding batches reserve.
 - Execute multiple inference requests concurrently through shared `llama.cpp` batches.
 - Support stateless prompt and stateful conversations.
 - Submit ordered generation and embedding batches with independent admission.
@@ -72,6 +73,7 @@
 
 ### KV Cache
 - Reclaim a sequence's KV-cache state when its request ends.
+- Keep only the attention window in sliding-window attention layers.
 
 ### Host Integration and Diagnostics
 - Use Chorus through a host-neutral C++ runtime.

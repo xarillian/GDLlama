@@ -23,6 +23,17 @@ std::variant<common_chat_msg, RequestRejection> to_common(const ChatMessage& mes
 
 } // namespace
 
+std::variant<common_chat_templates_ptr, RequestRejection>
+load_llama_chat_template(const llama_model* model, const std::string& template_source) {
+    if (template_source.empty())
+        return RequestRejection{ChorusError::InvalidRequest, "Llama chat_template must not be empty."};
+    try {
+        return common_chat_templates_init(model, template_source);
+    } catch (const std::exception& e) {
+        return RequestRejection{ChorusError::InvalidRequest, std::string("Invalid chat_template: ") + e.what()};
+    }
+}
+
 std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
     const llama_model* model,
     const common_chat_templates* model_default_chat_templates,
@@ -33,14 +44,11 @@ std::variant<LlamaChatRender, RequestRejection> render_llama_chat(
     common_chat_templates_ptr override_chat_templates;
     const common_chat_templates* selected_chat_templates = model_default_chat_templates;
     if (template_override) {
-        if (template_override->empty())
-            return RequestRejection{ChorusError::InvalidRequest, "Llama chat_template must not be empty."};
-        try {
-            override_chat_templates = common_chat_templates_init(model, *template_override);
-            selected_chat_templates = override_chat_templates.get();
-        } catch (const std::exception& e) {
-            return RequestRejection{ChorusError::InvalidRequest, std::string("Invalid chat_template: ") + e.what()};
-        }
+        auto loaded = load_llama_chat_template(model, *template_override);
+        if (auto* rejection = std::get_if<RequestRejection>(&loaded))
+            return *rejection;
+        override_chat_templates = std::get<common_chat_templates_ptr>(std::move(loaded));
+        selected_chat_templates = override_chat_templates.get();
     }
     if (!selected_chat_templates)
         return RequestRejection{ChorusError::InvalidRequest, "No chat template available for messages."};

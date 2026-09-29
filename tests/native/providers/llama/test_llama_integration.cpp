@@ -1872,6 +1872,46 @@ TEST_F(LlamaIntegrationModelTest, Llama_embeddinggemma_none_pooling_uses_normali
     ASSERT_TRUE(related_score > unrelated_score);
 }
 
+TEST_F(LlamaIntegrationModelTest, A_generation_model_serves_embeddings_only_once_they_are_turned_on) {
+    const auto embed_with = [](bool embeddings) {
+        Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+        config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"embeddings", embeddings}};
+        Chorus::ChorusRuntime runtime;
+        EXPECT_TRUE(load_runtime(runtime, Chorus::make_engine(Chorus::Provider::Llama), config).ok());
+        const auto result = runtime.submit(Chorus::EmbeddingRequest{"The cat sat on the mat.", std::nullopt, 0});
+        if (!result.ok())
+            return std::variant<Chorus::ChorusError, std::vector<float>>{result.error};
+        return std::variant<Chorus::ChorusError, std::vector<float>>{drain_embedding(runtime, result.request_id).value_or(std::vector<float>{})};
+    };
+
+    const auto off = embed_with(false);
+    const auto on = embed_with(true);
+
+    ASSERT_EQ(std::get<Chorus::ChorusError>(off), Chorus::ChorusError::UnsupportedFeature);
+    ASSERT_EQ(std::get<std::vector<float>>(on).size(), size_t{640});
+}
+
+TEST_F(LlamaIntegrationModelTest, A_generation_model_without_embeddings_reserves_a_fraction_of_the_compute_memory) {
+    const auto compute_mib = [](bool embeddings) {
+        EngineLogCapture log_capture;
+        Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+        config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"embeddings", embeddings}};
+        Chorus::LlamaEngine engine;
+        EXPECT_TRUE(!engine.initialize(config, log_capture.logger(), {}).has_value());
+        engine.shutdown();
+        const std::string logs = log_capture.text();
+        const std::string marker = "CPU compute buffer size =";
+        const size_t found = logs.find(marker);
+        return found == std::string::npos ? -1.0 : std::stod(logs.substr(found + marker.size()));
+    };
+
+    const double without = compute_mib(false);
+    const double with = compute_mib(true);
+
+    ASSERT_GT(without, 0.0);
+    ASSERT_LT(without * 4, with);
+}
+
 TEST_F(LlamaIntegrationModelTest, Llama_chat_messages_render_and_generate) {
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(make_chat_config(), {}, {}).has_value());

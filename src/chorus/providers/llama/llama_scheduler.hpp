@@ -5,7 +5,9 @@
 #include "chorus/core/inference_engine.hpp"
 #include <shared_mutex>
 #include "chorus/providers/llama/llama_batch_planner.hpp"
+#include "chorus/providers/llama/llama_batch_sampler.hpp"
 #include "chorus/providers/llama/llama_chat.hpp"
+#include "chorus/providers/llama/llama_chat_renderer.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
 #include "chorus/providers/llama/llama_recovery_planner.hpp"
@@ -86,6 +88,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
         size_t prompt_cursor = 0;
         int32_t pending_token = -1;
         common_sampler_ptr sampler;
+        Chorus::LlamaSamplingPath sampling_path = Chorus::LlamaSamplingPath::Context;
         std::optional<Chorus::StopSequenceFilter> stop_filter;
         std::optional<Chorus::LlamaChatParseStream> parse_stream;
         wlib::Utf8Chunker reasoning_chunker;
@@ -116,6 +119,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     struct PreparedRequest {
         std::vector<int32_t> tokens;
         common_sampler_ptr sampler;
+        Chorus::LlamaSamplingPath sampling_path = Chorus::LlamaSamplingPath::Context;
         std::vector<std::string> stop_sequences;
         std::optional<Chorus::LlamaChatParseStream> parse_stream;
         int32_t max_tokens = -1;
@@ -152,6 +156,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     bool process_control_requests();
     bool take_cancellation(Chorus::RequestId id, bool& stopped);
     void admit_available();
+    void compact_sequence_ids();
     std::optional<PendingSignal> resolve_pending_request(PendingRequest& pending);
     PreparedRequestResult prepare_request(PendingRequest& pending);
     bool has_active_exclusive() const;
@@ -162,6 +167,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     int run_inference(const BatchPlan& plan);
     void commit_plan(const BatchPlan& plan);
     void process_generation_plan(const BatchPlan& plan);
+    void advance_sequence(Sequence& sequence, llama_token token);
     void process_embedding_plan(const BatchPlan& plan);
     bool recover_decode(const BatchPlan& failed);
     std::optional<BatchPlan> recovery_plan(const BatchPlan& failed, const Chorus::LlamaRecoverySelection& selection) const;
@@ -192,6 +198,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     llama_model* model = nullptr;
     llama_context* context = nullptr;
     Chorus::LlamaUtils::Batch batch;
+    std::optional<Chorus::LlamaBatchSampler> _batch_sampler;
     Chorus::LlamaOffloadDeviceList _no_offload_devices{};
     std::unordered_map<int, Sequence> _active_sequences;
     Chorus::LlamaSequenceIdPool _sequence_ids;
@@ -206,6 +213,8 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     bool _has_decoder = false;
     uint64_t _next_submission_sequence = 0;
     uint32_t _max_concurrent_requests = 1;
+    bool _compacts_sequence_ids = false;
+    bool _serves_embeddings = false;
 
     Chorus::Logger _log;
     std::shared_ptr<Chorus::LlamaLogBridge> _llama_log_bridge;
@@ -216,7 +225,6 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     std::function<void(Chorus::RequestId)> _admission_observer;
     std::atomic<uint64_t> _worker_iterations{0};
 #endif
-    common_chat_templates_ptr _model_default_chat_templates;
-    mutable std::mutex _template_mutex;
+    std::optional<Chorus::LlamaChatRenderer> _chat_renderer;
     mutable std::shared_mutex _preparation_fence;
 };

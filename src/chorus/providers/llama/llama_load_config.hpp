@@ -25,6 +25,7 @@ struct LlamaLoadConfig {
     int32_t main_gpu = 0;           // Requested zero-based primary GPU index.
     bool main_gpu_explicit = false; // Whether main_gpu is a requested value rather than a default.
     enum llama_pooling_type pooling = LLAMA_POOLING_TYPE_UNSPECIFIED;
+    bool embeddings = false; // Whether a generation model also serves embedding requests.
 };
 
 /*
@@ -70,8 +71,20 @@ std::variant<LlamaLoadConfig, RequestRejection> parse_llama_load_config(const Ch
 llama_model_params make_llama_model_params(const LlamaLoadConfig& config, LlamaOffloadDeviceList& no_offload_devices);
 
 /*
- * Builds llama.cpp context parameters from normalized load settings.
+ * Reports whether an engine for `model` serves embedding requests.
+ *
+ * Embedding models always do: those that cannot decode and those whose GGUF declares a
+ * pooling type. A generation model does only when `Chorus::LlamaLoadConfig::embeddings`
+ * turns it on.
  */
-llama_context_params make_llama_context_params(const LlamaLoadConfig& config);
+bool llama_model_serves_embeddings(const llama_model* model, const LlamaLoadConfig& config);
+
+/*
+ * Builds llama.cpp context parameters from normalized load settings.
+ *
+ * llama.cpp outputs every token of an embedding batch. Without embeddings, each sequence
+ * outputs at most one token per batch, and the reserved logits shrink to match.
+ */
+llama_context_params make_llama_context_params(const LlamaLoadConfig& config, bool serves_embeddings);
 
 } // namespace Chorus

@@ -1,7 +1,9 @@
 #include "chorus/providers/llama/llama_load_config.hpp"
+#include "chorus/providers/llama/llama_utils.hpp"
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -156,6 +158,11 @@ std::optional<RequestRejection> apply_pooling(LlamaLoadConfig& config, const Pro
     return std::nullopt;
 }
 
+std::optional<RequestRejection> apply_embeddings(LlamaLoadConfig& config, const ProviderOptionValue& option) {
+    config.embeddings = std::get<bool>(option);
+    return std::nullopt;
+}
+
 std::optional<RequestRejection> apply_main_gpu(LlamaLoadConfig& config, const ProviderOptionValue& option) {
     auto rejection = assign_bounded_integer(
         config.main_gpu,
@@ -187,6 +194,7 @@ constexpr std::array load_option_bindings{
     LoadOptionBinding{"n_ubatch", apply_n_ubatch},
     LoadOptionBinding{"main_gpu", apply_main_gpu},
     LoadOptionBinding{"pooling", apply_pooling},
+    LoadOptionBinding{"embeddings", apply_embeddings},
 };
 
 std::optional<RequestRejection> apply_load_option(
@@ -281,6 +289,14 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
              std::nullopt,
              std::nullopt,
              {"model", "none", "mean", "cls", "last"}},
+            {"embeddings",
+             "Embeddings",
+             "Also serve embedding requests from a generation model. Off saves the memory those batches need. Embedding models always serve embeddings.",
+             d.embeddings,
+             std::nullopt,
+             std::nullopt,
+             std::nullopt,
+             std::nullopt},
         };
     }();
     return descriptors;
@@ -331,7 +347,17 @@ llama_model_params make_llama_model_params(const LlamaLoadConfig& config, LlamaO
     return params;
 }
 
-llama_context_params make_llama_context_params(const LlamaLoadConfig& config) {
+bool llama_model_serves_embeddings(const llama_model* model, const LlamaLoadConfig& config) {
+    if (config.embeddings || !llama_model_has_decoder(model))
+        return true;
+    const std::string architecture = LlamaUtils::model_metadata(model, "general.architecture");
+    const std::string declared = LlamaUtils::model_metadata(model, (architecture + ".pooling_type").c_str());
+    int pooling = LLAMA_POOLING_TYPE_NONE;
+    std::from_chars(declared.data(), declared.data() + declared.size(), pooling);
+    return pooling != LLAMA_POOLING_TYPE_NONE && pooling != LLAMA_POOLING_TYPE_UNSPECIFIED;
+}
+
+llama_context_params make_llama_context_params(const LlamaLoadConfig& config, bool serves_embeddings) {
     llama_context_params params = llama_context_default_params();
     params.n_ctx = config.context_size;
     params.n_seq_max = config.max_concurrent_requests;
@@ -340,6 +366,10 @@ llama_context_params make_llama_context_params(const LlamaLoadConfig& config) {
     params.n_batch = config.n_batch;
     params.n_ubatch = config.n_ubatch;
     params.pooling_type = config.pooling;
+    params.n_outputs_max = serves_embeddings ? 0 : config.max_concurrent_requests;
+    // Chorus never rewinds or reuses cached tokens, so sliding-window layers need only
+    // their window. Prefix reuse would need the full cache back.
+    params.swa_full = false;
     params.offload_kqv = config.use_gpu;
     params.op_offload = config.use_gpu;
     return params;

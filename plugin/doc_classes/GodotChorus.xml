@@ -52,7 +52,7 @@ func _on_generation_error(_request_id, _session, _error, message):
 		</method>
 		<method name="supports_embeddings" qualifiers="const">
 			<return type="bool" />
-			<description>Returns whether the currently loaded engine supports embeddings. False when no engine is ready. Load an embedding-capable model before calling [method GodotChorus.embed].</description>
+			<description>Returns whether the currently loaded engine supports embeddings. False when no engine is ready. Load an embedding model, or turn on Embeddings for a generation model, before calling [method GodotChorus.embed].</description>
 		</method>
 		<method name="generate">
 			<return type="ChorusSubmitResult" />

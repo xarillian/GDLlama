@@ -21,6 +21,7 @@ static func run_tests(parent: Node) -> void:
 		"n_ubatch": 512,
 		"main_gpu": 0,
 		"pooling": "model",
+		"embeddings": false,
 	}
 
 	await TestReport.run("declared provider options expose their defaults", func():
@@ -60,6 +61,9 @@ static func run_tests(parent: Node) -> void:
 
 		chorus.use_gpu = false
 		TestReport.check(chorus.use_gpu == false, "expected use_gpu to round-trip")
+
+		chorus.embeddings = true
+		TestReport.check(chorus.embeddings == true, "expected embeddings to round-trip")
 	)
 
 	await TestReport.run("declared provider options appear in the property list", func():

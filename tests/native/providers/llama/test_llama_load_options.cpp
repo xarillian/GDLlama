@@ -60,6 +60,7 @@ TEST(LlamaLoadOptions, Llama_load_options_map_to_distinct_config_fields) {
     ASSERT_EQ(parsed_defaults->n_ubatch, expected_defaults.n_ubatch);
     ASSERT_EQ(parsed_defaults->main_gpu, expected_defaults.main_gpu);
     ASSERT_EQ(parsed_defaults->pooling, LLAMA_POOLING_TYPE_UNSPECIFIED);
+    ASSERT_FALSE(parsed_defaults->embeddings);
 
     const std::vector<MappingCase> cases{
         {"context_size", int64_t{4096}, [](const auto& load) { ASSERT_EQ(load.context_size, uint32_t{4096}); }},
@@ -77,6 +78,7 @@ TEST(LlamaLoadOptions, Llama_load_options_map_to_distinct_config_fields) {
              ASSERT_TRUE(load.main_gpu_explicit);
          }},
         {"pooling", std::string{"none"}, [](const auto& load) { ASSERT_EQ(load.pooling, LLAMA_POOLING_TYPE_NONE); }},
+        {"embeddings", true, [](const auto& load) { ASSERT_TRUE(load.embeddings); }},
     };
 
     for (const auto& mapping : cases) {
@@ -123,6 +125,7 @@ TEST(LlamaLoadOptions, Llama_load_options_reject_invalid_values_with_key_context
         {"pooling", std::string("rank")},
         {"pooling", std::string("unknown")},
         {"pooling", int64_t{1}},
+        {"embeddings", int64_t{1}},
         {"context_size", int64_t{0}},
         {"thread_count", int64_t{0}},
         {"gpu_layers", int64_t{-2}},

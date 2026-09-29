@@ -9,6 +9,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace Chorus {
@@ -20,6 +21,8 @@ RequestRejection common_option_rejection(
 std::optional<RequestRejection> validate_common(const GenerationConfig& config);
 std::optional<RequestRejection>
 resolve_constraint(common_params_sampling& sampling, const std::optional<ConstraintChoice>& constraint);
+bool collapses_to_argmax(const common_params_sampling& sampling);
+void select_argmax_directly(common_sampler* sampler);
 } // namespace
 
 std::optional<RequestRejection> validate_llama_request(const ChorusRequest& request) {
@@ -119,7 +122,10 @@ make_llama_sampler(const llama_model* model, ResolvedLlamaGeneration resolved) {
     }
 
     try {
-        return common_sampler_ptr(common_sampler_init(model, resolved.sampling));
+        common_sampler_ptr sampler(common_sampler_init(model, resolved.sampling));
+        if (collapses_to_argmax(resolved.sampling))
+            select_argmax_directly(sampler.get());
+        return sampler;
     } catch (const std::invalid_argument& error) {
         return RequestRejection{
             ChorusError::InvalidRequest, "Invalid sampler configuration: " + std::string(error.what())
@@ -209,6 +215,26 @@ RequestRejection common_option_rejection(
             };
         }
         return RequestRejection{ChorusError::UnsupportedFeature, "Unknown output constraint format."};
+    }
+
+    bool collapses_to_argmax(const common_params_sampling& sampling) {
+        const auto includes = [&sampling](common_sampler_type type) {
+            return std::ranges::find(sampling.samplers, type) != sampling.samplers.end();
+        };
+        return sampling.mirostat == 0 && sampling.temp <= 0.0f && sampling.dynatemp_range <= 0.0f &&
+               includes(COMMON_SAMPLER_TYPE_TEMPERATURE) && !includes(COMMON_SAMPLER_TYPE_ADAPTIVE_P);
+    }
+
+    // Zero temperature leaves one finite logit, yet llama.cpp still ends the chain with a
+    // distribution draw that exponentiates the entire vocabulary for every token. Greedy
+    // selection picks the same token without that work.
+    void select_argmax_directly(common_sampler* sampler) {
+        llama_sampler* chain = common_sampler_get(sampler);
+        const int32_t last = llama_sampler_chain_n(chain) - 1;
+        if (last < 0 || std::string_view(llama_sampler_name(llama_sampler_chain_get(chain, last))) != "dist")
+            return;
+        llama_sampler_free(llama_sampler_chain_remove(chain, last));
+        llama_sampler_chain_add(chain, llama_sampler_init_greedy());
     }
 
     } // namespace

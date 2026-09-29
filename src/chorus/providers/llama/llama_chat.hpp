@@ -21,6 +21,19 @@ struct LlamaChatRender {
 };
 
 /*
+ * Parses a caller-supplied chat template for one model.
+ *
+ * Returns:
+ *  - `::common_chat_templates_ptr`: the parsed template, reusable for later renders.
+ *  - `Chorus::RequestRejection`: the template is empty or llama.cpp rejects it.
+ *
+ * Errors:
+ *  - `Chorus::ChorusError::InvalidRequest`: the template is empty or invalid.
+ */
+std::variant<common_chat_templates_ptr, RequestRejection>
+load_llama_chat_template(const llama_model* model, const std::string& template_source);
+
+/*
  * Renders messages through an explicit or model-provided llama.cpp chat template.
  *
  * Calls sharing the same model or template instances must be serialized because

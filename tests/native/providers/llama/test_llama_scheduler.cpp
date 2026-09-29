@@ -376,7 +376,7 @@ TEST(LlamaScheduler, load_option_CPU_placement_disables_every_offload_path) {
     Chorus::LlamaOffloadDeviceList no_offload_devices{};
 
     const auto model = Chorus::make_llama_model_params(load, no_offload_devices);
-    const auto context = Chorus::make_llama_context_params(load);
+    const auto context = Chorus::make_llama_context_params(load, false);
 
     ASSERT_EQ(model.n_gpu_layers, int32_t{0});
     ASSERT_TRUE(model.devices == no_offload_devices.data());
@@ -393,7 +393,7 @@ TEST(LlamaScheduler, load_option_GPU_placement_preserves_upstream_device_selecti
     Chorus::LlamaOffloadDeviceList no_offload_devices{};
 
     const auto model = Chorus::make_llama_model_params(load, no_offload_devices);
-    const auto context = Chorus::make_llama_context_params(load);
+    const auto context = Chorus::make_llama_context_params(load, false);
 
     ASSERT_EQ(model.n_gpu_layers, int32_t{17});
     ASSERT_EQ(model.main_gpu, int32_t{2});
@@ -417,7 +417,7 @@ TEST(LlamaScheduler, load_option_context_params_forward_exact_values) {
     load.n_batch = 96;
     load.n_ubatch = 32;
     load.pooling = LLAMA_POOLING_TYPE_LAST;
-    const auto params = Chorus::make_llama_context_params(load);
+    const auto params = Chorus::make_llama_context_params(load, false);
     ASSERT_EQ(params.n_ctx, uint32_t{4096});
     ASSERT_EQ(params.n_seq_max, uint32_t{3});
     ASSERT_EQ(params.n_threads, int32_t{6});
@@ -425,6 +425,70 @@ TEST(LlamaScheduler, load_option_context_params_forward_exact_values) {
     ASSERT_EQ(params.n_batch, uint32_t{96});
     ASSERT_EQ(params.n_ubatch, uint32_t{32});
     ASSERT_EQ(params.pooling_type, LLAMA_POOLING_TYPE_LAST);
+}
+
+TEST_F(LlamaSchedulerModelTest, A_prompt_longer_than_the_attention_window_generates_what_a_full_cache_generates) {
+    std::string prompt = "<start_of_turn>user\nSummarize this ship's log.\n";
+    for (int entry = 1; entry <= 60; ++entry)
+        prompt += "Day " + std::to_string(entry) + ": the wind held steady from the north and the crew mended sails. ";
+    prompt += "<end_of_turn>\n<start_of_turn>model\n";
+    constexpr int kGenerated = 12;
+
+    auto model_params = llama_model_default_params();
+    model_params.n_gpu_layers = 0;
+    llama_model* model = llama_model_load_from_file(MODEL_PATH.c_str(), model_params);
+    ASSERT_NE(model, nullptr);
+    auto full_cache = llama_context_default_params();
+    full_cache.n_ctx = 2048;
+    full_cache.n_batch = 2048;
+    full_cache.swa_full = true;
+    llama_context* reference = llama_init_from_model(model, full_cache);
+    ASSERT_NE(reference, nullptr);
+    auto tokens = Chorus::LlamaUtils::tokenize(reference, prompt, true);
+    ASSERT_GT(tokens.size(), size_t{1100}); // past the 512-token window plus one micro-batch
+    Chorus::LlamaUtils::Batch batch;
+    batch.initialize(static_cast<int32_t>(tokens.size()), 0, 1);
+    for (size_t index = 0; index < tokens.size(); ++index)
+        Chorus::LlamaUtils::batch_add_seq(batch.get(), tokens[index], 0, static_cast<int>(index), index + 1 == tokens.size());
+    ASSERT_EQ(llama_decode(reference, batch.get()), 0);
+    std::string expected;
+    const int vocabulary = llama_vocab_n_tokens(llama_model_get_vocab(model));
+    for (int step = 0; step < kGenerated; ++step) {
+        const float* logits = llama_get_logits_ith(reference, -1);
+        const auto token = static_cast<llama_token>(std::max_element(logits, logits + vocabulary) - logits);
+        expected += Chorus::LlamaUtils::token_to_piece(reference, token);
+        batch.get().n_tokens = 0;
+        Chorus::LlamaUtils::batch_add_seq(batch.get(), token, 0, static_cast<int>(tokens.size()) + step, true);
+        ASSERT_EQ(llama_decode(reference, batch.get()), 0);
+    }
+    llama_free(reference);
+    llama_model_free(model);
+
+    Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+    config.provider_options["llama"] = Chorus::ProviderOptionMap{{"use_gpu", false}, {"context_size", int64_t{2048}}};
+    SchedulerObservation state;
+    std::mutex text_mutex;
+    std::string generated;
+    Chorus::LlamaEngine engine;
+    ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
+    Chorus::ChorusRequest request;
+    request.id = 1;
+    request.prompt = prompt;
+    request.gen_config.max_tokens = kGenerated;
+    request.gen_config.temperature = 0.0f;
+    request.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
+    request.on_event = [&](const Chorus::ChorusSignal& signal) {
+        if (const auto* token = std::get_if<Chorus::ChorusSignal::Token>(&signal.event)) {
+            std::lock_guard<std::mutex> lock(text_mutex);
+            generated += token->text;
+        }
+        state.handle(signal);
+    };
+    engine.submit_request(request);
+    ASSERT_TRUE(state.wait_for_terminals({request.id}));
+    engine.shutdown();
+
+    ASSERT_EQ(generated, expected);
 }
 
 TEST_F(LlamaSchedulerModelTest, Mixed_requests_follow_priority_fifo_and_use_homogeneous_batches) {
@@ -435,6 +499,7 @@ TEST_F(LlamaSchedulerModelTest, Mixed_requests_follow_priority_fifo_and_use_homo
         {"n_batch", int64_t{64}},
         {"n_ubatch", int64_t{16}},
         {"pooling", std::string{"none"}},
+        {"embeddings", true},
     };
 
     SchedulerObservation state;
@@ -905,6 +970,72 @@ TEST_F(LlamaSchedulerModelTest, Sequence_id_reusable_after_request_completes) {
         ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(result->terminals[0].event));
         ASSERT_TRUE(result->tokens > 0);
     }
+}
+
+TEST_F(LlamaSchedulerModelTest, Request_moved_into_a_retired_sequence_slot_continues_unchanged) {
+    // Both runs batch the same two requests together; only which one holds the higher
+    // sequence id differs. When the short request finishes first from the lower id, the
+    // long request is moved into its slot mid-generation.
+    const auto long_request_text = [](bool long_request_submitted_first) {
+        Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
+        config.provider_options["llama"] = Chorus::ProviderOptionMap{
+            {"use_gpu", false},
+            {"max_concurrent_requests", int64_t{2}},
+        };
+        SchedulerObservation state;
+        std::mutex text_mutex;
+        std::string text;
+        Chorus::LlamaEngine engine;
+        if (engine.initialize(config, {}, {}).has_value())
+            return std::optional<std::string>{};
+        engine.set_batch_observer([&](const Chorus::LlamaBatchRecord& record) { state.observe(record); });
+
+        auto blocker = make_scheduler_generation(100, 0);
+        blocker.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.gate_request_id = blocker.id;
+        }
+        engine.submit_request(blocker);
+        if (!state.wait_for_gate())
+            return std::optional<std::string>{};
+
+        auto short_request = make_scheduler_generation(101, 0);
+        short_request.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+        auto long_request = make_scheduler_generation(102, 0);
+        long_request.prompt = "<start_of_turn>user\nDescribe a lighthouse at night.<end_of_turn>\n<start_of_turn>model\n";
+        long_request.gen_config.max_tokens = 16;
+        long_request.gen_config.temperature = 0.0f;
+        long_request.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
+        long_request.on_event = [&](const Chorus::ChorusSignal& signal) {
+            if (const auto* token = std::get_if<Chorus::ChorusSignal::Token>(&signal.event)) {
+                std::lock_guard<std::mutex> lock(text_mutex);
+                text += token->text;
+            }
+            state.handle(signal);
+        };
+        if (long_request_submitted_first) {
+            engine.submit_request(long_request);
+            engine.submit_request(short_request);
+        } else {
+            engine.submit_request(short_request);
+            engine.submit_request(long_request);
+        }
+        state.release();
+        const bool finished = state.wait_for_terminals({blocker.id, short_request.id, long_request.id});
+        engine.shutdown();
+        if (!finished || !std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[long_request.id][0].event))
+            return std::optional<std::string>{};
+        return std::optional<std::string>{text};
+    };
+
+    const auto stayed_in_place = long_request_text(true);
+    const auto moved = long_request_text(false);
+
+    ASSERT_TRUE(stayed_in_place.has_value());
+    ASSERT_TRUE(moved.has_value());
+    ASSERT_FALSE(stayed_in_place->empty());
+    ASSERT_EQ(*moved, *stayed_in_place);
 }
 
 TEST_F(LlamaSchedulerModelTest, Batch_demand_beyond_capacity_is_clamped_not_overrun) {
