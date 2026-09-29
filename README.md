@@ -20,6 +20,18 @@ Run text generation and embeddings inside your game or application, using a mode
 
 Supported features depend on the model; practical concurrency depends on the model and available hardware. See the [full feature list and planned work](docs/FEATURES.md).
 
+## Performance
+Measured on a desktop RTX 4070 Ti through Vulkan, running Gemma 3 270M (F16). Each request asks for one short line of character dialogue and receives about 20 tokens with greedy decoding. All requests are submitted together after a warm-up, with 1,024 tokens of context reserved per request.
+
+| Concurrent requests | All replies complete | First token (median) | Reply tokens per second | VRAM |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 50 ms | 5 ms | 420 | 548 MiB |
+| 4 | 71 ms | 15 ms | 1,010 | 602 MiB |
+| 16 | 148 ms | 36 ms | 1,950 | 818 MiB |
+| 40 | 285 ms | 65 ms | 2,670 | 1,273 MiB |
+
+Reply tokens per second counts every reply token across the burst, including prompt processing. VRAM is the model, KV-cache and compute memory that `llama.cpp` reports; the model weights account for 511 MiB of it. Results vary with the model, hardware and prompts.
+
 ### Demo
 <brief clip - possibly doesn't require a header?>
 
