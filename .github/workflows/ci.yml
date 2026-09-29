@@ -12,9 +12,14 @@ on:
       - 'SConstruct'
       - 'patches/**'
       - '.gitattributes'
-      - 'tools/materialize_llama.py'
+      - 'tools/**'
+      - 'tests/model-fixtures.json'
+      - 'tests/native/**/*.py'
+      - 'justfile'
       - '.gitmodules'
-      - 'godot-cpp/**'
+      - 'third-party/godot-cpp'
+      - 'third-party/googletest'
+      - 'third-party/nlohmann-json'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [ master ]
@@ -62,7 +67,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libvulkan-dev
+          sudo apt-get install -y build-essential libvulkan-dev glslc spirv-headers
 
       - name: Install macOS Dependencies
         if: runner.os == 'macOS'
@@ -76,20 +81,24 @@ jobs:
           Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\${{ env.VULKAN_VERSION }}"
           Add-Content $env:GITHUB_PATH "C:\VulkanSDK\${{ env.VULKAN_VERSION }}\bin"
 
-      - name: Cache and Download Model
+      - name: Restore model fixtures
         id: cache-model
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
-          path: tests/models
-          key: model-gemma-3-270m-it-F16-gguf
+          path: tests/models/*.gguf
+          key: model-fixtures-v1-${{ hashFiles('tests/model-fixtures.json') }}
+          enableCrossOsArchive: true
 
-      - name: Download Model if not Cached
+      - name: Download missing fixtures and verify all fixtures
+        run: python tools/model_fixtures.py
+
+      - name: Save verified model fixtures
         if: steps.cache-model.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          mkdir -p tests/models
-          echo "Downloading model..."
-          curl -L "https://huggingface.co/unsloth/gemma-3-270m-it-GGUF/resolve/main/gemma-3-270m-it-F16.gguf" -o tests/models/gemma-3-270m-it-F16.gguf
+        uses: actions/cache/save@v4
+        with:
+          path: tests/models/*.gguf
+          key: ${{ steps.cache-model.outputs.cache-primary-key }}
+          enableCrossOsArchive: true
 
       - name: Build
         shell: bash

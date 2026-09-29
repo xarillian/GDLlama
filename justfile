@@ -23,11 +23,20 @@ godot: build
 clean:
     scons -c
 
+download-fixtures:
+    python tools/model_fixtures.py
+
+verify-fixtures:
+    python tools/model_fixtures.py --check
+
+test-python:
+    python -B -m unittest discover -s tests/native -p 'test_*.py' -v
+
 build-tests:
     scons test
 
-test-model:
-    ./bin/run_tests --gtest_filter='*ModelTest*:*Llama/EngineContractTest*'
+test-model: verify-fixtures
+    CHORUS_SKIP_MODEL_TESTS=0 ./bin/run_tests --gtest_filter='*ModelTest*:*Llama/EngineContractTest*-*GpuModelTest*'
 
 check-model: build-tests
     just test-model
@@ -35,8 +44,8 @@ check-model: build-tests
 build-gpu-tests:
     scons test use_vulkan=yes
 
-test-gpu:
-    ./bin/run_tests --gtest_filter='*GpuModelTest*'
+test-gpu: verify-fixtures
+    CHORUS_SKIP_MODEL_TESTS=0 ./bin/run_tests --gtest_filter='*GpuModelTest*'
 
 check-gpu: build-gpu-tests
     just test-gpu

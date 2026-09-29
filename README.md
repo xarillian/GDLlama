@@ -24,9 +24,9 @@ Supported features depend on the model; practical concurrency depends on the mod
 <brief clip - possibly doesn't require a header?>
 
 ## Setup
-The Chorus build requires Git, Python 3 with SCons, CMake 3.14 or newer, a C++20 compiler toolchain, and (optionally, but more simply) [Just](https://github.com/casey/just). The default Linux and Windows build also requires the Vulkan SDK.
+The Chorus build requires Git, Python 3 with SCons, CMake 3.24 or newer, a C++20 compiler toolchain, and optionally [Just](https://github.com/casey/just). The default Linux and Windows build also requires the Vulkan SDK, including `glslc` and SPIR-V headers.
 
-After cloning Chorus, run:
+From a fresh clone, run:
 
 ```sh
 git submodule update --init --recursive
@@ -40,7 +40,9 @@ On macOS, install Xcode and use the Metal build in place of `just build`:
 scons use_metal=yes
 ```
 
-Build artifacts are written to `bin/`. 
+Build artifacts are written to `bin/`.
+
+For model tests, review the [fixture manifest and model terms](tests/model-fixtures.json), then run `just download-fixtures` and `just check-model`.
 
 ### Godot
 

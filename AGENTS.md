@@ -63,6 +63,8 @@ Google-style Python sections come last, after the descriptive body, e.g.:
 
 Ensure every symbol is backticked and fully qualified, e.g. `ChorusError::Cancelled`, `ChorusRequest::on_event`, `EventType::Stop`. Ensure `Returns:` names what comes back, one bullet per case. `Errors:` should name error vocabulary, and `Raises:` is for code that throws.
 
+Do _not_ write file headers.
+
 ### Documentation
 
 Documentation serves its audience, not the implementation history. Keep each document within its purpose. Prefer omission to duplication; code and Git already preserve many details.
@@ -86,6 +88,8 @@ Do not include "Authored by <model> ..." in commit messages.
 ## Testing
 
 This project uses `GoogleTest`.
+
+Verification does not automatically require new tests.
 
 Tests should not be tautologies. Ensure tests are written where the effect immediately follows the causes; tests should mimic how we speak in natural language.
 
