@@ -56,7 +56,7 @@ GenerationConfig compose_choices(const GenerationConfig& defaults, const Generat
 
 } // namespace
 
-ChorusRuntime::ChorusRuntime() = default;
+ChorusRuntime::ChorusRuntime() : _wakeup(std::make_shared<Wakeup>()) {}
 
 ChorusRuntime::~ChorusRuntime() {
     stop_all();
@@ -332,6 +332,7 @@ std::optional<RequestId> ChorusRuntime::active_request_for_session(const Session
 
 std::vector<RuntimeEvent> ChorusRuntime::poll() {
     assert_host_thread();
+    _wakeup->clear();
     std::vector<RuntimeEvent> events;
     if (_lifetime && !is_loaded()) {
         fail_preparation(*_lifetime->preparation);
@@ -461,6 +462,11 @@ void ChorusRuntime::append_engine_failure(std::vector<RuntimeEvent>& events) {
     events.push_back({-1, std::nullopt, RuntimeEvent::Kind::EngineFailed, "The engine has failed.", ChorusError::EngineNotReady});
 }
 
+bool ChorusRuntime::wait_for_events(std::chrono::nanoseconds timeout) {
+    assert_host_thread();
+    return _wakeup->wait_for(timeout);
+}
+
 std::vector<LogRecord> ChorusRuntime::poll_logs() {
     assert_host_thread();
     return _log_channel->drain();
@@ -500,7 +506,7 @@ void ChorusRuntime::close_preparation(PreparationState& state) {
         for (const auto& [id, control] : state.controls) {
             control->cancelled = true;
             if (!control->provider_active && !control->terminal) {
-                state.output.emplace_back(ChorusSignal{id, ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled: engine stopped."}});
+                state.publish(ChorusSignal{id, ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled: engine stopped."}});
                 control->terminal = true;
             }
         }
@@ -574,7 +580,7 @@ void ChorusRuntime::enqueue_signal(PreparationState& state, const ChorusSignal& 
     std::lock_guard<std::mutex> lock(state.mutex);
     if (control->terminal || signal.request_id != control->id)
         return;
-    state.output.emplace_back(signal);
+    state.publish(signal);
     if (std::holds_alternative<ChorusSignal::Stop>(signal.event) || std::holds_alternative<ChorusSignal::Error>(signal.event))
         control->terminal = true;
 }

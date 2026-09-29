@@ -65,7 +65,9 @@ struct chorus_runtime {
 
 namespace {
 
-constexpr uint32_t kAbiVersion = 8;
+constexpr uint32_t kAbiVersion = 9;
+// Keeps the waiting thread's deadline arithmetic far from clock overflow.
+constexpr uint64_t kLongestWaitMicroseconds = 86'400'000'000;
 
 std::optional<Chorus::MessageRole> to_cpp_role(chorus_message_role role) noexcept {
     switch (role) {
@@ -1347,6 +1349,20 @@ chorus_error chorus_regenerate(chorus_runtime* rt, const chorus_request* req, ch
         return unknown_exception(rt, error.what());
     } catch (...) {
         return unknown_exception(rt, "Unknown exception while regenerating a request.");
+    }
+}
+
+bool chorus_wait(chorus_runtime* rt, uint64_t timeout_us) {
+    if (!rt)
+        return false;
+    try {
+        return rt->value.wait_for_events(std::chrono::microseconds(std::min(timeout_us, kLongestWaitMicroseconds)));
+    } catch (const std::exception& error) {
+        unknown_exception(rt, error.what());
+        return false;
+    } catch (...) {
+        unknown_exception(rt, "Unknown exception while waiting for events.");
+        return false;
     }
 }
 

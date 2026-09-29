@@ -90,7 +90,7 @@ Headers under `include/chorus` are intentional downstream API commitments, not a
 
 - **Host-facing calls are thread-confined.** All host adapter calls into the runtime occur on one thread.
 - **Provider callbacks may be asynchronous.** Providers may invoke callbacks from worker threads, so callback sinks must be thread-safe.
-- **Events use a synchronized channel.** Provider signals never call host code directly. The runtime delivers them on the host thread when the host polls. Handlers must preserve published event identity even if an earlier handler stops or replaces the engine.
+- **Events use a synchronized channel.** Provider signals never call host code directly. The runtime delivers them on the host thread when the host polls, and the host may block until the channel has work. Handlers must preserve published event identity even if an earlier handler stops or replaces the engine.
 - **Accepted work terminates exactly once.** Every accepted request has one host-visible terminal event, including on cancellation, error, replacement, or shutdown. Work is never silently dropped.
 
 ### Engine handoff and shutdown

@@ -10,7 +10,7 @@ int chorus_c_header_smoke(void) {
     chorus_load_id (*active_load)(const chorus_runtime*) = chorus_active_load_id;
     chorus_error (*render)(chorus_runtime*, const chorus_request*, chorus_submit_result*) = chorus_render_prompt;
 
-    if (chorus_abi_version() != 8 || strcmp(chorus_error_name(CHORUS_ERR_SESSION_BUSY), "SessionBusy") != 0)
+    if (chorus_abi_version() != 9 || strcmp(chorus_error_name(CHORUS_ERR_SESSION_BUSY), "SessionBusy") != 0)
         return 1;
     if (chorus_request_set_prompt(NULL, "prompt") != CHORUS_ERR_INVALID_REQUEST)
         return 2;
@@ -59,6 +59,9 @@ int chorus_c_header_smoke(void) {
         export_defaults(NULL, &json) != CHORUS_ERR_INVALID_REQUEST || json != NULL ||
         save_defaults(NULL, "path") != CHORUS_ERR_INVALID_REQUEST)
         return 11;
+    bool (*wait)(chorus_runtime*, uint64_t) = chorus_wait;
+    if (wait(NULL, 0))
+        return 12;
     chorus_runtime_free(NULL);
     chorus_options_free(NULL);
     chorus_request_free(NULL);

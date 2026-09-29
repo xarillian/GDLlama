@@ -4,6 +4,7 @@
 #include "chorus/core/inference_engine.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -367,6 +368,20 @@ class ChorusRuntime {
     std::vector<RuntimeEvent> poll();
 
     /*
+     * Blocks until `Chorus::ChorusRuntime::poll` has work or `timeout` elapses.
+     *
+     * Request events, prepared requests awaiting the engine, and load progress or
+     * terminals end the wait. Waking drains nothing, so call poll next. Logs never
+     * wake, and an engine failure with no request in flight surfaces only on the next
+     * poll. Work that arrives while poll runs can leave a wake with nothing to drain.
+     *
+     * Returns:
+     *  - `true`: work arrived since the previous poll began.
+     *  - `false`: `timeout` elapsed first.
+     */
+    bool wait_for_events(std::chrono::nanoseconds timeout);
+
+    /*
      * Drains buffered log records.
      *
      * Log and inference events have independent FIFO channels and no ordering
@@ -384,6 +399,7 @@ class ChorusRuntime {
     struct PreparationJob;
     struct PreparationState;
     struct EngineLifetime;
+    struct Wakeup;
     struct LoadAttempt;
     struct LoadingState;
     void lifecycle_loop();
@@ -454,6 +470,7 @@ class ChorusRuntime {
     std::vector<std::shared_ptr<PreparationState>> _draining_states;
 
     std::shared_ptr<LogChannel> _log_channel = std::make_shared<LogChannel>();
+    std::shared_ptr<Wakeup> _wakeup;
 
     bool _engine_failure_reported = false;
 

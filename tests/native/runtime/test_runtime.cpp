@@ -3,6 +3,8 @@
 #include "sync_mock_engine.hpp"
 #include "gtest_utils.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -92,6 +94,40 @@ TEST(Runtime, Runtime_poll_on_idle_runtime_returns_empty) {
     ASSERT_EQ(runtime.poll().size(), 0);
     load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config());
     ASSERT_EQ(runtime.poll().size(), 0);
+}
+
+TEST(Runtime, Waiting_on_a_runtime_with_nothing_pending_times_out) {
+    Chorus::ChorusRuntime runtime;
+    ASSERT_TRUE(load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config()).ok());
+    runtime.poll();
+
+    ASSERT_FALSE(runtime.wait_for_events(std::chrono::milliseconds(20)));
+}
+
+TEST(Runtime, Waiting_then_polling_alone_carries_a_load_and_a_streamed_request_to_their_terminals) {
+    Chorus::ChorusRuntime runtime;
+    std::vector<Chorus::RuntimeEvent> events;
+    const auto wait_then_poll_until = [&](Chorus::RuntimeEvent::Kind kind) {
+        while (std::ranges::none_of(events, [kind](const auto& event) { return event.kind == kind; })) {
+            if (!runtime.wait_for_events(std::chrono::seconds(5)))
+                return false;
+            for (auto& event : runtime.poll())
+                events.push_back(std::move(event));
+        }
+        return true;
+    };
+
+    ASSERT_TRUE(runtime.load_engine(std::make_unique<SyncMockEngine>(), make_config()).ok());
+    ASSERT_TRUE(wait_then_poll_until(Chorus::RuntimeEvent::Kind::ModelLoaded));
+    events.clear();
+    auto result = runtime.submit(make_request("hi", /*stream=*/true));
+    ASSERT_TRUE(result.ok());
+    ASSERT_TRUE(wait_then_poll_until(Chorus::RuntimeEvent::Kind::Complete));
+
+    ASSERT_EQ(events.size(), size_t{3});
+    ASSERT_EQ(events[0].kind, Chorus::RuntimeEvent::Kind::StreamedToken);
+    ASSERT_EQ(events[1].kind, Chorus::RuntimeEvent::Kind::StreamedToken);
+    ASSERT_EQ(events[2].text, "Hello world");
 }
 
 TEST(Runtime, Runtime_preview_matches_the_prompt_submitted_without_mutation) {

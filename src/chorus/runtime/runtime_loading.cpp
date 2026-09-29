@@ -194,6 +194,7 @@ void ChorusRuntime::lifecycle_loop() {
                     attempt->progress = LoadProgress{LoadPhase::ReleasingEngine, std::nullopt};
                     attempt->progress_high_water = attempt->progress;
                 }
+                _wakeup->raise();
 #ifdef CHORUS_HOST_TEST
                 {
                     std::unique_lock guard(state.mutex);
@@ -209,7 +210,7 @@ void ChorusRuntime::lifecycle_loop() {
                 attempt->retiring.reset();
             }
             if (!attempt->stop.stop_requested()) {
-                auto lifetime = std::make_unique<EngineLifetime>();
+                auto lifetime = std::make_unique<EngineLifetime>(_wakeup);
                 lifetime->engine = std::move(attempt->engine);
                 attempt->candidate = std::move(lifetime);
                 auto weak = std::weak_ptr<LoadAttempt>(attempt);
@@ -232,6 +233,7 @@ void ChorusRuntime::lifecycle_loop() {
                                     retained.fraction = previous->fraction;
                                 current->progress_high_water = retained;
                                 current->progress = retained;
+                                _wakeup->raise();
                             }
                             if (invalid && !current->invalid_progress_reported)
                                 current->invalid_progress_reported = true;
@@ -279,6 +281,7 @@ void ChorusRuntime::lifecycle_loop() {
         lock.lock();
         if (usable && !attempt->cancelled) {
             attempt->parked = true;
+            _wakeup->raise();
             state.cv.wait(lock, [&] { return attempt->cancelled || attempt->cleanup_requested || !attempt->candidate; });
             if (!attempt->candidate) {
                 state.busy = false;
@@ -305,6 +308,7 @@ void ChorusRuntime::lifecycle_loop() {
         state.busy = false;
         lock.unlock();
         state.cv.notify_all();
+        _wakeup->raise();
     }
 }
 

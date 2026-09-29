@@ -78,9 +78,9 @@ std::vector<EventSnapshot> wait_events(chorus_runtime* runtime, size_t expected 
     return result;
 }
 
-TEST(ChorusC, Header_is_pure_c_and_uses_abi_eight) {
+TEST(ChorusC, Header_is_pure_c_and_uses_abi_nine) {
     ASSERT_EQ(chorus_c_header_smoke(), 0);
-    ASSERT_EQ(chorus_abi_version(), uint32_t{8});
+    ASSERT_EQ(chorus_abi_version(), uint32_t{9});
 }
 
 TEST(ChorusC, Builder_local_clears_restore_fresh_echo_request_behavior) {
@@ -262,6 +262,22 @@ TEST(ChorusC, Load_admission_cancellation_and_retry_are_identified_and_keep_even
     ASSERT_TRUE(chorus_is_loaded(runtime.get()));
     ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &submitted), CHORUS_OK);
     ASSERT_EQ(wait_events(runtime.get())[0].kind, CHORUS_EVENT_COMPLETE);
+}
+
+TEST(ChorusC, Waiting_then_polling_alone_delivers_a_generation_from_a_provider_thread) {
+    auto runtime = loaded_runtime();
+    auto request = request_with_prompt("hello");
+    chorus_submit_result submitted{};
+    ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &submitted), CHORUS_OK);
+
+    bool complete = false;
+    while (!complete) {
+        ASSERT_TRUE(chorus_wait(runtime.get(), 5'000'000));
+        size_t count = 0;
+        const auto* events = chorus_poll(runtime.get(), &count);
+        for (size_t i = 0; i < count; ++i)
+            complete |= events[i].request_id == submitted.request_id && events[i].kind == CHORUS_EVENT_COMPLETE;
+    }
 }
 
 TEST(ChorusC, Request_event_snapshot_survives_load_submission_and_log_poll) {

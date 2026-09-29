@@ -228,10 +228,10 @@ void ChorusRuntime::preparation_loop(std::shared_ptr<PreparationState> owned_sta
                     event.text = std::move(job->rendered);
                     event.token_count = job->token_count;
                     event.omitted_message_ids = std::move(job->omitted);
-                    state.output.emplace_back(std::move(event));
+                    state.publish(std::move(event));
                     job->control->terminal = true;
                 } else {
-                    state.output.emplace_back(std::move(job));
+                    state.publish(std::move(job));
                 }
             } catch (const RequestRejection& failure) {
                 publish_error(state, job->request.id, job->control, failure.error, failure.message);
@@ -267,7 +267,7 @@ void ChorusRuntime::fail_preparation(PreparationState& state) {
         for (const auto& [id, control] : state.controls) {
             control->cancelled = true;
             if (!control->provider_active && !control->terminal) {
-                state.output.emplace_back(ChorusSignal{id, ChorusSignal::Error{ChorusError::Unknown, "Preparation worker or provider failed."}});
+                state.publish(ChorusSignal{id, ChorusSignal::Error{ChorusError::Unknown, "Preparation worker or provider failed."}});
                 control->terminal = true;
             }
         }

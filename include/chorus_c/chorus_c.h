@@ -328,6 +328,12 @@ CHORUS_API chorus_request_id chorus_active_request_for_session(const chorus_runt
 
 /* The returned pointer is non-NULL even when out_count receives zero. */
 CHORUS_API const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count);
+/*
+ * Blocks until chorus_poll has work or timeout_us elapses, then returns whether work arrived.
+ * Timeouts beyond one day wait one day. Waking drains nothing. Logs never wake; an engine failure with no request in flight
+ * surfaces only on the next chorus_poll.
+ */
+CHORUS_API bool chorus_wait(chorus_runtime* rt, uint64_t timeout_us);
 /* The returned pointer is non-NULL even when out_count receives zero. */
 CHORUS_API const chorus_log_record* chorus_poll_logs(chorus_runtime* rt, size_t* out_count);
 

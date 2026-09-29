@@ -82,6 +82,7 @@
 - Edit shared Godot generation defaults in native Project Settings, imported from JSON and written back automatically only in the editor or explicitly saved from gameplay after source checks.
 - Load generation defaults from files or JSON content into selected C runtime instances; export and explicitly save runtime choices through the C ABI.
 - Use Chorus through a stable C ABI over the public runtime API.
+- Block the host thread until events or prepared work arrive, instead of polling on a timer.
 - Emit structured logs with typed fields.
 - Correlate logs with request and session identities.
 - Report engine failure independently from request failure.
