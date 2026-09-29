@@ -90,6 +90,58 @@
 - Reject unsupported model formats, modalities, constraints, and options explicitly.
 - Configure providers through self-described option schemas.
 
+## Priority Backlog
+### Request Lifecycle
+- Report whether generation completed through EOS, a caller stop marker, or output-budget exhaustion.
+- Report terminal token usage and monotonic queue, preparation, and inference timings.
+- Expire stale requests at an optional monotonic deadline with an explicit terminal outcome.
+- Configure a runtime-wide pending-request limit and report overload distinctly from invalid input.
+- Inspect active work and report why admitted requests are waiting.
+
+### Scheduling
+- Inspect and reorder pending requests.
+- Age queued-request priorities so sustained higher-priority traffic cannot starve older work.
+
+### Conversations
+- Fork an idle conversation into a new session with defined message-ID semantics, without requiring retained KV state.
+
+### KV Cache
+- Retain an agent's KV-cache state between conversation turns.
+- Reuse one physical KV-cache representation of a common prompt prefix across multiple agents.
+- Evict least-recently-used inactive session caches when additional KV capacity is needed, without affecting active requests or shared prefixes still in use.
+- Rebuild an evicted session's private KV state from conversation history while reusing any retained shared prefix.
+- Reuse the deepest exact rendered-token prefix that survives conversation edits, truncation, or injected-context changes.
+
+### Models & Hardware
+- Inspect the planned and effective GPU offload, context, concurrency, batching, and KV-cache geometry.
+
+### Tool Calling
+- Define tools with typed names, descriptions, and input schemas.
+- Advertise available tools separately for each request.
+- Restrict or include tool calls for any individual request.
+- Constrain generated tool calls to the advertised definitions.
+- Parse generated tool calls into structured request events.
+- Validate generated arguments against each tool's input schema.
+- Add tool results to conversation history as typed messages.
+- Correlate tool results with stable tool-call identities, including multiple calls within one turn.
+- Resume generation after one or more tool results.
+- Support multiple tool calls within one conversation turn.
+
+### Providers and Routing
+- Perform generation against an API.
+- Use local in-process and remote asynchronous providers through the same runtime.
+- Use vLLM through a provider that declares its supported capabilities and preserves runtime lifecycle contracts.
+- Distinguish transport failure from a confirmed backend outcome.
+- Expose whether cancellation stops local delivery or confirms that backend execution has stopped.
+
+### Host Event Backpressure
+- Bound buffered host-event counts and bytes with an explicit overload policy.
+- Coalesce adjacent streamed chunks within the same request and output channel while preserving output order.
+- Apply backpressure or fail affected requests explicitly when buffering limits are reached, rather than silently dropping output or terminal events.
+
+### Workload Groups
+- Apply concurrency and pending-work limits to caller-defined workload groups.
+
 ## Backlog
 ### Unsorted
 - Semantic search?
@@ -101,19 +153,11 @@
 - Produce an opt-in load-and-infer diagnostic report with build/provider identity, model facts, selected options, a synthetic request, and relevant diagnostics, excluding model weights, conversation content, and local paths by default.
 
 ### Inference
-- Perform generation against an API.
 - Generate normalized embeddings from an API.
 - Carry text, image, and audio references as typed message content, with explicit rejection of unsupported modalities.
 
 ### Request Lifecycle
-- Inspect and reorder pending requests.
 - Configure whether a busy session rejects new requests or queues them up to a developer-defined limit.
-- Report whether generation completed through EOS, a caller stop marker, or output-budget exhaustion.
-- Report terminal token usage and monotonic queue, preparation, and inference timings.
-- Expire stale requests at an optional monotonic deadline with an explicit terminal outcome.
-
-### Conversations
-- Fork an idle conversation into a new session with defined message-ID semantics, without requiring retained KV state.
 
 ### Continuous Inference Scheduling
 - Offer a deterministic scheduling mode for replays, testing, and deterministic netcode.
@@ -121,21 +165,9 @@
 ### Frame-Aware Inference
 - Pace inference against a host-provided frame-time budget.
 - Target a configured output rate for each inference stream.
-- Age queued-request priorities so sustained higher-priority traffic cannot starve older work.
 - Slow or defer lower-priority work under renderer contention while preserving accepted requests.
 - Reserve a developer-defined share of GPU memory for the renderer when planning inference resources.
 - Adapt inference pacing to observed frame cost instead of static hardware classifications.
-
-### Tool Calling
-- Define tools with typed names, descriptions, and input schemas.
-- Advertise available tools separately for each request.
-- Restrict or include tool calls for any individual request.
-- Constrain generated tool calls to the advertised definitions.
-- Parse generated tool calls into structured request events.
-- Validate generated arguments against each tool's input schema.
-- Add tool results to conversation history as typed messages.
-- Resume generation after one or more tool results.
-- Support multiple tool calls within one conversation turn.
 
 ### Generation Control
 - Report effective provider generation defaults to hosts.
@@ -147,7 +179,6 @@
 - Recommend model size, quantization, concurrency, and pacing for the detected hardware.
 - Calibrate provider-specific hardware characteristics that materially affect resource planning.
 - Select a safe model-load resource plan from the model, workload, measured hardware, and renderer reserve before allocation.
-- Inspect the planned and effective GPU offload, context, concurrency, batching, and KV-cache geometry.
 - Reject infeasible resource plans before model allocation while identifying the limiting resource.
 - Run on Linux, Windows, and macOS.
 - Run on NVIDIA, AMD, and Apple GPUs through supported compute backends.
@@ -155,15 +186,10 @@
 
 ### KV Cache
 - Warn when a developer-selected KV-cache configuration provides implausibly little capacity for the requested context and concurrency.
-- Retain an agent's KV-cache state between conversation turns.
-- Reuse one physical KV-cache representation of a common prompt prefix across multiple agents.
 - Quantize KV-cache data.
 - Allocate active sequences dynamically from a shared KV pool when unified storage is selected.
 - Let developers select unified storage for shared-prefix workloads or split storage for independent sequences.
 - Keep new requests queued until sufficient KV-cache capacity is available to run them safely.
-- Evict least-recently-used inactive session caches when additional KV capacity is needed, without affecting active requests or shared prefixes still in use.
-- Rebuild an evicted session's private KV state from conversation history while reusing any retained shared prefix.
-- Reuse the deepest exact rendered-token prefix that survives conversation edits, truncation, or injected-context changes.
 - Reconfigure KV-cache geometry at a quiescent engine boundary without losing runtime conversation history.
 
 ### Retrieval and Context Assembly
@@ -187,7 +213,6 @@
     - Under-specified
 - Use smaller models for ambient agents and larger models for focal agents.
 - Apply per-agent LoRA adapters while sharing one base model in memory.
-- Use local in-process and remote asynchronous providers through the same runtime.
 - Fall back to another provider when the selected provider becomes unavailable.
 
 ### Tech Debt
@@ -205,10 +230,6 @@
 - Apply reproducible tensor transformations without modifying the source artifact.
 - Fit or load Jacobian lenses for supported open-weight models.
 - Record residual-stream activations at selected layers and token positions.
-
-### Host Event Backpressure
-- Bound and coalesce pending host events.
-    - Under-defined
 
 ### Timed Agent Work
 - Schedule agent work to run once at a specified time.

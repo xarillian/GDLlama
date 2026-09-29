@@ -42,7 +42,7 @@ Then prepare the addon for copying into your project:
 python tools/stage_godot.py
 ```
 
-The resulting addon is in `plugin/addons/chorus`.
+The resulting addon is in `plugin/addons/chorus`, including `LICENSE`, `THIRD_PARTY_NOTICES.md`, and `licenses/`. Keep these notices when redistributing the addon. For exported games, ship them alongside the executable or explicitly include them in the export; do not assume Godot exports non-resource files.
 
 ### Plugin installation
 
