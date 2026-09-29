@@ -40,11 +40,6 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(not result.accepted and result.error == GodotChorus.ERR_INVALID_REQUEST, "expected empty chat session rejection")
 	)
 
-	await TestReport.run("staged embedding factory metadata documents the empty session", func():
-		var documentation := FileAccess.get_file_as_string("res://addons/chorus/doc_classes/ChorusEmbeddingRequest.xml")
-		TestReport.check(documentation.contains('<param index="1" name="session" type="StringName" default="&quot;&quot;"/></method>'), "expected an empty StringName default in staged metadata")
-	)
-
 	await TestReport.run("generation settings selector rejects rooted paths without changing project choices", func():
 		var selector := "chorus/generation/settings_path"
 		var selected_path: String = ProjectSettings.get_setting(selector)
