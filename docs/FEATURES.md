@@ -154,13 +154,16 @@
 ### Host Integration and Diagnostics
 - Use Chorus through a command-line host over the public runtime API.
 - Produce an opt-in load-and-infer diagnostic report with build/provider identity, model facts, selected options, a synthetic request, and relevant diagnostics, excluding model weights, conversation content, and local paths by default.
+- Optionally spin briefly before blocking in an event wait, trading one busy core for lower wake latency on latency-critical hosts.
 
 ### Inference
 - Generate normalized embeddings from an API.
+- Select greedy tokens on the GPU with the same tie and NaN handling as CPU selection, avoiding the per-step logits transfer.
 - Carry text, image, and audio references as typed message content, with explicit rejection of unsupported modalities.
 
 ### Request Lifecycle
 - Configure whether a busy session rejects new requests or queues them up to a developer-defined limit.
+- Start inference on prepared requests without waiting for the next host poll.
 
 ### Continuous Inference Scheduling
 - Offer a deterministic scheduling mode for replays, testing, and deterministic netcode.
@@ -186,6 +189,7 @@
 - Run on Linux, Windows, and macOS.
 - Run on NVIDIA, AMD, and Apple GPUs through supported compute backends.
 - Configure flash attention and prompt micro-batch size for local inference.
+- Compile GPU pipelines for common batch shapes during model loading so first requests do not stall on shader compilation.
 
 ### KV Cache
 - Warn when a developer-selected KV-cache configuration provides implausibly little capacity for the requested context and concurrency.
