@@ -24,6 +24,7 @@
 /plugin/addons/
 /tests/godot/.godot/
 /tests/godot/addons/
+/tests/godot/chorus/
 /tests/models/
 
 # Generated build artifacts
