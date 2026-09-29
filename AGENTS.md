@@ -89,7 +89,7 @@ This project uses `GoogleTest`.
 
 Tests should not be tautologies. Ensure tests are written where the effect immediately follows the causes; tests should mimic how we speak in natural language.
 
-Not every change needs a unit test, and too many unit tests is a lousy signal. Prefer functional and end-to-end tests. Cover both the happy and the unhappy paths. If a bug would slip past those, an additional unit test is justified. A unit test is also justified for regressions or TDD. Do not blindly add tests. If coverage already exists for a changed piece of code, a test is _very like_ not necessary.
+Not every change needs a unit test, and too many unit tests is a lousy signal. Prefer functional and end-to-end tests. Cover both the happy and the unhappy paths. If a bug would slip past those, an additional unit test is justified. A unit test is also justified for regressions or TDD. Do not blindly add tests. If coverage already exists for a changed piece of code, a test is _very likely_ not necessary.
 
 ## Workflow Docs
 
