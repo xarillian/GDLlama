@@ -251,7 +251,7 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
              "use_gpu"},
             {"max_concurrent_requests",
              "Max Concurrent Requests",
-             "Maximum generation and embedding requests processed concurrently. One processes requests individually; higher values automatically co-batch compatible work. Additional requests remain queued. Higher values divide Context Size among concurrent requests and may increase resource use. Takes effect on the next load_model().",
+             "Maximum generation and embedding requests processed concurrently. One processes requests individually; higher values automatically co-batch compatible work. Additional requests remain queued. Higher values divide Context Size among concurrent requests and may increase resource use. Idle slots keep recent conversations cached, so their next turn processes only new messages. Takes effect on the next load_model().",
              int64_t{d.max_concurrent_requests},
              1,
              32,

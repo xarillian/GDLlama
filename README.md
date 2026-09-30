@@ -30,7 +30,16 @@ Measured on a desktop RTX 4070 Ti through Vulkan, running Gemma 3 270M (F16). Ea
 | 16 | 148 ms | 36 ms | 1,950 | 818 MiB |
 | 40 | 285 ms | 65 ms | 2,670 | 1,273 MiB |
 
-Reply tokens per second counts every reply token across the burst, including prompt processing. VRAM is the model, KV-cache and compute memory that `llama.cpp` reports; the model weights account for 511 MiB of it. Results vary with the model, hardware and prompts.
+Long conversations keep their history cached between turns, so a reply waits only for the newest message. First token for one character with a long imported history, on the same GPU:
+
+| Model | History | First turn | Later turns |
+| --- | ---: | ---: | ---: |
+| Gemma 3 270M (F16) | ~4k tokens | 130 ms | 43 ms |
+| Gemma 3 270M (F16) | ~10k tokens | 280 ms | 110 ms |
+| Qwen3 0.6B (Q8_0) | ~4k tokens | 197 ms | 41 ms |
+| Qwen3 0.6B (Q8_0) | ~10k tokens | 684 ms | 75 ms |
+
+Results vary with the model, hardware and prompts.
 
 ### Demo
 <brief clip - possibly doesn't require a header?>

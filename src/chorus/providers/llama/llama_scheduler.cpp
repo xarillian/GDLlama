@@ -107,6 +107,7 @@ LlamaScheduler::initialize(const Chorus::ChorusConfig& config, Chorus::Logger lo
         _has_decoder = llama_model_has_decoder(model);
         _compacts_sequence_ids =
             _max_concurrent_requests > 1 && !llama_model_is_recurrent(model) && !llama_model_is_hybrid(model);
+        _parks_sessions = !llama_model_is_recurrent(model) && !llama_model_is_hybrid(model);
         if (_pooling == LLAMA_POOLING_TYPE_RANK) {
             return fail({Chorus::ChorusError::UnsupportedFeature, "The model's rank pooling is not an embedding output."});
         }
@@ -167,6 +168,7 @@ void LlamaScheduler::shutdown() {
     _batch_sampler.reset();
     _active_sequences.clear();
     _sequence_ids.reset();
+    _session_cache.clear();
     if (context) {
         llama_free(context);
         context = nullptr;
@@ -443,10 +445,8 @@ void LlamaScheduler::admit_available() {
                 request_queue.push(std::move(pending));
                 break;
             }
-            const int id = *_sequence_ids.acquire();
             auto prepared = std::move(*pending->prepared);
             Sequence sequence;
-            sequence.id = id;
             sequence.request = std::move(pending->request);
             sequence.submission_sequence = pending->submission_sequence;
             sequence.prompt_tokens = std::move(prepared.tokens);
@@ -456,6 +456,8 @@ void LlamaScheduler::admit_available() {
             sequence.parse_stream = std::move(prepared.parse_stream);
             if (!prepared.stop_sequences.empty())
                 sequence.stop_filter.emplace(std::move(prepared.stop_sequences));
+            claim_sequence_id(sequence);
+            const int id = sequence.id;
             _active_sequences.emplace(id, std::move(sequence));
         }
     }
@@ -473,14 +475,80 @@ void LlamaScheduler::compact_sequence_ids() {
         auto node = _active_sequences.extract(from);
         if (node.empty())
             throw std::logic_error("allocated sequence identifier has no active sequence");
-        llama_memory_t memory = llama_get_memory(context);
-        llama_memory_seq_cp(memory, from, to, -1, -1);
-        llama_memory_seq_rm(memory, from, -1, -1);
+        vacate_sequence_id(to);
+        move_kv(from, to);
         node.key() = to;
         node.mapped().id = to;
         _active_sequences.insert(std::move(node));
         _sequence_ids.move(from, to);
     }
+}
+
+// Idle slots keep a finished conversation's KV, so its next turn processes only new tokens.
+void LlamaScheduler::claim_sequence_id(Sequence& sequence) {
+    const auto& session = sequence.request.session_id;
+    const auto parked = _parks_sessions && session && sequence.request.type == Chorus::RequestType::Generate
+                            ? _session_cache.slot_for(*session)
+                            : std::nullopt;
+    if (parked) {
+        const auto entry = _session_cache.take(*parked);
+        _sequence_ids.acquire(*parked);
+        sequence.id = *parked;
+        const int32_t kept = reuse_parked_prefix(*parked, entry.tokens, sequence.prompt_tokens);
+        sequence.n_past = kept;
+        sequence.prompt_cursor = static_cast<size_t>(kept);
+        sequence.cached_tokens.assign(sequence.prompt_tokens.begin(), sequence.prompt_tokens.begin() + kept);
+        return;
+    }
+    const int id = *_sequence_ids.lowest_free();
+    vacate_sequence_id(id);
+    _sequence_ids.acquire(id);
+    sequence.id = id;
+}
+
+int32_t LlamaScheduler::reuse_parked_prefix(int id, const std::vector<int32_t>& parked, const std::vector<int32_t>& prompt) {
+    // At least one prompt token must still run to produce the logits for the first reply token.
+    const size_t limit = std::min(parked.size(), prompt.size() - 1);
+    size_t kept = 0;
+    while (kept < limit && parked[kept] == prompt[kept])
+        ++kept;
+    // A windowed cache overwrites old positions, so the positions it still holds for this
+    // sequence must reach a full window back from the first new token.
+    llama_memory_t memory = llama_get_memory(context);
+    const auto position = static_cast<llama_pos>(kept);
+    if (kept > 0 && llama_memory_seq_rm(memory, id, position, -1)) {
+        const llama_pos oldest = llama_memory_seq_pos_min(memory, id);
+        if (oldest >= 0 && oldest <= std::max<llama_pos>(0, position - llama_model_n_swa(model)) &&
+            llama_memory_seq_pos_max(memory, id) == position - 1)
+            return position;
+    }
+    llama_memory_seq_rm(memory, id, -1, -1);
+    return 0;
+}
+
+// Moving a parked session copies its whole KV stream layer by layer, which costs more than
+// reprocessing one micro-batch. Short sessions, or any session without an empty slot to move
+// into, are dropped instead.
+void LlamaScheduler::vacate_sequence_id(int id) {
+    if (!_session_cache.holds(id))
+        return;
+    const auto& free = _sequence_ids.free_ids();
+    const auto empty = std::find_if(free.rbegin(), free.rend(), [&](int candidate) {
+        return candidate != id && !_session_cache.holds(candidate);
+    });
+    if (empty == free.rend() || _session_cache.token_count(id) <= static_cast<size_t>(_micro_batch_capacity)) {
+        _session_cache.take(id);
+        llama_memory_seq_rm(llama_get_memory(context), id, -1, -1);
+        return;
+    }
+    move_kv(id, *empty);
+    _session_cache.move(id, *empty);
+}
+
+void LlamaScheduler::move_kv(int from, int to) {
+    llama_memory_t memory = llama_get_memory(context);
+    llama_memory_seq_cp(memory, from, to, -1, -1);
+    llama_memory_seq_rm(memory, from, -1, -1);
 }
 
 std::vector<int> LlamaScheduler::ordered_active_sequence_ids() const {
@@ -604,6 +672,10 @@ void LlamaScheduler::commit_plan(const BatchPlan& plan) {
             throw std::logic_error("batch participant disappeared before commit");
         found->second.prompt_cursor += delta.prompt_advance;
         found->second.n_past += delta.kv_advance;
+    }
+    if (_parks_sessions && plan.type == Chorus::RequestType::Generate) {
+        for (const auto& entry : plan.entries)
+            _active_sequences.at(entry.sequence_id).cached_tokens.push_back(entry.token);
     }
     if (plan.contested_type) {
         _last_contested_type = *plan.contested_type;
@@ -837,14 +909,22 @@ void LlamaScheduler::retire_sequence(int sequence_id, Chorus::ChorusSignal::Even
     auto found = _active_sequences.find(sequence_id);
     if (found == _active_sequences.end())
         return;
+    const auto* error = std::get_if<Chorus::ChorusSignal::Error>(&event);
+    const bool parks = _parks_sessions && context && found->second.request.session_id &&
+                       found->second.request.type == Chorus::RequestType::Generate &&
+                       (!error || error->code == Chorus::ChorusError::Cancelled);
     Chorus::ChorusRequest request = std::move(found->second.request);
     found->second.sampler.reset();
     found->second.stop_filter.reset();
     found->second.parse_stream.reset();
     found->second.reasoning_chunker.reset();
     found->second.content_chunker.reset();
-    if (context)
+    if (parks) {
+        if (const auto stale = _session_cache.park(sequence_id, *request.session_id, std::move(found->second.cached_tokens)))
+            llama_memory_seq_rm(llama_get_memory(context), *stale, -1, -1);
+    } else if (context) {
         llama_memory_seq_rm(llama_get_memory(context), sequence_id, 0, -1);
+    }
     _active_sequences.erase(found);
     _sequence_ids.release(sequence_id);
     signals.emplace_back(std::move(request), std::move(event));

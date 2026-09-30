@@ -74,6 +74,7 @@
 ### KV Cache
 - Reclaim a sequence's KV-cache state when its request ends.
 - Keep only the attention window in sliding-window attention layers.
+- Keep a conversation's KV cache in its idle slot between turns and process only the tokens that changed.
 
 ### Host Integration and Diagnostics
 - Use Chorus through a host-neutral C++ runtime.
@@ -109,7 +110,6 @@
 - Fork an idle conversation into a new session with defined message-ID semantics, without requiring retained KV state.
 
 ### KV Cache
-- Retain an agent's KV-cache state between conversation turns.
 - Reuse one physical KV-cache representation of a common prompt prefix across multiple agents.
 - Evict least-recently-used inactive session caches when additional KV capacity is needed, without affecting active requests or shared prefixes still in use.
 - Rebuild an evicted session's private KV state from conversation history while reusing any retained shared prefix.

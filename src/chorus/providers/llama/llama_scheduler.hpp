@@ -12,6 +12,7 @@
 #include "chorus/providers/llama/llama_load_config.hpp"
 #include "chorus/providers/llama/llama_recovery_planner.hpp"
 #include "chorus/providers/llama/llama_sequence_id_pool.hpp"
+#include "chorus/providers/llama/llama_session_cache.hpp"
 #include "chorus/providers/llama/llama_log_bridge.hpp"
 #include "chorus/providers/llama/llama_utils.hpp"
 #include "chorus/providers/llama/stop_sequence_filter.hpp"
@@ -85,6 +86,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
         int32_t n_decoded = 0;
         int32_t max_tokens = -1;
         std::vector<int32_t> prompt_tokens;
+        std::vector<int32_t> cached_tokens;
         size_t prompt_cursor = 0;
         int32_t pending_token = -1;
         common_sampler_ptr sampler;
@@ -157,6 +159,10 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     bool take_cancellation(Chorus::RequestId id, bool& stopped);
     void admit_available();
     void compact_sequence_ids();
+    void claim_sequence_id(Sequence& sequence);
+    int32_t reuse_parked_prefix(int id, const std::vector<int32_t>& parked, const std::vector<int32_t>& prompt);
+    void vacate_sequence_id(int id);
+    void move_kv(int from, int to);
     std::optional<PendingSignal> resolve_pending_request(PendingRequest& pending);
     PreparedRequestResult prepare_request(PendingRequest& pending);
     bool has_active_exclusive() const;
@@ -214,6 +220,8 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     uint64_t _next_submission_sequence = 0;
     uint32_t _max_concurrent_requests = 1;
     bool _compacts_sequence_ids = false;
+    bool _parks_sessions = false;
+    Chorus::LlamaSessionCache _session_cache;
     bool _serves_embeddings = false;
 
     Chorus::Logger _log;

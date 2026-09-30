@@ -31,6 +31,18 @@ class LlamaSequenceIdPool {
         return id;
     }
 
+    void acquire(int id) {
+        if (!_free.erase(id))
+            throw std::logic_error("sequence identifier is not free");
+        _allocated.insert(id);
+    }
+
+    std::optional<int> lowest_free() const {
+        return _free.empty() ? std::nullopt : std::optional<int>{*_free.begin()};
+    }
+
+    const std::set<int>& free_ids() const { return _free; }
+
     void release(int id) {
         if (!_allocated.erase(id))
             throw std::logic_error("unknown or released sequence identifier");
