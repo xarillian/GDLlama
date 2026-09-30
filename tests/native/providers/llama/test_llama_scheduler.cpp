@@ -973,14 +973,14 @@ TEST_F(LlamaSchedulerModelTest, Sequence_id_reusable_after_request_completes) {
 }
 
 TEST_F(LlamaSchedulerModelTest, Request_moved_into_a_retired_sequence_slot_continues_unchanged) {
-    // Both runs batch the same two requests together; only which one holds the higher
-    // sequence id differs. When the short request finishes first from the lower id, the
-    // long request is moved into its slot mid-generation.
-    const auto long_request_text = [](bool long_request_submitted_first) {
+    // Both runs batch the same three requests together; only the seating order differs. When
+    // the short request finishes between the other two, the last one moves into its slot
+    // mid-generation.
+    const auto moving_request_text = [](bool short_request_seated_between) {
         Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
         config.provider_options["llama"] = Chorus::ProviderOptionMap{
             {"use_gpu", false},
-            {"max_concurrent_requests", int64_t{2}},
+            {"max_concurrent_requests", int64_t{3}},
         };
         SchedulerObservation state;
         std::mutex text_mutex;
@@ -1000,37 +1000,44 @@ TEST_F(LlamaSchedulerModelTest, Request_moved_into_a_retired_sequence_slot_conti
         if (!state.wait_for_gate())
             return std::optional<std::string>{};
 
-        auto short_request = make_scheduler_generation(101, 0);
-        short_request.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
-        auto long_request = make_scheduler_generation(102, 0);
-        long_request.prompt = "<start_of_turn>user\nDescribe a lighthouse at night.<end_of_turn>\n<start_of_turn>model\n";
-        long_request.gen_config.max_tokens = 16;
-        long_request.gen_config.temperature = 0.0f;
-        long_request.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
-        long_request.on_event = [&](const Chorus::ChorusSignal& signal) {
+        const auto long_generation = [](Chorus::RequestId id, const std::string& subject, int max_tokens) {
+            auto request = make_scheduler_generation(id, 0);
+            request.prompt = "<start_of_turn>user\nDescribe " + subject + ".<end_of_turn>\n<start_of_turn>model\n";
+            request.gen_config.max_tokens = max_tokens;
+            request.gen_config.temperature = 0.0f;
+            request.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
+            return request;
+        };
+        auto anchor = long_generation(101, "a forest at dawn", 24);
+        anchor.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+        auto moving = long_generation(102, "a lighthouse at night", 16);
+        moving.on_event = [&](const Chorus::ChorusSignal& signal) {
             if (const auto* token = std::get_if<Chorus::ChorusSignal::Token>(&signal.event)) {
                 std::lock_guard<std::mutex> lock(text_mutex);
                 text += token->text;
             }
             state.handle(signal);
         };
-        if (long_request_submitted_first) {
-            engine.submit_request(long_request);
+        auto short_request = make_scheduler_generation(103, 0);
+        short_request.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
+        engine.submit_request(anchor);
+        if (short_request_seated_between) {
             engine.submit_request(short_request);
+            engine.submit_request(moving);
         } else {
+            engine.submit_request(moving);
             engine.submit_request(short_request);
-            engine.submit_request(long_request);
         }
         state.release();
-        const bool finished = state.wait_for_terminals({blocker.id, short_request.id, long_request.id});
+        const bool finished = state.wait_for_terminals({blocker.id, anchor.id, moving.id, short_request.id});
         engine.shutdown();
-        if (!finished || !std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[long_request.id][0].event))
+        if (!finished || !std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[moving.id][0].event))
             return std::optional<std::string>{};
         return std::optional<std::string>{text};
     };
 
-    const auto stayed_in_place = long_request_text(true);
-    const auto moved = long_request_text(false);
+    const auto stayed_in_place = moving_request_text(false);
+    const auto moved = moving_request_text(true);
 
     ASSERT_TRUE(stayed_in_place.has_value());
     ASSERT_TRUE(moved.has_value());

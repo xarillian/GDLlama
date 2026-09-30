@@ -21,6 +21,7 @@ class LlamaSessionCache {
     struct Entry {
         SessionId session;
         std::vector<int32_t> tokens;
+        uint64_t parked_at = 0;
     };
 
     /*
@@ -42,10 +43,14 @@ class LlamaSessionCache {
     /// Records that the KV parked in `from` now lives in the empty slot `to`.
     void move(int from, int to);
 
+    /// Returns the slot whose session has been parked longest.
+    std::optional<int> least_recent() const;
+
     void clear() { _entries.clear(); }
 
   private:
     std::map<int, Entry> _entries;
+    uint64_t _clock = 0;
 };
 
 } // namespace Chorus

@@ -37,11 +37,8 @@ class LlamaSequenceIdPool {
         _allocated.insert(id);
     }
 
-    std::optional<int> lowest_free() const {
-        return _free.empty() ? std::nullopt : std::optional<int>{*_free.begin()};
-    }
-
     const std::set<int>& free_ids() const { return _free; }
+    const std::set<int>& allocated_ids() const { return _allocated; }
 
     void release(int id) {
         if (!_allocated.erase(id))
@@ -51,11 +48,14 @@ class LlamaSequenceIdPool {
 
     bool empty() const { return _free.empty(); }
 
-    /// Returns the highest allocated identifier and the lowest free one when the free one is lower.
+    /// Returns the highest allocated identifier and the lowest free one inside the allocated range.
     std::optional<std::pair<int, int>> compaction_move() const {
-        if (_free.empty() || _allocated.empty() || *_free.begin() > *_allocated.rbegin())
+        if (_allocated.size() < 2)
             return std::nullopt;
-        return std::pair{*_allocated.rbegin(), *_free.begin()};
+        const auto hole = _free.upper_bound(*_allocated.begin());
+        if (hole == _free.end() || *hole > *_allocated.rbegin())
+            return std::nullopt;
+        return std::pair{*_allocated.rbegin(), *hole};
     }
 
     void move(int from, int to) {

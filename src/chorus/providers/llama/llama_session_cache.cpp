@@ -12,7 +12,7 @@ std::optional<int> LlamaSessionCache::park(int slot, SessionId session, std::vec
         stale.reset();
     if (stale)
         _entries.erase(*stale);
-    _entries.insert_or_assign(slot, Entry{std::move(session), std::move(tokens)});
+    _entries.insert_or_assign(slot, Entry{std::move(session), std::move(tokens), ++_clock});
     return stale;
 }
 
@@ -45,6 +45,11 @@ void LlamaSessionCache::move(int from, int to) {
         throw std::logic_error("no session is parked in this sequence slot");
     node.key() = to;
     _entries.insert(std::move(node));
+}
+
+std::optional<int> LlamaSessionCache::least_recent() const {
+    const auto found = std::ranges::min_element(_entries, {}, [](const auto& entry) { return entry.second.parked_at; });
+    return found == _entries.end() ? std::nullopt : std::optional<int>{found->first};
 }
 
 } // namespace Chorus

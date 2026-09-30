@@ -161,7 +161,11 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     void compact_sequence_ids();
     void claim_sequence_id(Sequence& sequence);
     int32_t reuse_parked_prefix(int id, const std::vector<int32_t>& parked, const std::vector<int32_t>& prompt);
-    void vacate_sequence_id(int id);
+    int seat_for_new_sequence() const;
+    bool is_short_session(int id) const;
+    void drop_parked(int id);
+    bool make_room(int id);
+    void evict_for(int id);
     void move_kv(int from, int to);
     std::optional<PendingSignal> resolve_pending_request(PendingRequest& pending);
     PreparedRequestResult prepare_request(PendingRequest& pending);

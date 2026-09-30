@@ -54,7 +54,36 @@ class Conversations {
 
     ~Conversations() { _engine.shutdown(); }
 
+    struct Line {
+        std::optional<std::string> session;
+        std::string prompt;
+        int max_tokens = 8;
+    };
+
     Turn say(const std::optional<std::string>& session, const std::string& prompt, int max_tokens = 8) {
+        return say_together({{session, prompt, max_tokens}}).front();
+    }
+
+    // Submits every line at once, so the requests share batches and finish in reply-length order.
+    std::vector<Turn> say_together(const std::vector<Line>& lines) {
+        std::vector<Chorus::RequestId> ids;
+        for (const auto& line : lines)
+            ids.push_back(submit(line.session, line.prompt, line.max_tokens));
+        std::vector<Turn> turns;
+        std::unique_lock<std::mutex> lock(_mutex);
+        for (const auto id : ids) {
+            _cv.wait_for(lock, std::chrono::seconds(60), [&] { return _finished[id]; });
+            Turn turn = _turns[id];
+            turn.processed = _processed[id];
+            turns.push_back(turn);
+        }
+        return turns;
+    }
+
+    bool loaded = false;
+
+  private:
+    Chorus::RequestId submit(const std::optional<std::string>& session, const std::string& prompt, int max_tokens) {
         Chorus::ChorusRequest request;
         request.id = ++_next_id;
         request.session_id = session;
@@ -73,16 +102,9 @@ class Conversations {
             _cv.notify_all();
         };
         _engine.submit_request(request);
-        std::unique_lock<std::mutex> lock(_mutex);
-        _cv.wait_for(lock, std::chrono::seconds(60), [&] { return _finished[request.id]; });
-        Turn turn = _turns[request.id];
-        turn.processed = _processed[request.id];
-        return turn;
+        return request.id;
     }
 
-    bool loaded = false;
-
-  private:
     std::mutex _mutex;
     std::condition_variable _cv;
     std::map<Chorus::RequestId, Turn> _turns;
@@ -191,10 +213,10 @@ TEST_F(LlamaSessionCacheModelTest, A_conversation_whose_slot_was_needed_starts_o
     ASSERT_EQ(returning.text, reprocessed.text);
 }
 
-TEST_F(LlamaSessionCacheModelTest, A_long_parked_conversation_moves_aside_for_a_new_request_and_keeps_its_cache) {
+TEST_F(LlamaSessionCacheModelTest, A_new_request_takes_an_empty_slot_and_leaves_parked_conversations_cached) {
     Conversations npcs(2);
     ASSERT_TRUE(npcs.loaded);
-    const std::string guard = history_of(40); // longer than one 512-token micro-batch
+    const std::string guard = history_of(12);
     npcs.say("guard", guard);
     npcs.say(std::nullopt, history_of(3));
     const std::string follow_up = guard + user_turn("Anything else?");
@@ -202,22 +224,52 @@ TEST_F(LlamaSessionCacheModelTest, A_long_parked_conversation_moves_aside_for_a_
     const auto returning = npcs.say("guard", follow_up);
     const auto reprocessed = fresh(follow_up);
 
-    ASSERT_GT(reprocessed.processed, 512);
-    ASSERT_LT(returning.processed * 10, reprocessed.processed);
+    ASSERT_LT(returning.processed * 3, reprocessed.processed);
     ASSERT_EQ(returning.text, reprocessed.text);
 }
 
-TEST_F(LlamaSessionCacheModelTest, A_short_parked_conversation_in_the_way_is_dropped_rather_than_copied) {
+TEST_F(LlamaSessionCacheModelTest, With_every_idle_slot_parked_a_short_conversation_gives_way_before_a_long_one) {
     Conversations npcs(2);
     ASSERT_TRUE(npcs.loaded);
-    const std::string guard = history_of(3);
+    const std::string guard = history_of(40); // longer than one 512-token micro-batch
+    const std::string smith = history_of(3);
     npcs.say("guard", guard);
+    npcs.say("smith", smith);
     npcs.say(std::nullopt, history_of(4));
-    const std::string follow_up = guard + user_turn("Anything else?");
+    const std::string guard_follow_up = guard + user_turn("Anything else?");
+    const std::string smith_follow_up = smith + user_turn("Anything else?");
 
-    const auto returning = npcs.say("guard", follow_up);
-    const auto reprocessed = fresh(follow_up);
+    const auto guard_returning = npcs.say("guard", guard_follow_up);
+    const auto smith_returning = npcs.say("smith", smith_follow_up);
 
-    ASSERT_EQ(returning.processed, reprocessed.processed);
-    ASSERT_EQ(returning.text, reprocessed.text);
+    ASSERT_LT(guard_returning.processed * 10, fresh(guard_follow_up).processed);
+    ASSERT_EQ(smith_returning.processed, fresh(smith_follow_up).processed);
 }
+
+// With three slots the hole left by the middle conversation cannot be filled without dropping it, so a
+// gap stays; with four, the parked conversation moves to the empty slot and the hole closes.
+class LlamaSessionCacheSlotsTest : public ChorusModelTest, public ::testing::WithParamInterface<int64_t> {};
+
+TEST_P(LlamaSessionCacheSlotsTest, Conversations_finishing_out_of_order_all_continue_from_their_caches) {
+    Conversations npcs(GetParam());
+    ASSERT_TRUE(npcs.loaded);
+    const std::vector<std::string> sessions{"guard", "smith", "healer"};
+    std::vector<std::string> histories;
+    for (int index = 0; index < 3; ++index)
+        histories.push_back(history_of(40 + index)); // each longer than one 512-token micro-batch
+    // The middle conversation replies shortest, leaving a hole while the others still run.
+    const auto first = npcs.say_together({{sessions[0], histories[0], 24}, {sessions[1], histories[1], 4}, {sessions[2], histories[2], 16}});
+
+    std::vector<Conversations::Line> follow_ups;
+    for (int index = 0; index < 3; ++index)
+        follow_ups.push_back({sessions[index], histories[index] + first[index].text + "<end_of_turn>\n" + user_turn("Anything else?")});
+    const auto second = npcs.say_together(follow_ups);
+
+    for (int index = 0; index < 3; ++index) {
+        const auto reprocessed = fresh(follow_ups[index].prompt);
+        EXPECT_LT(second[index].processed * 3, reprocessed.processed) << sessions[index];
+        EXPECT_EQ(second[index].text, reprocessed.text) << sessions[index];
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(SlotCounts, LlamaSessionCacheSlotsTest, ::testing::Values(int64_t{3}, int64_t{4}));

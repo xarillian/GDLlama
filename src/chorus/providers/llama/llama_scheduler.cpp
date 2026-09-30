@@ -472,10 +472,12 @@ void LlamaScheduler::compact_sequence_ids() {
         return;
     while (const auto move = _sequence_ids.compaction_move()) {
         const auto [from, to] = *move;
+        // A gap costs one extra micro-batch per step, which is cheaper than reprocessing a long session.
+        if (!make_room(to))
+            break;
         auto node = _active_sequences.extract(from);
         if (node.empty())
             throw std::logic_error("allocated sequence identifier has no active sequence");
-        vacate_sequence_id(to);
         move_kv(from, to);
         node.key() = to;
         node.mapped().id = to;
@@ -500,8 +502,9 @@ void LlamaScheduler::claim_sequence_id(Sequence& sequence) {
         sequence.cached_tokens.assign(sequence.prompt_tokens.begin(), sequence.prompt_tokens.begin() + kept);
         return;
     }
-    const int id = *_sequence_ids.lowest_free();
-    vacate_sequence_id(id);
+    const int id = seat_for_new_sequence();
+    if (!make_room(id))
+        evict_for(id);
     _sequence_ids.acquire(id);
     sequence.id = id;
 }
@@ -526,23 +529,70 @@ int32_t LlamaScheduler::reuse_parked_prefix(int id, const std::vector<int32_t>& 
     return 0;
 }
 
+// A new sequence fills a hole in the active run or extends it, so decode steps stay in one
+// micro-batch. Empty slots come first, then slots whose parked session is cheap to reprocess.
+int LlamaScheduler::seat_for_new_sequence() const {
+    const auto& free = _sequence_ids.free_ids();
+    const auto& active = _sequence_ids.allocated_ids();
+    std::vector<int> candidates;
+    if (!active.empty()) {
+        const int lowest = *active.begin();
+        const int highest = *active.rbegin();
+        for (int id : free)
+            if (id > lowest && id < highest)
+                candidates.push_back(id);
+        if (free.contains(highest + 1))
+            candidates.push_back(highest + 1);
+        if (free.contains(lowest - 1))
+            candidates.push_back(lowest - 1);
+    }
+    for (int id : free)
+        if (std::ranges::find(candidates, id) == candidates.end())
+            candidates.push_back(id);
+    auto chosen = std::ranges::find_if(candidates, [&](int id) { return !_session_cache.holds(id); });
+    if (chosen == candidates.end())
+        chosen = std::ranges::find_if(candidates, [&](int id) { return is_short_session(id); });
+    return chosen == candidates.end() ? candidates.front() : *chosen;
+}
+
+bool LlamaScheduler::is_short_session(int id) const {
+    return _session_cache.token_count(id) <= static_cast<size_t>(_micro_batch_capacity);
+}
+
+void LlamaScheduler::drop_parked(int id) {
+    _session_cache.take(id);
+    llama_memory_seq_rm(llama_get_memory(context), id, -1, -1);
+}
+
 // Moving a parked session copies its whole KV stream layer by layer, which costs more than
-// reprocessing one micro-batch. Short sessions, or any session without an empty slot to move
-// into, are dropped instead.
-void LlamaScheduler::vacate_sequence_id(int id) {
+// reprocessing one micro-batch, so short sessions are dropped. Returns whether `id` is empty.
+bool LlamaScheduler::make_room(int id) {
     if (!_session_cache.holds(id))
-        return;
+        return true;
+    if (is_short_session(id)) {
+        drop_parked(id);
+        return true;
+    }
     const auto& free = _sequence_ids.free_ids();
     const auto empty = std::find_if(free.rbegin(), free.rend(), [&](int candidate) {
         return candidate != id && !_session_cache.holds(candidate);
     });
-    if (empty == free.rend() || _session_cache.token_count(id) <= static_cast<size_t>(_micro_batch_capacity)) {
-        _session_cache.take(id);
-        llama_memory_seq_rm(llama_get_memory(context), id, -1, -1);
-        return;
-    }
+    if (empty == free.rend())
+        return false;
     move_kv(id, *empty);
     _session_cache.move(id, *empty);
+    return true;
+}
+
+// With every idle slot holding a long session, the one parked longest leaves; the session in
+// `id` takes its place when that is a different slot.
+void LlamaScheduler::evict_for(int id) {
+    const int oldest = *_session_cache.least_recent();
+    drop_parked(oldest);
+    if (oldest == id)
+        return;
+    move_kv(id, oldest);
+    _session_cache.move(id, oldest);
 }
 
 void LlamaScheduler::move_kv(int from, int to) {
