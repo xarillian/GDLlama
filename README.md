@@ -21,23 +21,8 @@ Run text generation and embeddings inside your game or application, using a mode
 Supported features depend on the model; practical concurrency depends on the model and available hardware. See the [full feature list and planned work](docs/FEATURES.md).
 
 ## Performance
-Measured on a desktop RTX 4070 Ti through Vulkan, running Gemma 3 270M (F16). Each request asks for one short line of character dialogue and receives about 20 tokens with greedy decoding. All requests are submitted together after a warm-up, with 1,024 tokens of context reserved per request.
 
-| Concurrent requests | All replies complete | First token (median) | Reply tokens per second | VRAM |
-| ---: | ---: | ---: | ---: | ---: |
-| 1 | 50 ms | 5 ms | 420 | 548 MiB |
-| 4 | 71 ms | 15 ms | 1,010 | 602 MiB |
-| 16 | 148 ms | 36 ms | 1,950 | 818 MiB |
-| 40 | 285 ms | 65 ms | 2,670 | 1,273 MiB |
 
-Long conversations keep their history cached between turns, so a reply waits only for the newest message. First token for one character with a long imported history, on the same GPU:
-
-| Model | History | First turn | Later turns |
-| --- | ---: | ---: | ---: |
-| Gemma 3 270M (F16) | ~4k tokens | 130 ms | 43 ms |
-| Gemma 3 270M (F16) | ~10k tokens | 280 ms | 110 ms |
-| Qwen3 0.6B (Q8_0) | ~4k tokens | 197 ms | 41 ms |
-| Qwen3 0.6B (Q8_0) | ~10k tokens | 684 ms | 75 ms |
 
 Results vary with the model, hardware and prompts.
 
