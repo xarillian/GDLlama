@@ -560,8 +560,10 @@ bool LlamaScheduler::is_short_session(int id) const {
 }
 
 void LlamaScheduler::drop_parked(int id) {
-    _session_cache.take(id);
+    const auto dropped = _session_cache.take(id);
     llama_memory_seq_rm(llama_get_memory(context), id, -1, -1);
+    _log.debug("Dropped parked session",
+               {{"session", dropped.session}, {"slot", (int64_t)id}, {"tokens", (int64_t)dropped.tokens.size()}});
 }
 
 // Moving a parked session copies its whole KV stream layer by layer, which costs more than
@@ -599,6 +601,7 @@ void LlamaScheduler::move_kv(int from, int to) {
     llama_memory_t memory = llama_get_memory(context);
     llama_memory_seq_cp(memory, from, to, -1, -1);
     llama_memory_seq_rm(memory, from, -1, -1);
+    _log.debug("Moved sequence KV", {{"from", (int64_t)from}, {"to", (int64_t)to}});
 }
 
 std::vector<int> LlamaScheduler::ordered_active_sequence_ids() const {
