@@ -6,126 +6,211 @@ on:
     paths:
       - '**/*.cpp'
       - '**/*.hpp'
+      - '**/*.h'
       - '**/CMakeLists.txt'
-      - 'CMakePresets.json'
-      - 'third-party/llama.cpp'
       - 'SConstruct'
-      - 'patches/**'
-      - '.gitattributes'
-      - 'tools/**'
-      - 'tests/model-fixtures.json'
-      - 'tests/native/**/*.py'
       - 'justfile'
+      - 'patches/**'
+      - 'tools/**'
+      - 'plugin/**'
+      - 'tests/**'
+      - '.clang-format'
+      - '**/.clang-tidy'
+      - '.githooks/**'
+      - '.gitattributes'
       - '.gitmodules'
-      - 'third-party/godot-cpp'
-      - 'third-party/googletest'
-      - 'third-party/nlohmann-json'
-      - '.github/workflows/ci.yml'
+      - 'third-party/**'
+      - '.github/**'
   pull_request:
     branches: [ master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SCONSFLAGS: -j4
+
 jobs:
-  build:
+  style:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: 1.58.0
+      - name: clang-format
+        run: just style
+
+  tidy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-tag: extension-debug
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Build the extension, generating the Godot bindings clang-tidy reads
+        run: scons
+      - name: clang-tidy
+        run: just tidy
+
+  test:
+    name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-latest]
-        build_type: [template_debug, template_release]
-        gpu_backend: [cpu, gpu]
-        exclude:
-          - os: macos-latest
-            gpu_backend: gpu
-            # GitHub Actions runners usually don't have GPU access for Metal testing, but we can compile it.
-          - os: ubuntu-22.04
-            gpu_backend: metal
-          - os: windows-latest
-            gpu_backend: metal
-
+        os: [ ubuntu-24.04, windows-2022, macos-14 ]
     runs-on: ${{ matrix.os }}
-
-    env:
-      VULKAN_VERSION: 1.3.283.0
-    
+    timeout-minutes: 60
     steps:
-      - name: Clone Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: 'recursive'
-      
-      - name: Setup Python
-        uses: actions/setup-python@v5
+          submodules: recursive
+      - uses: ./.github/actions/setup-build
         with:
-          python-version: '3.x'
-      - run: pip install scons
+          cache-tag: test-debug
+          fixtures: 'true'
+      - name: Build the test binary
+        run: scons test
+      - name: Native tests without models
+        run: just test --quick
+      - name: Native tests with models
+        run: just test
 
-      - name: Setup MSVC (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Install Linux Dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libvulkan-dev glslc spirv-headers
-
-      - name: Install macOS Dependencies
-        if: runner.os == 'macOS'
-        run: brew install llvm
-
-      - name: Install Vulkan SDK (Windows)
-        if: runner.os == 'Windows' && matrix.gpu_backend == 'gpu'
-        run: |
-          curl.exe -o $env:RUNNER_TEMP/VulkanSDK-Installer.exe -L "https://sdk.lunarg.com/sdk/download/${{ env.VULKAN_VERSION }}/windows/VulkanSDK-${{ env.VULKAN_VERSION }}-Installer.exe"
-          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
-          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\${{ env.VULKAN_VERSION }}"
-          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\${{ env.VULKAN_VERSION }}\bin"
-
-      - name: Restore model fixtures
-        id: cache-model
-        uses: actions/cache/restore@v4
+  test-vulkan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: tests/models/*.gguf
-          key: model-fixtures-v1-${{ hashFiles('tests/model-fixtures.json') }}
-          enableCrossOsArchive: true
-
-      - name: Download missing fixtures and verify all fixtures
-        run: python tools/model_fixtures.py
-
-      - name: Save verified model fixtures
-        if: steps.cache-model.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+          submodules: recursive
+      - uses: ./.github/actions/setup-build
         with:
-          path: tests/models/*.gguf
-          key: ${{ steps.cache-model.outputs.cache-primary-key }}
-          enableCrossOsArchive: true
+          backend: vulkan
+          cache-tag: test-debug
+          fixtures: 'true'
+      - name: Install lavapipe, Mesa's software Vulkan driver
+        run: sudo apt-get install -y mesa-vulkan-drivers
+      - name: Build the Vulkan test binary
+        run: scons test use_vulkan=yes
+      - name: Native tests without models
+        run: just test --quick
+      # ggml skips CPU-type Vulkan devices unless one is selected by index.
+      - name: GPU model tests on lavapipe
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          GGML_VK_VISIBLE_DEVICES: '0'
+        run: just test-gpu
 
-      - name: Build
-        shell: bash
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: 1.58.0
+      - name: Tool tests
+        run: just test-python
+
+  godot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-tag: extension-debug
+          fixtures: 'true'
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build and stage the addon
         run: |
-          # Determine flags
-          SCONS_ARGS="target=${{ matrix.build_type }} -j2"
-          
-          if [ "${{ matrix.gpu_backend }}" == "gpu" ]; then
-            if [ "${{ runner.os }}" == "macOS" ]; then
-              SCONS_ARGS="$SCONS_ARGS use_metal=yes"
-            else
-              SCONS_ARGS="$SCONS_ARGS use_vulkan=yes"
-            fi
-          fi
-          
-          echo "Running SCons with: $SCONS_ARGS"
-          scons test $SCONS_ARGS
-      
-      - name: Run Tests
-        shell: bash
+          scons
+          python tools/stage_godot.py
+      - name: Godot integration suite on the oldest supported Godot
+        run: >-
+          python tools/check_godot_compatibility.py --repetitions 1
+          --output bin/godot-ci --versions 4.4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: godot-suite-logs
+          path: |
+            bin/godot-ci/**/results.json
+            bin/godot-ci/**/*.log
+          if-no-files-found: ignore
+
+  sanitize:
+    name: sanitize (${{ matrix.kind }})
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [ thread, address ]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-tag: test-${{ matrix.kind }}
+      # ThreadSanitizer's shadow memory layout cannot fit the runner kernel's default address randomization.
+      - name: Narrow address randomization for ThreadSanitizer
+        if: matrix.kind == 'thread'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Sanitized native tests
+        run: just sanitize ${{ matrix.kind }}
+      - name: Concurrency suites, repeated and shuffled
+        run: just stress 20
+
+  release:
+    name: release (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu sets the glibc floor for the shipped library.
+          - { os: ubuntu-22.04, backend: vulkan, flags: use_vulkan=yes }
+          - { os: windows-2022, backend: vulkan, flags: use_vulkan=yes }
+          - { os: macos-14, backend: metal, flags: use_metal=yes }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-build
+        with:
+          backend: ${{ matrix.backend }}
+          cache-tag: extension-release
+      - name: Build the release addon
         run: |
-          # On GitHub Actions, Vulkan tests might fail if there is no software rasterizer (llvmpipe) or GPU.
-          # We might need to tolerate failure on the GPU run if the runner lacks hardware.
-          
-          if [ "${{ runner.os }}" == "Windows" ]; then
-             ./bin/run_tests.exe
-          else
-             chmod +x ./bin/run_tests
-             ./bin/run_tests
-          fi
+          scons target=template_release ${{ matrix.flags }}
+          python tools/stage_godot.py
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chorus-addon-${{ runner.os }}
+          path: plugin/addons/chorus
+          retention-days: 14
