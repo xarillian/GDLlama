@@ -6,7 +6,8 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "third-party/godot-cpp/gdextension/extension_api.json"
+GODOT_CPP = ROOT / "third-party/godot-cpp"
+SOURCE = "gdextension/extension_api.json"
 PATCH = ROOT / "patches/godot-4.4-api.patch"
 OUTPUT = ROOT / "bin/gen/godot-api/extension_api.json"
 API_SHA256 = "8a8386e3597083cf4357b3dbf501ede3d38a4e3f7ff75da86dfef0d1d9c3e3a8"
@@ -17,9 +18,14 @@ def materialize():
     with tempfile.TemporaryDirectory(dir=OUTPUT.parent) as directory:
         temporary = Path(directory)
         api = temporary / "extension_api.json"
-        api.write_bytes(SOURCE.read_bytes())
+        # Read from git's object store and apply without conversion: a Windows checkout with
+        # core.autocrlf rewrites line endings, and the API must hash byte for byte.
+        api.write_bytes(subprocess.run(
+            ["git", "show", f"HEAD:{SOURCE}"], cwd=GODOT_CPP, check=True, capture_output=True
+        ).stdout)
         subprocess.run(
-            ["git", "apply", f"--directory={temporary.relative_to(ROOT).as_posix()}", str(PATCH)],
+            ["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "apply",
+             f"--directory={temporary.relative_to(ROOT).as_posix()}", str(PATCH)],
             cwd=ROOT, check=True,
         )
         content = api.read_bytes()
