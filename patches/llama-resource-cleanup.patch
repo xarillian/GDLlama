@@ -175,3 +175,40 @@ index e2cab8a..a20865f 100644
              scope_update_fn(loop_scope);
              value test_val = test_expr->execute(loop_scope);
              if (!test_val->as_bool()) {
+diff --git a/common/chat.cpp b/common/chat.cpp
+index ed1942e..3ad8d4a 100644
+--- a/common/chat.cpp
++++ b/common/chat.cpp
+@@ -35,7 +35,12 @@ using json = common_json;
+ 
+ static std::string format_time(const std::chrono::system_clock::time_point & now, const std::string & format) {
+     auto               time       = std::chrono::system_clock::to_time_t(now);
+-    auto               local_time = *std::localtime(&time);
++    std::tm            local_time {};
++#ifdef _WIN32
++    localtime_s(&local_time, &time);
++#else
++    localtime_r(&time, &local_time);
++#endif
+     std::ostringstream ss;
+     ss << std::put_time(&local_time, format.c_str());
+     auto res = ss.str();
+diff --git a/common/jinja/value.cpp b/common/jinja/value.cpp
+index 6999ef7..9630889 100644
+--- a/common/jinja/value.cpp
++++ b/common/jinja/value.cpp
+@@ -373,7 +373,13 @@ const func_builtins & global_builtins() {
+             // get current time
+             // TODO: make sure this is the same behavior as Python's strftime
+             char buf[100];
+-            if (std::strftime(buf, sizeof(buf), format.c_str(), std::localtime(&args.ctx.current_time))) {
++            std::tm local_time {};
++#ifdef _WIN32
++            const bool converted = localtime_s(&local_time, &args.ctx.current_time) == 0;
++#else
++            const bool converted = localtime_r(&args.ctx.current_time, &local_time) != nullptr;
++#endif
++            if (converted && std::strftime(buf, sizeof(buf), format.c_str(), &local_time)) {
+                 return mk_val<value_string>(std::string(buf));
+             } else {
+                 throw raised_exception("strftime_now: failed to format time");

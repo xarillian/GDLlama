@@ -33,7 +33,8 @@ class MaterializeLlamaTest(unittest.TestCase):
         self.vendor = self.root / "vendor"
         self.vendor.mkdir()
         subprocess.run(["git", "init", "-q", str(self.vendor)], check=True)
-        for name in ("src/llama-model-loader.cpp", "src/llama-batch.cpp", "ggml/CMakeLists.txt", "common/jinja/runtime.cpp"):
+        for name in ("src/llama-model-loader.cpp", "src/llama-batch.cpp", "ggml/CMakeLists.txt", "common/jinja/runtime.cpp",
+                     "common/chat.cpp", "common/jinja/value.cpp"):
             path = self.vendor / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(subprocess.check_output(["git", "show", f"HEAD:{name}"], cwd=llama.VENDOR))
