@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import os
+import shutil
 import sys
 import subprocess
 from SCons.Script import Alias, ARGUMENTS, CacheDir, COMMAND_LINE_TARGETS, Default, GetOption, Glob, SConscript, Value
@@ -221,9 +222,31 @@ def make_chorus_c_build_env(base_env):
     return chorus_c_env
 
 # llama.cpp dependency
+def discard_moved_cmake_build(build_dir, source_dir):
+    """Forgets a llama.cpp configuration that CMake recorded for another checkout path, which it refuses to reuse."""
+    cache = os.path.join(build_dir, "CMakeCache.txt")
+    if not os.path.isfile(cache):
+        return
+    recorded = {}
+    with open(cache, encoding="utf-8", errors="replace") as lines:
+        for line in lines:
+            key, _, value = line.partition("=")
+            if key in ("CMAKE_CACHEFILE_DIR:INTERNAL", "CMAKE_HOME_DIRECTORY:INTERNAL"):
+                recorded[key] = value.strip()
+    same = lambda left, right: os.path.normcase(os.path.realpath(left)) == os.path.normcase(os.path.realpath(right))
+    if all(same(recorded.get(key, path), path) for key, path in (
+        ("CMAKE_CACHEFILE_DIR:INTERNAL", build_dir), ("CMAKE_HOME_DIRECTORY:INTERNAL", source_dir)
+    )):
+        return
+    # The built libraries stay until the rebuild replaces them: SCons has already seen them as inputs.
+    print(">>> [SCons] llama.cpp build belongs to another checkout path; reconfiguring it here")
+    os.remove(cache)
+    shutil.rmtree(os.path.join(build_dir, "CMakeFiles"), ignore_errors=True)
+
 def build_llama_with_cmake(target, source, env):
     source_dir = str(llama_source_dir)
     build_dir = os.path.abspath(env["llama_build_dir"])
+    discard_moved_cmake_build(build_dir, source_dir)
 
     cmake_config = [
         "cmake",
