@@ -1,4 +1,4 @@
-name: Continuous Integration
+name: CI
 
 on:
   push:
@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-24.04, windows-2022, macos-14 ]
+        os: [ ubuntu-24.04, windows-2022, macos-15 ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -192,7 +192,7 @@ jobs:
           # The oldest supported Ubuntu sets the glibc floor for the shipped library.
           - { os: ubuntu-22.04, backend: vulkan, flags: use_vulkan=yes }
           - { os: windows-2022, backend: vulkan, flags: use_vulkan=yes }
-          - { os: macos-14, backend: metal, flags: use_metal=yes }
+          - { os: macos-15, backend: metal, flags: use_metal=yes }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
