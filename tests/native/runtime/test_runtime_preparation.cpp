@@ -1209,6 +1209,7 @@ TEST(RuntimePreparation, Reload_joins_gated_preparation_before_old_destruction_a
 
 TEST(RuntimePreparation, Buffered_preparation_success_and_cancelled_chat_drain_after_engine_teardown) {
     ChorusRuntime runtime;
+    runtime.test_use_preparation_workers(1);
     auto engine = std::make_unique<PreparationEngine>();
     auto service = engine->service;
     service->gate_at = 2;
