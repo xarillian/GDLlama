@@ -30,6 +30,7 @@ if missing_submodules:
 # Build variant
 use_vulkan = ARGUMENTS.pop("use_vulkan", "no") == "yes"
 use_metal = ARGUMENTS.pop("use_metal", "no") == "yes"
+native = ARGUMENTS.pop("native", "no") == "yes"
 host_test = ARGUMENTS.pop("host_test", "no") == "yes"
 # ThreadSanitizer cannot run alongside the others; AddressSanitizer and UBSan share a build.
 SANITIZERS = {"thread": "thread", "address": "address,undefined"}
@@ -54,7 +55,8 @@ if use_vulkan:
     llama_variant_parts.append("vulkan")
 if use_metal:
     llama_variant_parts.append("metal")
-llama_variant = "-".join(llama_variant_parts) or "cpu"
+llama_variant_parts.append("native" if native else "portable")
+llama_variant = "-".join(llama_variant_parts)
 llama_platform = str(env["platform"])
 llama_arch = str(env.get("arch", "unknown") or "unknown")
 llama_build_identity = f"{llama_platform}-{llama_arch}"
@@ -260,11 +262,24 @@ def build_llama_with_cmake(target, source, env):
         "-DLLAMA_BUILD_EXAMPLES=OFF",
         "-DLLAMA_BUILD_SERVER=OFF",
         "-DLLAMA_CURL=OFF",
-        "-DGGML_NATIVE=ON",
         f"-DLLAMA_BUILD_COMMIT={llama_revision[:12]}-chorus-{llama_patch_identity}",
         f"-DGGML_BUILD_COMMIT={llama_revision[:12]}-chorus-{llama_patch_identity}",
         "-DLLAMA_BUILD_NUMBER=0",
     ]
+
+    if native:
+        cmake_config.append("-DGGML_NATIVE=ON")
+    else:
+        # Libraries run on machines other than the one that built them. AVX2 covers x86 CPUs
+        # since 2013, and the CPU path matters least once a GPU backend carries inference.
+        cmake_config += [
+            "-DGGML_NATIVE=OFF",
+            "-DGGML_AVX=ON",
+            "-DGGML_AVX2=ON",
+            "-DGGML_FMA=ON",
+            "-DGGML_F16C=ON",
+            "-DGGML_BMI2=ON",
+        ]
 
     targets_to_build = ["llama", "llama-common"]
 

@@ -80,7 +80,7 @@ On macOS, install Xcode and use the Metal build in place of `just build`:
 scons use_metal=yes
 ```
 
-Build artifacts are written to `bin/`.
+Build artifacts are written to `bin/`. They run on any x86-64 CPU with AVX2. For local benchmarks, add `native=yes` to tune llama.cpp for the building machine; that build may crash on other CPUs.
 
 For model tests, review the [fixture manifest and model terms](tests/model-fixtures.json), then run `just download-fixtures` and `just check-model`.
 
