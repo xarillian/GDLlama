@@ -1,4 +1,4 @@
-#include "chorus_c/chorus_c.hpp"
+#include "chorus_c/chorus_c_internal.hpp"
 #include "host_settings/generation_defaults_codec.hpp"
 
 #include <algorithm>

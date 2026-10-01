@@ -1,4 +1,4 @@
-#include "chorus_c/chorus_c.hpp"
+#include "chorus_c/chorus_c_internal.hpp"
 
 #include <cstdlib>
 #include <exception>

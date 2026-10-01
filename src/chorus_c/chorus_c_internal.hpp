@@ -4,7 +4,6 @@
 #include "chorus_c/chorus_c.h"
 
 #include <deque>
-#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -48,8 +47,6 @@ template <typename Action> chorus_error guard_builder(Action&& action) noexcept 
     try {
         action();
         return CHORUS_OK;
-    } catch (const std::bad_alloc&) {
-        return CHORUS_ERR_UNKNOWN;
     } catch (...) {
         return CHORUS_ERR_UNKNOWN;
     }

@@ -1,5 +1,5 @@
 #include "chorus/engine_factory.hpp"
-#include "chorus_c/chorus_c.hpp"
+#include "chorus_c/chorus_c_internal.hpp"
 
 #include <exception>
 #include <string>
