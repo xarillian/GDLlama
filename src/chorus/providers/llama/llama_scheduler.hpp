@@ -172,7 +172,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     bool has_active_exclusive() const;
     std::vector<int> ordered_active_sequence_ids() const;
     std::vector<Sequence*> ordered_runnable() const;
-    std::optional<BatchPlan> build_plan(int32_t generation_budget, int32_t embedding_budget) const;
+    std::optional<BatchPlan> build_plan(int32_t generation_budget, int32_t micro_batch_budget) const;
     void populate_batch(const BatchPlan& plan);
     int run_inference(const BatchPlan& plan);
     void commit_plan(const BatchPlan& plan);

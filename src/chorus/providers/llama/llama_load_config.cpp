@@ -271,7 +271,8 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
              ProviderOptionPresentation::Advanced},
             {"n_ubatch",
              "Micro-Batch Size",
-             "Maximum physical sub-batch size. Must not exceed the batch size.",
+             "Maximum physical sub-batch size, and the most prompt tokens loaded per step while replies stream; "
+             "smaller values stream more smoothly. Must not exceed the batch size.",
              int64_t{d.n_ubatch},
              1,
              int64_t{d.n_batch},

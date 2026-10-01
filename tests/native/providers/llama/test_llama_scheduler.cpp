@@ -316,6 +316,21 @@ TEST(LlamaScheduler, pure_generation_planner_reserves_decode_tokens_before_prefi
     EXPECT_EQ(sequences[2].prompt_cursor, size_t{0});
 }
 
+TEST(LlamaScheduler, pure_generation_planner_prefills_one_micro_batch_per_step_while_a_sequence_streams) {
+    const Chorus::LlamaPlannerSequence streaming{1, Chorus::RequestType::Generate, 4, 10, Chorus::LlamaPlannerPhase::Decode, 0, 0, false};
+    const Chorus::LlamaPlannerSequence arriving{2, Chorus::RequestType::Generate, 4, 20, Chorus::LlamaPlannerPhase::Prefill, 0, 100, false};
+    const auto prefilled = [](const auto& plan) {
+        return std::ranges::count_if(plan->entries, [](const auto& entry) { return !entry.decode; });
+    };
+
+    const auto beside_stream = Chorus::llama_plan_batch({streaming, arriving}, 64, 8, 0, std::nullopt);
+    const auto alone = Chorus::llama_plan_batch({arriving}, 64, 8, 0, std::nullopt);
+
+    ASSERT_TRUE(beside_stream && alone);
+    EXPECT_EQ(prefilled(beside_stream), 8);
+    EXPECT_EQ(prefilled(alone), 64);
+}
+
 TEST(LlamaScheduler, pure_generation_planner_rotates_equal_priority_decoders) {
     const std::vector<Chorus::LlamaPlannerSequence> sequences{
         {1, Chorus::RequestType::Generate, 4, 10, Chorus::LlamaPlannerPhase::Decode, 0, 0, false},

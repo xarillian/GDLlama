@@ -633,7 +633,7 @@ std::vector<LlamaScheduler::Sequence*> LlamaScheduler::ordered_runnable() const 
     return values;
 }
 
-std::optional<LlamaScheduler::BatchPlan> LlamaScheduler::build_plan(int32_t generation_budget, int32_t embedding_budget) const {
+std::optional<LlamaScheduler::BatchPlan> LlamaScheduler::build_plan(int32_t generation_budget, int32_t micro_batch_budget) const {
     std::vector<Chorus::LlamaPlannerSequence> planner_sequences;
     for (const Sequence* sequence : ordered_runnable()) {
         planner_sequences.push_back({
@@ -648,7 +648,7 @@ std::optional<LlamaScheduler::BatchPlan> LlamaScheduler::build_plan(int32_t gene
         });
     }
     const auto planned = Chorus::llama_plan_batch(
-        std::move(planner_sequences), generation_budget, embedding_budget, _decode_fairness_cursor,
+        std::move(planner_sequences), generation_budget, micro_batch_budget, _decode_fairness_cursor,
         _has_contested_type ? std::optional<Chorus::RequestType>{_last_contested_type} : std::nullopt
     );
     if (!planned)

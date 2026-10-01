@@ -42,11 +42,11 @@ struct LlamaPlannedBatch {
 inline std::optional<LlamaPlannedBatch> llama_plan_batch(
     std::vector<LlamaPlannerSequence> sequences,
     int32_t generation_budget,
-    int32_t embedding_budget,
+    int32_t micro_batch_budget,
     uint64_t decode_fairness_cursor,
     std::optional<RequestType> last_contested_type
 ) {
-    if (generation_budget <= 0 || embedding_budget <= 0)
+    if (generation_budget <= 0 || micro_batch_budget <= 0)
         return std::nullopt;
     if (std::ranges::any_of(sequences, &LlamaPlannerSequence::exclusive))
         std::erase_if(sequences, [](const LlamaPlannerSequence& sequence) { return !sequence.exclusive; });
@@ -81,7 +81,7 @@ inline std::optional<LlamaPlannedBatch> llama_plan_batch(
         plan.entries.push_back(entry);
     };
     if (type == RequestType::Embedding) {
-        int32_t remaining = embedding_budget;
+        int32_t remaining = micro_batch_budget;
         for (const auto& sequence : sequences) {
             const int32_t count = static_cast<int32_t>(sequence.prompt_size);
             if (count > remaining)
@@ -113,6 +113,9 @@ inline std::optional<LlamaPlannedBatch> llama_plan_batch(
         plan.decode_fairness = sequence.submission_sequence + 1;
         --remaining;
     }
+    // A step waits for all of its prefill, so capping it keeps streaming text arriving between micro-batches.
+    if (!decoders.empty())
+        remaining = std::min(remaining, micro_batch_budget);
     for (const auto& sequence : sequences) {
         if (remaining == 0 || sequence.phase != LlamaPlannerPhase::Prefill)
             continue;
