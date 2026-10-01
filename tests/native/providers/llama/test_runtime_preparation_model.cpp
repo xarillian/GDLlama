@@ -5,6 +5,7 @@
 #include "support/gtest_utils.hpp"
 #include "support/runtime_test_utils.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
