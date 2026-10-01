@@ -121,8 +121,6 @@ else:
 
     env["LIBPATH"] = lib_paths
 
-    if use_vulkan and sys.platform.startswith("linux"):
-        env.Append(LIBS=["vulkan"])
 
     if sys.platform == "darwin" or env["platform"] == "macos":
         # Apple's libc++ keeps std::stop_token behind its experimental library before LLVM 20.
@@ -306,6 +304,10 @@ if use_metal and env["platform"] == "macos":
 
 if use_vulkan:
     llama_libs.append("ggml-vulkan")
+    if sys.platform.startswith("linux"):
+        # GNU ld with --as-needed drops a shared library that nothing has referenced yet, so the
+        # loader must follow the ggml archive that calls into it.
+        llama_libs.append("vulkan")
 
 llama_build_signature = Value(
     f"revision={llama_revision};patch={llama_patch_identity};variant={llama_variant};platform={env['platform']};arch={env.get('arch', '')}"
