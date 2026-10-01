@@ -5,18 +5,16 @@ import subprocess
 import sys
 
 sys.dont_write_bytecode = True
-from materialize_llama import ROOT, materialize
+from materialize_llama import ROOT, build_directory, materialize
 
 
 def main():
     if not sys.platform.startswith("linux"):
         raise SystemExit("the GNU linker wrap probe is supported on Linux only")
     source, revision, identity = materialize()
-    build_root = ROOT / "bin/vendor-build/llama.cpp" / f"{revision}-{identity}"
-    variants = list(build_root.glob("*/vulkan/src/libllama.a"))
-    if len(variants) != 1:
+    build = build_directory(revision, identity, "linux-x86_64", "vulkan")
+    if not (build / "src/libllama.a").is_file():
         raise SystemExit("build the patched Vulkan test variant first: scons test use_vulkan=yes -j2")
-    build = variants[0].parents[1]
     binary = ROOT / "bin/vendor_upload_probe"
     names = (
         "ggml_backend_buft_alloc_buffer", "ggml_backend_buffer_free", "ggml_backend_event_new",

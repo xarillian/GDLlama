@@ -35,15 +35,6 @@ runs:
       if: runner.os == 'Windows'
       uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
-    # llama.cpp configures its Vulkan shader generator as a nested project; under the Visual Studio
-    # generator that runs inside MSBuild and cannot find the compiler, so CMake builds with Ninja.
-    - name: Build llama.cpp with Ninja (Windows)
-      if: runner.os == 'Windows'
-      shell: bash
-      run: |
-        python -m pip install ninja
-        echo "CMAKE_GENERATOR=Ninja Multi-Config" >> "$GITHUB_ENV"
-
     - name: Install LLVM (macOS)
       if: runner.os == 'macOS'
       shell: bash
@@ -92,7 +83,7 @@ runs:
       with:
         path: |
           bin/vendor/llama.cpp
-          bin/vendor-build/llama.cpp
+          bin/llama-build
         # The build records its absolute paths, which change when the repository is renamed.
         key: llama-${{ github.repository }}-${{ runner.os }}-${{ inputs.backend }}-${{ steps.llama.outputs.revision }}-${{ hashFiles('patches/llama-resource-cleanup.patch', 'tools/materialize_llama.py') }}
 

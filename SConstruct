@@ -5,7 +5,7 @@ import sys
 import subprocess
 from SCons.Script import Alias, ARGUMENTS, CacheDir, COMMAND_LINE_TARGETS, Default, GetOption, Glob, SConscript, Value
 sys.dont_write_bytecode = True
-from tools.materialize_llama import materialize
+from tools.materialize_llama import build_directory, materialize
 from tools.materialize_godot_api import materialize as materialize_godot_api
 
 needs_googletest = any(target in COMMAND_LINE_TARGETS for target in ("test", "compiledb"))
@@ -59,12 +59,11 @@ try:
     llama_source_dir, llama_revision, llama_patch_identity = materialize()
 except (OSError, subprocess.CalledProcessError, RuntimeError) as error:
     raise SystemExit(f">>> [SCons] llama.cpp materialization failed: {error}")
-llama_build_dir = os.path.join(
-    "bin", "vendor-build", "llama.cpp", llama_revision + "-" + llama_patch_identity,
-    llama_build_identity, llama_variant
+llama_build_dir = os.path.relpath(
+    build_directory(llama_revision, llama_patch_identity, llama_build_identity, llama_variant)
 )
 print(f">>> [SCons] llama.cpp source: {llama_source_dir}")
-print(f">>> [SCons] llama.cpp variant: {os.path.abspath(llama_build_dir)}")
+print(f">>> [SCons] llama.cpp {llama_build_identity} {llama_variant} build: {os.path.abspath(llama_build_dir)}")
 
 if host_test:
     env.Append(CPPDEFINES=["CHORUS_HOST_TEST"])

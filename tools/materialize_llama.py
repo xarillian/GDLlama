@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 VENDOR = ROOT / "third-party/llama.cpp"
 PATCH = ROOT / "patches/llama-resource-cleanup.patch"
 OUTPUT = ROOT / "bin/vendor/llama.cpp"
+BUILD_ROOT = ROOT / "bin/llama-build"
 MARKER = ".chorus-source.json"
 
 
@@ -38,6 +39,16 @@ def verify_source_tree(tree, revision, identity):
         "revision": revision, "identity": identity, "files": inventory(tree)
     }:
         raise RuntimeError(f"incompatible generated llama.cpp tree: {tree}; remove this generated directory")
+
+
+def build_directory(revision, identity, platform, variant):
+    """Names a build after a digest of what selects it.
+
+    llama.cpp builds its Vulkan shader generator several directories deep inside the build
+    directory, and Windows compilers cannot open paths longer than 260 characters.
+    """
+    key = hashlib.sha256(f"{revision}-{identity}-{platform}-{variant}".encode()).hexdigest()[:12]
+    return BUILD_ROOT / key
 
 
 def materialize():
