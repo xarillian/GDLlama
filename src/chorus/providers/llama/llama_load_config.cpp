@@ -368,8 +368,9 @@ llama_context_params make_llama_context_params(const LlamaLoadConfig& config, bo
     params.n_ubatch = config.n_ubatch;
     params.pooling_type = config.pooling;
     params.n_outputs_max = serves_embeddings ? 0 : config.max_concurrent_requests;
-    // Chorus never rewinds or reuses cached tokens, so sliding-window layers need only
-    // their window. Prefix reuse would need the full cache back.
+    // Sliding-window layers keep only their window, so their KV barely grows with the context
+    // size. A parked conversation resumes only while that window still reaches back from its
+    // first changed token, which holds when the next turn appends to the history.
     params.swa_full = false;
     params.offload_kqv = config.use_gpu;
     params.op_offload = config.use_gpu;
