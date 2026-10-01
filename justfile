@@ -85,3 +85,12 @@ style:
 # Fail on any clang-tidy finding in first-party code. Needs a prior build for generated headers.
 tidy: compiledb
     python3 tools/clang_tidy.py
+
+# Build the native suite under a sanitizer and run it without model tests: `just sanitize thread` or `just sanitize address`.
+sanitize kind:
+    scons test sanitize={{kind}}
+    CHORUS_SKIP_MODEL_TESTS=1 ./bin/run_tests
+
+# Repeat the concurrency-heavy suites in shuffled order to shake out ordering flakes.
+stress repeat='20':
+    CHORUS_SKIP_MODEL_TESTS=1 ./bin/run_tests --gtest_filter='Runtime*:Echo*:*EngineContract*' --gtest_repeat={{repeat}} --gtest_shuffle

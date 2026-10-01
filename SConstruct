@@ -30,6 +30,11 @@ if missing_submodules:
 use_vulkan = ARGUMENTS.pop("use_vulkan", "no") == "yes"
 use_metal = ARGUMENTS.pop("use_metal", "no") == "yes"
 host_test = ARGUMENTS.pop("host_test", "no") == "yes"
+# ThreadSanitizer cannot run alongside the others; AddressSanitizer and UBSan share a build.
+SANITIZERS = {"thread": "thread", "address": "address,undefined"}
+sanitize = ARGUMENTS.pop("sanitize", "")
+if sanitize and sanitize not in SANITIZERS:
+    raise SystemExit(f">>> [SCons] sanitize must be one of: {', '.join(SANITIZERS)}")
 if not ARGUMENTS.get("custom_api_file"):
     try:
         ARGUMENTS["custom_api_file"] = str(materialize_godot_api())
@@ -199,6 +204,11 @@ def make_test_env(base_env):
         test_env.Append(CFLAGS=["-std=c11"])
     test_env.Append(CPPPATH=["tests/native", "tests/native/support"])
     test_env.Append(CPPPATH=googletest_cpppath)
+    if sanitize:
+        if base_env["platform"] == "windows":
+            raise SystemExit(">>> [SCons] sanitize is supported with GCC and Clang, not MSVC")
+        flag = "-fsanitize=" + SANITIZERS[sanitize]
+        test_env.Append(CCFLAGS=[flag, "-fno-omit-frame-pointer", "-g"], LINKFLAGS=[flag])
     return test_env
 
 def make_chorus_c_build_env(base_env):
