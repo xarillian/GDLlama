@@ -129,7 +129,7 @@ func _on_generation_complete(id: int, _session: StringName, _message_id: int,
     print("Reply: " + content)
 
 
-func _on_generation_error(id: int, _session: String, code: int, message: String) -> void:
+func _on_generation_error(id: int, _session: StringName, code: int, message: String) -> void:
     if id != request_id:
         return
     request_id = -1

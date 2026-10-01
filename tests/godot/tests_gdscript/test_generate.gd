@@ -154,10 +154,21 @@ static func run_tests(parent: Node) -> void:
 		var import_history: Dictionary = methods.filter(func(method): return method.name == &"import_conversation_history")[0]
 		var export_history: Dictionary = methods.filter(func(method): return method.name == &"export_conversation_history")[0]
 		var inject: Dictionary = ClassDB.class_get_property_list("ChorusRequest").filter(func(property): return property.name == &"inject")[0]
-		var completion: Dictionary = ClassDB.class_get_signal_list("GodotChorus").filter(func(item): return item.name == &"generation_complete")[0]
 		TestReport.check(generate_batch.args[0].hint_string == "ChorusRequest" and generate_batch["return"].hint_string == "ChorusSubmitResult", "expected typed generation batch metadata")
 		TestReport.check(import_history.args[1].hint_string == "ChorusMessage" and export_history["return"].hint_string == "ChorusMessage" and inject.hint_string == "ChorusInjectedMessage", "expected typed history and injection metadata")
-		TestReport.check(completion.args[1].type == TYPE_STRING_NAME, "expected StringName generation completion session metadata")
+	)
+
+	await TestReport.run("every session crosses the GodotChorus API as a StringName", func():
+		var methods := ClassDB.class_get_method_list("GodotChorus")
+		var checked := 0
+		for member in ClassDB.class_get_signal_list("GodotChorus") + methods:
+			for argument in member.args:
+				if argument.name == "session":
+					checked += 1
+					TestReport.check(argument.type == TYPE_STRING_NAME, "expected StringName session in %s" % member.name)
+		TestReport.check(checked > 0, "expected session arguments to check")
+		var conversations: Dictionary = methods.filter(func(method): return method.name == &"list_conversations")[0]
+		TestReport.check(conversations["return"].hint_string == "StringName", "expected StringName conversation names")
 	)
 
 	await TestReport.run("typed session and embedding signals carry identity", func():
@@ -318,9 +329,7 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(counted.request == null and not chorus.supports_message_token_counting(), "count source is null and capability is honest")
 		var methods := ClassDB.class_get_method_list("GodotChorus")
 		var render: Dictionary = methods.filter(func(method): return method.name == &"render_prompt")[0]
-		var signal_info: Dictionary = ClassDB.class_get_signal_list("GodotChorus").filter(func(item): return item.name == &"prompt_rendered")[0]
 		TestReport.check(render["return"].class_name == &"ChorusSubmitResult", "preview returns admission metadata")
-		TestReport.check(signal_info.args[1].type == TYPE_STRING_NAME, "preview session metadata is StringName")
 		TestReport.check(not ClassDB.class_exists("ChorusRenderResult"), "obsolete synchronous result is removed")
 	)
 

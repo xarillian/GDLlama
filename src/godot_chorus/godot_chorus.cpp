@@ -236,7 +236,7 @@ void GodotChorus::drain_logs() {
             to_godot_string(record.message),
             fields,
             record.request_id.value_or(-1),
-            record.session_id ? to_godot_string(*record.session_id) : String(),
+            record.session_id ? StringName(to_godot_string(*record.session_id)) : StringName(),
             produced_at
         );
     }
@@ -245,8 +245,7 @@ void GodotChorus::drain_logs() {
 void GodotChorus::_process(double /*delta*/) {
     drain_logs();
     for (const auto& event : _runtime.poll()) {
-        const StringName session_name = event.session_id ? StringName(to_godot_string(*event.session_id)) : StringName();
-        const String session = String(session_name);
+        const StringName session = event.session_id ? StringName(to_godot_string(*event.session_id)) : StringName();
         switch (event.kind) {
         case Chorus::RuntimeEvent::Kind::StreamedToken:
             emit_signal("token_generated", event.request_id, session, to_godot_string(event.text));
@@ -259,14 +258,14 @@ void GodotChorus::_process(double /*delta*/) {
             omitted.resize(static_cast<int64_t>(event.omitted_message_ids.size()));
             for (int64_t i = 0; i < omitted.size(); ++i)
                 omitted.set(i, event.omitted_message_ids[static_cast<size_t>(i)]);
-            emit_signal("history_truncated", event.request_id, session_name, omitted);
+            emit_signal("history_truncated", event.request_id, session, omitted);
             break;
         }
         case Chorus::RuntimeEvent::Kind::PromptRendered: {
             PackedInt64Array omitted;
             for (auto id : event.omitted_message_ids)
                 omitted.push_back(id);
-            emit_signal("prompt_rendered", event.request_id, session_name, to_godot_string(event.text), omitted);
+            emit_signal("prompt_rendered", event.request_id, session, to_godot_string(event.text), omitted);
             break;
         }
         case Chorus::RuntimeEvent::Kind::MessageTokenCount:
@@ -276,7 +275,7 @@ void GodotChorus::_process(double /*delta*/) {
             emit_signal(
                 "generation_complete",
                 event.request_id,
-                session_name,
+                session,
                 event.message_id.value_or(-1),
                 to_godot_string(event.text),
                 to_godot_string(event.reasoning)
@@ -287,7 +286,7 @@ void GodotChorus::_process(double /*delta*/) {
             values.resize(static_cast<int64_t>(event.embedding.size()));
             for (int64_t i = 0; i < values.size(); ++i)
                 values.set(i, event.embedding[static_cast<size_t>(i)]);
-            emit_signal("embedding_complete", event.request_id, session_name, values);
+            emit_signal("embedding_complete", event.request_id, session, values);
             break;
         }
         case Chorus::RuntimeEvent::Kind::Error:
@@ -464,8 +463,8 @@ bool GodotChorus::is_request_active(int64_t request_id) const {
     return _runtime.is_request_active(request_id);
 }
 
-int64_t GodotChorus::active_request_for_session(const String& session) const {
-    auto active = _runtime.active_request_for_session(std::string(session.utf8().get_data()));
+int64_t GodotChorus::active_request_for_session(const StringName& session) const {
+    auto active = _runtime.active_request_for_session(std::string(String(session).utf8().get_data()));
     return active.has_value() ? *active : -1;
 }
 
@@ -515,10 +514,10 @@ Ref<ChorusResult> GodotChorus::edit_message(const StringName& session, int64_t m
     return operation_result(_runtime.edit_message(std::string(String(session).utf8().get_data()), message_id, Chorus::MessageContent::text(std::string(content.utf8().get_data()))));
 }
 
-PackedStringArray GodotChorus::list_conversations() const {
-    PackedStringArray out;
+TypedArray<StringName> GodotChorus::list_conversations() const {
+    TypedArray<StringName> out;
     for (const auto& session : _runtime.list_conversations())
-        out.push_back(to_godot_string(session));
+        out.push_back(StringName(to_godot_string(session)));
     return out;
 }
 
@@ -526,8 +525,8 @@ Ref<ChorusResult> GodotChorus::reset_context() {
     return operation_result(_runtime.reset_context());
 }
 
-GodotChorus::TurnOutcomeCode GodotChorus::last_turn_outcome(const String& session) const {
-    return static_cast<TurnOutcomeCode>(to_godot(_runtime.last_turn_outcome(std::string(session.utf8().get_data()))));
+GodotChorus::TurnOutcomeCode GodotChorus::last_turn_outcome(const StringName& session) const {
+    return static_cast<TurnOutcomeCode>(to_godot(_runtime.last_turn_outcome(std::string(String(session).utf8().get_data()))));
 }
 
 Ref<ChorusSubmitResult> GodotChorus::render_prompt(const Ref<ChorusRequest>& request) {
@@ -723,13 +722,13 @@ void GodotChorus::_bind_methods() {
     ADD_SIGNAL(MethodInfo(
         "token_generated",
         PropertyInfo(Variant::INT, "request_id"),
-        PropertyInfo(Variant::STRING, "session"),
+        PropertyInfo(Variant::STRING_NAME, "session"),
         PropertyInfo(Variant::STRING, "token")
     ));
     ADD_SIGNAL(MethodInfo(
         "reasoning_token_generated",
         PropertyInfo(Variant::INT, "request_id"),
-        PropertyInfo(Variant::STRING, "session"),
+        PropertyInfo(Variant::STRING_NAME, "session"),
         PropertyInfo(Variant::STRING, "token")
     ));
     ADD_SIGNAL(MethodInfo(
@@ -755,7 +754,7 @@ void GodotChorus::_bind_methods() {
     ADD_SIGNAL(MethodInfo(
         "generation_error",
         PropertyInfo(Variant::INT, "request_id"),
-        PropertyInfo(Variant::STRING, "session"),
+        PropertyInfo(Variant::STRING_NAME, "session"),
         PropertyInfo(Variant::INT, "error_code"),
         PropertyInfo(Variant::STRING, "message")
     ));
@@ -771,7 +770,7 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::STRING, "message"),
         PropertyInfo(Variant::DICTIONARY, "fields"),
         PropertyInfo(Variant::INT, "request_id"),
-        PropertyInfo(Variant::STRING, "session"),
+        PropertyInfo(Variant::STRING_NAME, "session"),
         PropertyInfo(Variant::FLOAT, "produced_at")
     ));
 

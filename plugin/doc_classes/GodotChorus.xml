@@ -91,7 +91,7 @@ func _on_generation_error(_request_id, _session, _error, message):
 		</method>
 		<method name="active_request_for_session" qualifiers="const">
 			<return type="int" />
-			<param index="0" name="session" type="String" />
+			<param index="0" name="session" type="StringName" />
 			<description>Returns the request ID occupying the session, or [code]-1[/code] if none. Prompt previews and token counts do not occupy sessions.</description>
 		</method>
 		<method name="import_conversation_history">
@@ -118,7 +118,7 @@ func _on_generation_error(_request_id, _session, _error, message):
 			<description>Changes the content of an existing message while preserving its identity and role. An unknown session or message returns [constant GodotChorus.ERR_INVALID_REQUEST]; an occupied session returns [constant GodotChorus.ERR_SESSION_BUSY].</description>
 		</method>
 		<method name="list_conversations" qualifiers="const">
-			<return type="PackedStringArray" />
+			<return type="StringName[]" />
 			<description>Returns stored session names, including sessions with imported empty history. The order is unspecified.</description>
 		</method>
 		<method name="reset_context">
@@ -127,7 +127,7 @@ func _on_generation_error(_request_id, _session, _error, message):
 		</method>
 		<method name="last_turn_outcome" qualifiers="const">
 			<return type="int" enum="GodotChorus.TurnOutcomeCode" />
-			<param index="0" name="session" type="String" />
+			<param index="0" name="session" type="StringName" />
 			<description>Returns the most recently recorded generation outcome for the session. Unknown sessions and sessions without a recorded turn return [constant GodotChorus.TURN_NONE].</description>
 		</method>
 		<method name="render_prompt">
@@ -194,13 +194,13 @@ func _on_generation_error(_request_id, _session, _error, message):
 		</signal>
 		<signal name="token_generated">
 			<param index="0" name="request_id" type="int" />
-			<param index="1" name="session" type="String" />
+			<param index="1" name="session" type="StringName" />
 			<param index="2" name="token" type="String" />
 			<description>Incremental visible text for a streaming generation request. A chunk need not correspond to one model token. The session is empty for stateless work. The final completion includes the full visible text.</description>
 		</signal>
 		<signal name="reasoning_token_generated">
 			<param index="0" name="request_id" type="int" />
-			<param index="1" name="session" type="String" />
+			<param index="1" name="session" type="StringName" />
 			<param index="2" name="token" type="String" />
 			<description>Incremental reasoning text, separate from visible content, for a streaming request with reasoning exposure enabled. The final completion includes the full exposed reasoning.</description>
 		</signal>
@@ -226,7 +226,7 @@ func _on_generation_error(_request_id, _session, _error, message):
 		</signal>
 		<signal name="generation_error">
 			<param index="0" name="request_id" type="int" />
-			<param index="1" name="session" type="String" />
+			<param index="1" name="session" type="StringName" />
 			<param index="2" name="error_code" type="int" />
 			<param index="3" name="message" type="String" />
 			<description>Terminal failure of an accepted generation, embedding, preview or token-count request. The error code uses [enum GodotChorus.ErrorCode], including cancellation. Immediate admission rejections do not emit this signal.</description>
@@ -241,7 +241,7 @@ func _on_generation_error(_request_id, _session, _error, message):
 			<param index="1" name="message" type="String" />
 			<param index="2" name="fields" type="Dictionary" />
 			<param index="3" name="request_id" type="int" />
-			<param index="4" name="session" type="String" />
+			<param index="4" name="session" type="StringName" />
 			<param index="5" name="produced_at" type="float" />
 			<description>Delivers one structured diagnostic on the host thread. The level uses [enum GodotChorus.LogLevelCode]; fields contain provider-supplied typed values. The request ID is [code]-1[/code] and the session is empty for unowned records. The timestamp is production time in Unix seconds, not delivery time. Logs and inference events use separate queues and have no cross-queue ordering guarantee.</description>
 		</signal>

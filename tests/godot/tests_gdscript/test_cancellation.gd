@@ -16,7 +16,7 @@ static func run_tests(parent: Node) -> void:
 			if completed_id == terminal.request_id:
 				terminal["kind"] = "complete"
 		)
-		chorus.generation_error.connect(func(errored_id: int, _session: String, error_code: int, _message: String):
+		chorus.generation_error.connect(func(errored_id: int, _session: StringName, error_code: int, _message: String):
 			if errored_id == terminal.request_id:
 				terminal["kind"] = "error"
 				terminal["error"] = error_code

@@ -128,7 +128,7 @@ class GodotChorus : public godot::Node {
      *  - `int64_t`: the non-negative active request ID.
      *  - `-1`: the session is unknown or has no active request.
      */
-    int64_t active_request_for_session(const godot::String& session) const;
+    int64_t active_request_for_session(const godot::StringName& session) const;
 
     godot::Ref<ChorusResult>
     import_conversation_history(const godot::StringName& session, const godot::TypedArray<ChorusMessage>& history);
@@ -136,7 +136,7 @@ class GodotChorus : public godot::Node {
     godot::Ref<ChorusResult> clear_conversation_history(const godot::StringName& session);
     godot::Ref<ChorusResult>
     edit_message(const godot::StringName& session, int64_t message_id, const godot::String& content);
-    godot::PackedStringArray list_conversations() const;
+    godot::TypedArray<godot::StringName> list_conversations() const;
 
     /*
      * Clears every conversation.
@@ -144,7 +144,7 @@ class GodotChorus : public godot::Node {
      * Returns a `ChorusResult` with the runtime diagnostic, if any.
      */
     godot::Ref<ChorusResult> reset_context();
-    TurnOutcomeCode last_turn_outcome(const godot::String& session) const;
+    TurnOutcomeCode last_turn_outcome(const godot::StringName& session) const;
     godot::Ref<ChorusSubmitResult> render_prompt(const godot::Ref<ChorusRequest>& request);
     godot::Ref<ChorusSubmitResult> count_message_tokens(const godot::String& content);
 
