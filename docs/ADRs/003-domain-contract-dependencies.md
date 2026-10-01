@@ -27,6 +27,7 @@ Positive:
 - Providers and hosts can change independently.
 - Core and runtime behavior can be built and tested without host or vendor dependencies.
 - Adding a provider extends one catalog instead of spreading provider checks through consumers.
+- A host adapter can run the runtime in a separate process when a deployment needs fault isolation, as server runtimes such as llama-server and vLLM do, without changing the inner layers.
 
 Negative:
 
@@ -43,6 +44,7 @@ Negative:
 
 ## Notes
 
-- Version: 1.0
+- Version: 1.01
 - Changelog:
+  - 1.01: Recorded out-of-process hosting as a consequence.
   - 1.0: Initial accepted record
