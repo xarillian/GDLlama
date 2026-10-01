@@ -1,0 +1,8 @@
+---
+InheritParentConfig: true
+
+# GDCLASS expands to an if/else chain, and godot-cpp binds _get, _set and _notification by
+# hiding the base class's methods of the same name.
+Checks: >
+  -readability-else-after-return,
+  -bugprone-derived-method-shadowing-base-method

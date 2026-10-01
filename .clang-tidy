@@ -1,7 +1,10 @@
 ---
 # Only lint our own code, not external dependencies.
-HeaderFilterRegex: '^.*(include|src)/.*\.(hpp|cpp)$'
+HeaderFilterRegex: '^.*(include|src)/.*\.(hpp|cpp|h)$'
+ExcludeHeaderFilterRegex: '(third-party|bin)/'
 
+# RequestRejection carries a std::string message, so copying one can allocate. Chorus does not
+# treat running out of memory while throwing as recoverable.
 Checks: >
   bugprone-*,
   modernize-use-nullptr,
@@ -23,8 +26,13 @@ Checks: >
   -bugprone-easily-swappable-parameters,
   -bugprone-exception-escape,
   -bugprone-macro-parentheses,
+  -bugprone-exception-copy-constructor-throws,
 
-# Treat no warnings as errors for now — useful to turn on later for CI.
-WarningsAsErrors: ''
+WarningsAsErrors: '*'
 
 FormatStyle: file
+
+# value() asserts that an optional holds and throws when it does not; only unchecked
+# dereferences, which are undefined when empty, are reported.
+CheckOptions:
+  bugprone-unchecked-optional-access.IgnoreValueCalls: true

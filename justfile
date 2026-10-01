@@ -81,3 +81,7 @@ format:
 # Fail if any first-party C++ file is unformatted, without changing it.
 style:
     git ls-files -- '*.cpp' '*.hpp' '*.h' ':!:third-party' | xargs tools/clang-format --dry-run --Werror
+
+# Fail on any clang-tidy finding in first-party code. Needs a prior build for generated headers.
+tidy: compiledb
+    python3 tools/clang_tidy.py
