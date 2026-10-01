@@ -125,6 +125,8 @@ else:
         env.Append(LIBS=["vulkan"])
 
     if sys.platform == "darwin" or env["platform"] == "macos":
+        # Apple's libc++ keeps std::stop_token behind its experimental library before LLVM 20.
+        env.Append(CXXFLAGS=["-fexperimental-library"], LINKFLAGS=["-fexperimental-library"])
         env.Append(LINKFLAGS=[
             "-framework", "Accelerate",
             "-framework", "Foundation",
