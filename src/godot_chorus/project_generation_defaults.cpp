@@ -22,12 +22,6 @@
 #include <string_view>
 #include <system_error>
 #include <variant>
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
@@ -37,6 +31,17 @@
 
 #include "godot_chorus/option_conversion.hpp"
 #include "host_settings/generation_defaults_codec.hpp"
+
+// After godot-cpp: Windows headers define macros that collide with Godot's generated names.
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 using namespace godot;
 namespace godot_chorus {
