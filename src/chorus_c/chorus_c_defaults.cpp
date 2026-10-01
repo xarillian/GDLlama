@@ -35,6 +35,11 @@ namespace {
 
 namespace fs = std::filesystem;
 
+// The C ABI takes UTF-8 paths; a narrow fs::path would read them in Windows' ANSI code page.
+fs::path utf8_path(std::string_view text) {
+    return fs::path(std::u8string(text.begin(), text.end()));
+}
+
 enum class FileState { Missing, Present, Error };
 
 struct FileRead {
@@ -308,7 +313,7 @@ chorus_error chorus_generation_defaults_load_file(chorus_runtime* rt, const char
     if (!path || !*path)
         return invalid_request(rt, "A nonempty settings path is required.");
     try {
-        return load_defaults_file(rt, fs::path(path));
+        return load_defaults_file(rt, utf8_path(path));
     } catch (const std::exception& error) {
         return unknown_exception(rt, error.what());
     } catch (...) {
@@ -359,7 +364,7 @@ chorus_error chorus_generation_defaults_save_file(chorus_runtime* rt, const char
     if (!path || !*path)
         return invalid_request(rt, "A nonempty settings path is required.");
     try {
-        return save_defaults_file(rt, fs::path(path));
+        return save_defaults_file(rt, utf8_path(path));
     } catch (const std::exception& error) {
         return unknown_exception(rt, error.what());
     } catch (...) {

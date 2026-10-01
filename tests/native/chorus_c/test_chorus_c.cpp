@@ -588,6 +588,11 @@ void write_bytes(const std::filesystem::path& path, const std::string& bytes) {
     output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
 }
 
+std::string utf8(const std::filesystem::path& path) {
+    const auto text = path.u8string();
+    return {text.begin(), text.end()};
+}
+
 std::filesystem::path disposable_dir() {
     static std::atomic<unsigned> next{0};
     auto path = std::filesystem::path("_project/verification/adr-compliance-2026-09-25/adr-007") /
@@ -614,7 +619,7 @@ TEST(ChorusC, Defaults_content_file_and_two_runtimes_preserve_presence_and_prior
     const std::string content =
         R"({"version":1,"generation":{"max_tokens":0,"stop":[],"show_thinking":false,"provider_options":{"llama":{"logit_bias":{}}}}})";
     write_bytes(path, content);
-    ASSERT_EQ(chorus_generation_defaults_load_file(first.get(), path.c_str()), CHORUS_OK);
+    ASSERT_EQ(chorus_generation_defaults_load_file(first.get(), utf8(path).c_str()), CHORUS_OK);
     ASSERT_EQ(chorus_generation_defaults_apply_json(second.get(), content.data(), content.size()), CHORUS_OK);
     EXPECT_EQ(defaults_json(first.get()), defaults_json(second.get()));
     EXPECT_NE(defaults_json(first.get()).find("\"logit_bias\":{}"), std::string::npos);
@@ -646,17 +651,17 @@ TEST(ChorusC, Defaults_validation_failure_does_not_replace_runtime_or_destinatio
     const auto invalid = directory / "invalid.json";
     const std::string bad = R"({"version":1,"generation":{"max_tokens":1,"max_tokens":2}})";
     write_bytes(invalid, bad);
-    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), invalid.c_str()), CHORUS_ERR_INVALID_REQUEST);
+    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), utf8(invalid).c_str()), CHORUS_ERR_INVALID_REQUEST);
     EXPECT_FALSE(std::string(chorus_last_error_message(runtime.get())).empty());
-    EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), invalid.c_str()), CHORUS_ERR_INVALID_REQUEST);
+    EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), utf8(invalid).c_str()), CHORUS_ERR_INVALID_REQUEST);
     EXPECT_EQ(read_bytes(invalid), bad);
 #if !defined(_WIN32)
     const auto unreadable = directory / "unreadable.json";
     write_bytes(unreadable, selected);
     std::filesystem::permissions(unreadable, std::filesystem::perms::none);
     if (!std::ifstream(unreadable)) {
-        EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), unreadable.c_str()), CHORUS_ERR_UNKNOWN);
-        EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), unreadable.c_str()), CHORUS_ERR_UNKNOWN);
+        EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), utf8(unreadable).c_str()), CHORUS_ERR_UNKNOWN);
+        EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), utf8(unreadable).c_str()), CHORUS_ERR_UNKNOWN);
     }
     std::filesystem::permissions(unreadable, std::filesystem::perms::owner_all);
     EXPECT_EQ(read_bytes(unreadable), selected);
@@ -671,8 +676,8 @@ TEST(ChorusC, Defaults_validation_failure_does_not_replace_runtime_or_destinatio
         EXPECT_EQ(defaults_json(runtime.get()), selected);
     }
     EXPECT_EQ(chorus_generation_defaults_apply_json(runtime.get(), "", 0), CHORUS_ERR_INVALID_REQUEST);
-    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), directory.c_str()), CHORUS_ERR_UNKNOWN);
-    EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), directory.c_str()), CHORUS_ERR_UNKNOWN);
+    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), utf8(directory).c_str()), CHORUS_ERR_UNKNOWN);
+    EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), utf8(directory).c_str()), CHORUS_ERR_UNKNOWN);
     EXPECT_EQ(generate_echo(runtime.get(), request.get()).text, "");
     EXPECT_EQ(defaults_json(runtime.get()), selected);
     EXPECT_STREQ(chorus_last_error_message(runtime.get()), "");
@@ -685,27 +690,34 @@ TEST(ChorusC, Defaults_validation_failure_does_not_replace_runtime_or_destinatio
     EXPECT_EQ(output, nullptr);
 }
 
+TEST(ChorusC, Defaults_file_paths_are_read_as_utf8) {
+    RuntimePtr runtime(chorus_runtime_new());
+    const auto selected = disposable_dir() / std::filesystem::path(u8"r\u00e9glages.json");
+    ASSERT_EQ(chorus_generation_defaults_save_file(runtime.get(), utf8(selected).c_str()), CHORUS_OK);
+    EXPECT_TRUE(std::filesystem::exists(selected));
+}
+
 TEST(ChorusC, Defaults_missing_file_creation_and_explicit_save_do_not_write_on_apply) {
     RuntimePtr runtime(chorus_runtime_new());
     const auto directory = disposable_dir();
     const auto selected = directory / "nested" / "missing.json";
-    ASSERT_EQ(chorus_generation_defaults_load_file(runtime.get(), selected.c_str()), CHORUS_OK);
+    ASSERT_EQ(chorus_generation_defaults_load_file(runtime.get(), utf8(selected).c_str()), CHORUS_OK);
     EXPECT_EQ(read_bytes(selected), R"({"version":1,"generation":{}})");
     EXPECT_EQ(defaults_json(runtime.get()), read_bytes(selected));
     const std::string content =
         R"({"version":1,"generation":{"max_tokens":0,"seed":18446744073709551615,"constraint":{"kind":"unconstrained"},"chat_template":""}})";
     ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), content.data(), content.size()), CHORUS_OK);
     EXPECT_EQ(read_bytes(selected), R"({"version":1,"generation":{}})");
-    ASSERT_EQ(chorus_generation_defaults_save_file(runtime.get(), selected.c_str()), CHORUS_OK);
+    ASSERT_EQ(chorus_generation_defaults_save_file(runtime.get(), utf8(selected).c_str()), CHORUS_OK);
     EXPECT_EQ(read_bytes(selected), defaults_json(runtime.get()));
     const auto other = directory / "new.json";
-    ASSERT_EQ(chorus_generation_defaults_save_file(runtime.get(), other.c_str()), CHORUS_OK);
+    ASSERT_EQ(chorus_generation_defaults_save_file(runtime.get(), utf8(other).c_str()), CHORUS_OK);
     EXPECT_EQ(read_bytes(other), read_bytes(selected));
-    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), other.c_str()), CHORUS_OK);
+    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), utf8(other).c_str()), CHORUS_OK);
     const auto cannot_create = directory / "blocker" / "child.json";
     write_bytes(directory / "blocker", "unchanged");
-    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), cannot_create.c_str()), CHORUS_ERR_UNKNOWN);
-    EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), cannot_create.c_str()), CHORUS_ERR_UNKNOWN);
+    EXPECT_EQ(chorus_generation_defaults_load_file(runtime.get(), utf8(cannot_create).c_str()), CHORUS_ERR_UNKNOWN);
+    EXPECT_EQ(chorus_generation_defaults_save_file(runtime.get(), utf8(cannot_create).c_str()), CHORUS_ERR_UNKNOWN);
     EXPECT_EQ(read_bytes(directory / "blocker"), "unchanged");
     EXPECT_EQ(defaults_json(runtime.get()), read_bytes(other));
 }
@@ -725,7 +737,7 @@ TEST(ChorusC, Defaults_concurrent_missing_file_selection_adopts_one_complete_doc
             ready.fetch_add(1);
             while (!start.load())
                 std::this_thread::yield();
-            errors[i] = chorus_generation_defaults_load_file(runtime.get(), selected.c_str());
+            errors[i] = chorus_generation_defaults_load_file(runtime.get(), utf8(selected).c_str());
             if (errors[i] != CHORUS_OK)
                 diagnostics[i] = chorus_last_error_message(runtime.get());
             if (errors[i] == CHORUS_OK) {

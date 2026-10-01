@@ -188,7 +188,7 @@ CHORUS_API void chorus_runtime_free(chorus_runtime* rt);
 CHORUS_API const char* chorus_last_error_message(const chorus_runtime* rt);
 
 /*
- * Loads the selected path into this runtime only. A missing path gets a valid
+ * Loads the selected UTF-8 path into this runtime only. A missing path gets a valid
  * empty document; a malformed or unreadable existing file is not overwritten.
  * Failure leaves this runtime's previous choices intact. No source is remembered.
  */
@@ -198,7 +198,7 @@ CHORUS_API chorus_error chorus_generation_defaults_apply_json(chorus_runtime* rt
 /* Exports current choices, including content-applied choices. Free *out_json with chorus_string_free. */
 CHORUS_API chorus_error chorus_generation_defaults_export_json(const chorus_runtime* rt, char** out_json);
 /*
- * Explicitly saves this runtime's choices to the selected path, not a remembered
+ * Explicitly saves this runtime's choices to the selected UTF-8 path, not a remembered
  * source. Existing malformed or unreadable destinations are never replaced.
  * No runtime update automatically writes a file.
  * All four operations return CHORUS_ERR_INVALID_REQUEST for invalid arguments
