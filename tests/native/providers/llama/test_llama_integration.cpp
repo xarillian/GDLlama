@@ -214,7 +214,7 @@ TEST_F(LlamaGpuModelTest, Llama_GPU_placement_uses_Vulkan_compute_buffer) {
     ASSERT_TRUE(!engine.initialize(config, log_capture.logger(), {}).has_value());
     engine.shutdown();
 
-    ASSERT_TRUE(contains_vulkan_compute_buffer_log(log_capture.text()));
+    ASSERT_TRUE(contains_vulkan_compute_buffer_log(log_capture.text())) << log_capture.text();
 }
 
 TEST_F(LlamaIntegrationModelTest, Llama_batch_controls_create_context_and_generate_four_tokens) {
