@@ -182,8 +182,6 @@ jobs:
         run: sudo sysctl vm.mmap_rnd_bits=28
       - name: Sanitized native tests
         run: just sanitize ${{ matrix.kind }}
-      - name: Concurrency suites, repeated and shuffled
-        run: just stress 20
 
   release:
     name: release (${{ matrix.os }})

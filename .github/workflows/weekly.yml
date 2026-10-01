@@ -1,4 +1,4 @@
-name: Weekly compatibility
+name: Weekly
 
 on:
   schedule:
@@ -16,3 +16,6 @@ jobs:
     needs: llama
     if: ${{ !cancelled() }}
     uses: ./.github/workflows/godot-compatibility.yml
+
+  stress:
+    uses: ./.github/workflows/stress.yml
