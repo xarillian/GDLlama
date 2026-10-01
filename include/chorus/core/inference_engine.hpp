@@ -11,8 +11,8 @@ namespace Chorus {
 /*
  * Provider-owned preparation, independent of host-confined engine methods.
  *
- * One consumer thread may validate, render and count concurrently with inference
- * and host control. Shutdown fences these operations before releasing resources;
+ * Several consumer threads may validate, render and count concurrently with one
+ * another, with inference and with host control, so implementations must be thread-safe. Shutdown fences these operations before releasing resources;
  * retained handles reject with `Chorus::ChorusError::EngineNotReady` afterward.
  * Operations never invoke host callbacks. Expected failures are returned, while
  * unexpected exceptions are handled by the consumer's worker failure boundary.

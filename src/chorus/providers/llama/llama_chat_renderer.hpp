@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -26,7 +27,8 @@ struct LlamaPreparedChat {
  *
  * Runtime fitting renders every chat request before the provider prepares it, so each
  * render is remembered until the matching request takes it. Parsed override templates
- * are kept between requests. All methods are thread-safe.
+ * are kept between requests. All methods are thread-safe, and concurrent renders run
+ * in parallel on separate template instances.
  */
 class LlamaChatRenderer {
   public:
@@ -63,17 +65,29 @@ class LlamaChatRenderer {
         std::optional<bool> enable_thinking;
     };
 
-    std::variant<LlamaPreparedChat, RequestRejection> render_locked(
+    struct TemplateSet {
+        using Override = std::pair<std::string, common_chat_templates_ptr>;
+        common_chat_templates_ptr model_default;
+        std::deque<Override> overrides;
+    };
+
+    std::variant<LlamaPreparedChat, RequestRejection> render_borrowed(
         const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override,
         std::optional<bool> enable_thinking
     ) const;
-    std::variant<const common_chat_templates*, RequestRejection> templates_for(const std::optional<std::string>& source) const;
+    std::variant<LlamaPreparedChat, RequestRejection> render_with(
+        TemplateSet& templates, const std::vector<ChatMessage>& messages,
+        const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
+    ) const;
+    std::variant<const common_chat_templates*, RequestRejection>
+    templates_for(TemplateSet& templates, const std::optional<std::string>& source) const;
 
     const llama_model* _model;
-    common_chat_templates_ptr _model_default_templates;
-    // Rendering is slow; submission must not wait behind another request's render to take its own.
-    mutable std::mutex _render_mutex;
-    mutable std::deque<std::pair<std::string, common_chat_templates_ptr>> _override_templates;
+    bool _has_model_default;
+    // llama.cpp does not guarantee that one parsed template can be applied concurrently,
+    // so each render borrows a set of its own; sets grow to the peak number of renderers.
+    mutable std::mutex _sets_mutex;
+    mutable std::vector<std::unique_ptr<TemplateSet>> _idle_sets;
     mutable std::mutex _memo_mutex;
     mutable std::deque<std::pair<Key, LlamaPreparedChat>> _remembered;
 };

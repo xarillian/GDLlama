@@ -36,8 +36,8 @@ load_llama_chat_template(const llama_model* model, const std::string& template_s
 /*
  * Renders messages through an explicit or model-provided llama.cpp chat template.
  *
- * Calls sharing the same model or template instances must be serialized because
- * llama.cpp does not guarantee thread-safe template initialization or application.
+ * Calls sharing template instances must be serialized because llama.cpp does not
+ * guarantee that one parsed template can be applied concurrently.
  * llama.cpp template failures are returned as `Chorus::RequestRejection`.
  *
  * Returns:

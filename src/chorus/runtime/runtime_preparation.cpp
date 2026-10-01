@@ -14,13 +14,17 @@ void check_cancelled(const std::atomic<bool>& cancelled) {
 
 int64_t ChorusRuntime::PreparationState::count_text(const std::string& text) {
     const size_t hash = std::hash<std::string>{}(text);
-    auto found = std::find_if(content_counts.begin(), content_counts.end(), [&](const auto& entry) {
-        return entry.hash == hash && entry.text == text;
-    });
-    if (found != content_counts.end()) {
-        const int64_t count = found->count;
-        content_counts.splice(content_counts.begin(), content_counts, found);
-        return count;
+    const auto find = [&] {
+        return std::find_if(content_counts.begin(), content_counts.end(), [&](const auto& entry) {
+            return entry.hash == hash && entry.text == text;
+        });
+    };
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        if (auto found = find(); found != content_counts.end()) {
+            content_counts.splice(content_counts.begin(), content_counts, found);
+            return found->count;
+        }
     }
     auto result = service->count_message_tokens(text);
     if (auto* failure = std::get_if<RequestRejection>(&result))
@@ -29,21 +33,27 @@ int64_t ChorusRuntime::PreparationState::count_text(const std::string& text) {
     if (count < 0)
         throw RequestRejection{ChorusError::Tokenize, "Provider returned a negative message token count."};
     if (text.size() <= kContentCountCacheBytes) {
-        while (!content_counts.empty() && (content_counts.size() >= kContentCountCacheEntries ||
-               content_bytes > kContentCountCacheBytes - text.size())) {
-            content_bytes -= content_counts.back().text.size();
-            content_counts.pop_back();
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        if (find() == content_counts.end()) {
+            while (!content_counts.empty() && (content_counts.size() >= kContentCountCacheEntries ||
+                   content_bytes > kContentCountCacheBytes - text.size())) {
+                content_bytes -= content_counts.back().text.size();
+                content_counts.pop_back();
+            }
+            content_counts.push_front({hash, text, count});
+            content_bytes += text.size();
         }
-        content_counts.push_front({hash, text, count});
-        content_bytes += text.size();
     }
     return count;
 }
 
 int64_t ChorusRuntime::PreparationState::count_node(const MessageNodePtr& node) {
-    if (auto found = node_counts.find(node->identity); found != node_counts.end()) {
-        node_lru.splice(node_lru.begin(), node_lru, found->second.position);
-        return found->second.count;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        if (auto found = node_counts.find(node->identity); found != node_counts.end()) {
+            node_lru.splice(node_lru.begin(), node_lru, found->second.position);
+            return found->second.count;
+        }
     }
     auto text = joined_text(node->value.message.content);
     if (!text)
@@ -55,20 +65,59 @@ int64_t ChorusRuntime::PreparationState::count_node(const MessageNodePtr& node) 
     const auto count = std::get<int64_t>(result);
     if (count < 0)
         throw RequestRejection{ChorusError::Tokenize, "Provider returned a negative message token count."};
-    if (node_counts.size() >= kMessageCountCacheEntries) {
-        node_counts.erase(node_lru.back());
-        node_lru.pop_back();
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    if (!node_counts.contains(node->identity)) {
+        if (node_counts.size() >= kMessageCountCacheEntries) {
+            node_counts.erase(node_lru.back());
+            node_lru.pop_back();
+        }
+        node_lru.push_front(node->identity);
+        node_counts.emplace(node->identity, NodeCount{count, node_lru.begin()});
     }
-    node_lru.push_front(node->identity);
-    node_counts.emplace(node->identity, NodeCount{count, node_lru.begin()});
     return count;
 }
 
 void ChorusRuntime::PreparationState::clear_caches() {
+    std::lock_guard<std::mutex> lock(cache_mutex);
     node_counts.clear();
     node_lru.clear();
     content_counts.clear();
     content_bytes = 0;
+}
+
+void ChorusRuntime::PreparationState::publish_signal(const ChorusSignal& signal, const std::shared_ptr<Control>& control) {
+    if (control->terminal || signal.request_id != control->id)
+        return;
+    publish(signal);
+    if (std::holds_alternative<ChorusSignal::Stop>(signal.event) || std::holds_alternative<ChorusSignal::Error>(signal.event))
+        control->terminal = true;
+}
+
+void ChorusRuntime::PreparationState::finish(uint64_t ticket, Outcome outcome) {
+    finished.emplace(ticket, std::move(outcome));
+    for (auto next = finished.begin(); next != finished.end() && next->first == next_publication; next = finished.begin()) {
+        Outcome ready = std::move(next->second);
+        finished.erase(next);
+        ++next_publication;
+        auto& job = *ready.job;
+        const auto control = job.control;
+        if (ready.failure && !ready.abandoned)
+            publish_signal({job.request.id, ChorusSignal::Error{ready.failure->error, ready.failure->message}}, control);
+        control->preparation_finished = true;
+        if (ready.abandoned || ready.failure || control->terminal || control->cancelled) {
+            release_preparation(control);
+        } else if (job.operation == Operation::Count || job.operation == Operation::Preview) {
+            RuntimeEvent event{job.request.id, job.request.session_id,
+                job.operation == Operation::Count ? RuntimeEvent::Kind::MessageTokenCount : RuntimeEvent::Kind::PromptRendered};
+            event.text = std::move(job.rendered);
+            event.token_count = job.token_count;
+            event.omitted_message_ids = std::move(job.omitted);
+            publish(std::move(event));
+            control->terminal = true;
+        } else {
+            publish(std::move(ready.job));
+        }
+    }
 }
 
 void ChorusRuntime::fit_turn_messages(PreparationState& state, PreparationJob& job) {
@@ -203,10 +252,10 @@ void ChorusRuntime::prepare(PreparationState& state, PreparationJob& job) {
 
 void ChorusRuntime::preparation_loop(std::shared_ptr<PreparationState> owned_state) {
     auto& state = *owned_state;
-    std::shared_ptr<Control> running;
+    std::unique_ptr<PreparationJob> job;
+    uint64_t ticket = 0;
     try {
         while (true) {
-            std::unique_ptr<PreparationJob> job;
             {
                 std::unique_lock<std::mutex> lock(state.mutex);
                 state.cv.wait(lock, [&] { return state.closing || state.failed || !state.jobs.empty(); });
@@ -214,48 +263,31 @@ void ChorusRuntime::preparation_loop(std::shared_ptr<PreparationState> owned_sta
                     break;
                 job = std::move(state.jobs.front());
                 state.jobs.pop_front();
-                running = job->control;
+                ticket = state.next_ticket++;
             }
+            std::optional<RequestRejection> failure;
             try {
                 prepare(state, *job);
-                std::lock_guard<std::mutex> lock(state.mutex);
-                job->control->preparation_finished = true;
-                if (job->control->terminal || job->control->cancelled) {
-                    state.release_preparation(job->control);
-                } else if (job->operation == Operation::Count || job->operation == Operation::Preview) {
-                    RuntimeEvent event{job->request.id, job->request.session_id,
-                        job->operation == Operation::Count ? RuntimeEvent::Kind::MessageTokenCount : RuntimeEvent::Kind::PromptRendered};
-                    event.text = std::move(job->rendered);
-                    event.token_count = job->token_count;
-                    event.omitted_message_ids = std::move(job->omitted);
-                    state.publish(std::move(event));
-                    job->control->terminal = true;
-                } else {
-                    state.publish(std::move(job));
-                }
-            } catch (const RequestRejection& failure) {
-                publish_error(state, job->request.id, job->control, failure.error, failure.message);
-                std::lock_guard<std::mutex> lock(state.mutex);
-                job->control->preparation_finished = true;
-                state.release_preparation(job->control);
+            } catch (const RequestRejection& rejection) {
+                failure = rejection;
             }
-            running.reset();
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.finish(ticket, {std::move(job), std::move(failure)});
         }
     } catch (...) {
         fail_preparation(state);
-        std::lock_guard<std::mutex> lock(state.mutex);
-        if (running) {
-            running->preparation_finished = true;
-            state.release_preparation(running);
+        if (job) {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.finish(ticket, {std::move(job), std::nullopt, true});
         }
     }
     std::deque<std::unique_ptr<PreparationJob>> discarded;
     {
         std::lock_guard<std::mutex> lock(state.mutex);
         discarded.swap(state.jobs);
-        for (const auto& job : discarded) {
-            job->control->preparation_finished = true;
-            state.release_preparation(job->control);
+        for (const auto& queued : discarded) {
+            queued->control->preparation_finished = true;
+            state.release_preparation(queued->control);
         }
     }
 }

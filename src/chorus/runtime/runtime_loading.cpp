@@ -38,6 +38,8 @@ LoadSubmitResult ChorusRuntime::load_engine(std::unique_ptr<InferenceEngine> eng
 #ifdef CHORUS_HOST_TEST
         attempt->test_hold_retirement = _test_hold_next_retirement && _lifetime != nullptr;
         attempt->test_fail_preparation_worker_start = _test_fail_next_preparation_worker_start;
+        if (_test_preparation_workers)
+            attempt->preparation_workers = _test_preparation_workers;
 #endif
         if (_lifetime)
             _draining_states.reserve(_draining_states.size() + 1);
@@ -124,6 +126,10 @@ void ChorusRuntime::test_fail_next_worker_start() {
 void ChorusRuntime::test_fail_next_preparation_worker_start() {
     assert_host_thread();
     _test_fail_next_preparation_worker_start = true;
+}
+void ChorusRuntime::test_use_preparation_workers(size_t count) {
+    assert_host_thread();
+    _test_preparation_workers = count;
 }
 bool ChorusRuntime::test_load_parked(LoadId id) const {
     assert_host_thread();
@@ -262,7 +268,8 @@ void ChorusRuntime::lifecycle_loop() {
                     if (attempt->test_fail_preparation_worker_start)
                         throw std::runtime_error("Test preparation worker startup failure.");
 #endif
-                    prep.worker = std::thread(&ChorusRuntime::preparation_loop, attempt->candidate->preparation);
+                    for (size_t worker = 0; worker < attempt->preparation_workers; ++worker)
+                        prep.workers.emplace_back(&ChorusRuntime::preparation_loop, attempt->candidate->preparation);
                     usable = true;
                 } else {
                     failure = {ChorusError::EngineNotReady, "The provider has no preparation service."};

@@ -516,8 +516,10 @@ void ChorusRuntime::close_preparation(PreparationState& state) {
 
 void ChorusRuntime::fence_engine(EngineLifetime& lifetime) {
     auto& state = *lifetime.preparation;
-    if (state.worker.joinable())
-        state.worker.join();
+    for (auto& worker : state.workers)
+        if (worker.joinable())
+            worker.join();
+    state.workers.clear();
     std::vector<std::unique_ptr<PreparationJob>> discarded;
     {
         std::lock_guard<std::mutex> lock(state.mutex);
@@ -531,6 +533,12 @@ void ChorusRuntime::fence_engine(EngineLifetime& lifetime) {
         std::erase_if(state.output, [](const auto& output) {
             return std::holds_alternative<std::unique_ptr<PreparationJob>>(output);
         });
+        for (auto& [ticket, outcome] : state.finished) {
+            outcome.job->control->preparation_finished = true;
+            state.release_preparation(outcome.job->control);
+            discarded.push_back(std::move(outcome.job));
+        }
+        state.finished.clear();
     }
     discarded.clear();
     state.service.reset();
@@ -578,11 +586,7 @@ void ChorusRuntime::retire_request(RequestId id) {
 
 void ChorusRuntime::enqueue_signal(PreparationState& state, const ChorusSignal& signal, const std::shared_ptr<Control>& control) {
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (control->terminal || signal.request_id != control->id)
-        return;
-    state.publish(signal);
-    if (std::holds_alternative<ChorusSignal::Stop>(signal.event) || std::holds_alternative<ChorusSignal::Error>(signal.event))
-        control->terminal = true;
+    state.publish_signal(signal, control);
 }
 
 void ChorusRuntime::publish_error(PreparationState& state, RequestId id, const std::shared_ptr<Control>& control, ChorusError error, std::string message) {

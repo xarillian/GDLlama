@@ -16,6 +16,7 @@ struct ChorusRuntime::LoadAttempt {
     std::stop_source stop;
     std::optional<LoadProgress> progress;
     std::optional<LoadProgress> progress_high_water;
+    size_t preparation_workers = preparation_worker_count();
 #ifdef CHORUS_HOST_TEST
     bool test_hold_retirement = false;
     bool test_retirement_held = false;

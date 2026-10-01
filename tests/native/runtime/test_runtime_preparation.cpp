@@ -3,6 +3,7 @@
 #include "support/runtime_test_utils.hpp"
 #include "support/sync_mock_engine.hpp"
 
+#include <algorithm>
 #include <condition_variable>
 #include <functional>
 #include <limits>
@@ -44,6 +45,7 @@ class GatedPreparation : public RequestPreparation {
         std::unique_lock<std::mutex> lock(mutex);
         threads.insert(std::this_thread::get_id());
         ++calls;
+        cv.notify_all();
         if (kind == Hook::Count) { ++count_calls; count_bytes += text.size(); counted.push_back(text); }
         if (kind == Hook::Render) ++renders;
         if (calls == gate_at) {
@@ -173,8 +175,9 @@ GenerationRequest raw(std::string text) {
     return request;
 }
 
-TEST(RuntimePreparation, Gated_hook_leaves_every_admission_poll_and_cancel_responsive_with_one_worker_and_bounded_queue) {
+TEST(RuntimePreparation, Gated_hook_leaves_every_admission_poll_and_cancel_responsive_with_bounded_workers_and_queue) {
     ChorusRuntime runtime;
+    runtime.test_use_preparation_workers(3);
     auto engine = std::make_unique<PreparationEngine>();
     auto* observed = engine.get();
     auto service = engine->service;
@@ -202,7 +205,7 @@ TEST(RuntimePreparation, Gated_hook_leaves_every_admission_poll_and_cancel_respo
     ASSERT_TRUE(runtime.is_loaded());
     {
         std::lock_guard<std::mutex> lock(service->mutex);
-        ASSERT_EQ(service->threads.size(), 1U);
+        ASSERT_LE(service->threads.size(), 3U);
         ASSERT_FALSE(service->threads.contains(std::this_thread::get_id()));
     }
     ASSERT_TRUE(runtime.cancel(preview.request_id));
@@ -228,6 +231,32 @@ TEST(RuntimePreparation, Gated_hook_leaves_every_admission_poll_and_cancel_respo
     runtime.stop_all();
     auto remaining = drain_runtime_events(runtime, kPreparationCapacity - 4);
     ASSERT_EQ(remaining.size(), kPreparationCapacity - 4);
+}
+
+TEST(RuntimePreparation, An_earlier_request_that_prepares_slowly_still_reaches_the_engine_first) {
+    ChorusRuntime runtime;
+    runtime.test_use_preparation_workers(3);
+    auto engine = std::make_unique<PreparationEngine>();
+    auto* observed = engine.get();
+    auto service = engine->service;
+    service->gate_at = 1;
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
+    ReleaseGate release{service};
+
+    const auto slow = runtime.submit(raw("slow"));
+    ASSERT_TRUE(service->wait_entered());
+    const auto second = runtime.submit(raw("second"));
+    const auto third = runtime.submit(raw("third"));
+    {
+        std::unique_lock<std::mutex> lock(service->mutex);
+        ASSERT_TRUE(service->cv.wait_for(lock, std::chrono::seconds(10), [&] { return service->calls >= 3; }));
+    }
+    ASSERT_TRUE(runtime.poll().empty());
+    ASSERT_TRUE(observed->submitted_ids.empty());
+
+    service->release();
+    drain_runtime_events(runtime, 3);
+    EXPECT_EQ(observed->submitted_ids, (std::vector<int64_t>{slow.request_id, second.request_id, third.request_id}));
 }
 
 TEST(RuntimePreparation, Preview_freezes_history_defaults_and_source_without_occupying_or_creating_history) {
@@ -512,6 +541,7 @@ TEST(RuntimePreparation, Provider_death_drains_gated_and_queued_preparation_with
 
 TEST(RuntimePreparation, Cancel_ready_work_never_forwards_and_buffered_auxiliary_success_keeps_its_terminal) {
     ChorusRuntime runtime;
+    runtime.test_use_preparation_workers(1);
     auto engine = std::make_unique<PreparationEngine>();
     auto* observed = engine.get();
     auto service = engine->service;
@@ -672,9 +702,11 @@ TEST(RuntimePreparation, Admitted_request_and_batch_keep_earlier_defaults_after_
         ASSERT_EQ(service->render_probes[i].chat_template, "old template");
         ASSERT_EQ(service->render_probes[i].show_thinking, false);
     }
-    ASSERT_EQ(service->validated_configs[0].max_tokens, 0);
-    ASSERT_EQ(service->validated_configs[1].max_tokens, 0);
-    ASSERT_EQ(service->validated_configs[2].max_tokens, 3);
+    std::vector<std::optional<int32_t>> budgets;
+    for (const auto& config : service->validated_configs)
+        budgets.push_back(config.max_tokens);
+    std::ranges::sort(budgets);
+    ASSERT_EQ(budgets, (std::vector<std::optional<int32_t>>{0, 0, 3}));
     ASSERT_EQ(observed->last_chat_template, "old template");
     ASSERT_EQ(observed->last_config.stop, (std::vector<std::string>{"old"}));
     auto next = chat("fourth");
@@ -1013,6 +1045,7 @@ TEST(RuntimePreparation, Parked_candidate_that_loses_health_is_cleaned_up_before
 
 TEST(RuntimePreparation, Acceptance_closes_old_preparation_before_worker_retires_it) {
     ChorusRuntime runtime;
+    runtime.test_use_preparation_workers(1);
     auto old = std::make_unique<PreparationEngine>();
     auto service = old->service;
     service->gate_at = 1;

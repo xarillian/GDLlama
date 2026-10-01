@@ -197,6 +197,7 @@ class ChorusRuntime {
     void test_fail_next_load_setup();
     void test_fail_next_worker_start();
     void test_fail_next_preparation_worker_start();
+    void test_use_preparation_workers(size_t count);
     bool test_load_parked(LoadId id) const;
     bool test_load_committed(LoadId id) const;
     void test_exhaust_load_ids();
@@ -466,6 +467,7 @@ class ChorusRuntime {
     bool _test_fail_next_load_setup = false;
     bool _test_fail_next_worker_start = false;
     bool _test_fail_next_preparation_worker_start = false;
+    size_t _test_preparation_workers = 0;
 #endif
     std::vector<std::shared_ptr<PreparationState>> _draining_states;
 

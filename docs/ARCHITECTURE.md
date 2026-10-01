@@ -103,9 +103,9 @@ Headers under `include/chorus` are intentional downstream API commitments, not a
 
 ### Request preparation
 
-Each loaded runtime owns one bounded FIFO preparation worker. It consumes immutable history snapshots through `Chorus::RequestPreparation`, not host-confined engine methods. Cached literal-content counts guide lazy selection; exact rendered checks determine fit. Validation and fitting failures after admission arrive as polled terminal events. Preview and count operations do not occupy inference sessions.
+Each loaded runtime owns a small pool of preparation workers fed by one bounded FIFO queue. They consume immutable history snapshots through `Chorus::RequestPreparation`, not host-confined engine methods, and publish outcomes in admission order, so equal-priority requests reach the engine as submitted. Cached literal-content counts guide lazy selection; exact rendered checks determine fit. Validation and fitting failures after admission arrive as polled terminal events. Preview and count operations do not occupy inference sessions.
 
-Replacement transfers the old lifetime to the exclusive lifecycle worker, which joins its preparation worker and releases provider resources before initializing the successor. Provider shutdown also revokes independently retained preparation handles before releasing their resources.
+Replacement transfers the old lifetime to the exclusive lifecycle worker, which joins its preparation workers and releases provider resources before initializing the successor. Provider shutdown also revokes independently retained preparation handles before releasing their resources.
 
 ## Extensibility
 
