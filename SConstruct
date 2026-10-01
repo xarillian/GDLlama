@@ -2,7 +2,7 @@
 import os
 import sys
 import subprocess
-from SCons.Script import Alias, ARGUMENTS, COMMAND_LINE_TARGETS, Default, GetOption, Glob, SConscript, Value
+from SCons.Script import Alias, ARGUMENTS, CacheDir, COMMAND_LINE_TARGETS, Default, GetOption, Glob, SConscript, Value
 sys.dont_write_bytecode = True
 from tools.materialize_llama import materialize
 from tools.materialize_godot_api import materialize as materialize_godot_api
@@ -40,6 +40,9 @@ if not ARGUMENTS.get("custom_api_file"):
         ARGUMENTS["custom_api_file"] = str(materialize_godot_api())
     except (OSError, subprocess.CalledProcessError, RuntimeError) as error:
         raise SystemExit(f">>> [SCons] Godot API materialization failed: {error}")
+# Godot reads the same variable; CI points it at a directory restored between runs.
+if os.environ.get("SCONS_CACHE"):
+    CacheDir(os.environ["SCONS_CACHE"])
 env = SConscript("third-party/godot-cpp/SConstruct")
 
 llama_variant_parts = []
@@ -310,6 +313,9 @@ cmake_target = env.Command(
     source=[llama_build_signature, "patches/llama-resource-cleanup.patch", "tools/materialize_llama.py"],
     action=build_llama_with_cmake
 )
+# The CMake build writes more libraries than its one declared target, so it stays out of the
+# SCons cache; CI caches its build directory instead.
+env.NoCache(cmake_target)
 
 # Tooling target
 if "compiledb" in COMMAND_LINE_TARGETS:
