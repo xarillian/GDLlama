@@ -11,6 +11,9 @@ inputs:
   fixtures:
     description: Restore and verify the model fixtures
     default: 'false'
+  llama-cache:
+    description: Restore the llama.cpp build; a job that builds a moving revision cannot reuse one
+    default: 'true'
 
 runs:
   using: composite
@@ -53,12 +56,14 @@ runs:
         Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$env:VULKAN_VERSION\bin"
 
     - id: llama
+      if: inputs.llama-cache == 'true'
       shell: bash
       run: echo "revision=$(git rev-parse HEAD:third-party/llama.cpp)" >> "$GITHUB_OUTPUT"
 
     # The materialized source travels with its build: make compares file times, so fresh
     # sources beside a restored build would rebuild everything.
     - name: Restore the llama.cpp build
+      if: inputs.llama-cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |

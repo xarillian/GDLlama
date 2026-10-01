@@ -3,44 +3,45 @@ name: Godot compatibility
 on:
   workflow_call:
 
+permissions:
+  contents: read
+
+env:
+  SCONSFLAGS: -j4
+
 jobs:
   editor:
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
-        os: [ubuntu-22.04, windows-2022, macos-14]
+        os: [ ubuntu-22.04, windows-2022, macos-14 ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    permissions:
-      contents: read
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_NOLOGO: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/setup-build
         with:
-          python-version: '3.12'
-      - uses: actions/setup-dotnet@v4
+          cache-tag: extension-debug
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '8.0.x'
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
       - name: Build and stage the native CPU addon
         shell: bash
         run: |
-          python -m pip install scons
-          scons -j2
+          scons
           python tools/stage_godot.py
       - name: Check standard and .NET editors
         run: >-
           python tools/check_godot_compatibility.py --editor-only --repetitions 1
           --output bin/godot-compatibility-ci --versions
           4.4 4.4.1 4.5 4.5.1 4.5.2 4.6 4.6.1 4.6.2 4.6.3 4.7 4.7.1 4.7.2
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: godot-compatibility-${{ matrix.os }}

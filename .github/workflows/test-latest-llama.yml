@@ -3,31 +3,33 @@ name: Latest llama.cpp build
 on:
   workflow_call:
 
+permissions:
+  contents: read
+
+env:
+  SCONSFLAGS: -j4
+
 jobs:
   build_and_test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        submodules: 'recursive'
-
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
-    - run: pip install scons
-
-    - name: Install Dependencies
-      run: sudo apt-get update && sudo apt-get install -y build-essential
-
-    - name: Update llama.cpp to latest
-      run: |
-        cd third-party/llama.cpp
-        git fetch
-        git checkout --detach origin/master
-
-    - name: Build (fails if the maintained upload patch no longer applies)
-      run: scons test -j4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Move llama.cpp to its latest master
+        run: |
+          git -C third-party/llama.cpp fetch origin master
+          git -C third-party/llama.cpp checkout --detach FETCH_HEAD
+          echo "Testing llama.cpp $(git -C third-party/llama.cpp rev-parse --short HEAD)"
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-tag: latest-llama
+          fixtures: 'true'
+          llama-cache: 'false'
+      - name: Build, which fails if the maintained patch no longer applies
+        run: scons test
+      - name: Native tests without models
+        run: just test --quick
+      - name: Native tests with models
+        run: just test
