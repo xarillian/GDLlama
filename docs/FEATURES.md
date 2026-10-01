@@ -117,6 +117,7 @@
 
 ### Models & Hardware
 - Inspect the planned and effective GPU offload, context, concurrency, batching, and KV-cache geometry.
+- Offer a CUDA build for NVIDIA GPUs alongside the portable Vulkan default.
 
 ### Tool Calling
 - Define tools with typed names, descriptions, and input schemas.
