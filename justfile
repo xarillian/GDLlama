@@ -86,6 +86,9 @@ style:
 tidy: compiledb
     python3 tools/clang_tidy.py
 
+# Run every check the CI lint job runs. Needs a prior build for generated headers.
+lint: style tidy
+
 # Build the native suite under a sanitizer and run it without model tests: `just sanitize thread` or `just sanitize address`.
 sanitize kind:
     scons test sanitize={{kind}}
