@@ -279,8 +279,8 @@ def build_llama_with_cmake(target, source, env):
     else:
         cmake_config.append("-DLLAMA_METAL=OFF")
         cmake_config.append("-DGGML_METAL=OFF")
-        if sys.platform == "darwin":
-            cmake_config.append("-DGGML_BLAS=OFF")
+    if sys.platform == "darwin":
+        cmake_config.append("-DGGML_BLAS=OFF")
 
     if sys.platform == "win32":
         cmake_config.append("-DCMAKE_CONFIGURATION_TYPES=Release")
