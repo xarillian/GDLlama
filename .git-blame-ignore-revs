@@ -1,0 +1,5 @@
+# Mechanical reformats that git blame should look through.
+# Use: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Apply clang-format to the codebase
+d2d92efd993bcab86ac15504e5be5536354968b1
