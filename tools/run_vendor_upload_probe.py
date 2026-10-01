@@ -12,7 +12,7 @@ def main():
     if not sys.platform.startswith("linux"):
         raise SystemExit("the GNU linker wrap probe is supported on Linux only")
     source, revision, identity = materialize()
-    build = build_directory(revision, identity, "linux-x86_64", "vulkan")
+    build = build_directory(revision, identity, "linux-x86_64", "vulkan-portable")
     if not (build / "src/libllama.a").is_file():
         raise SystemExit("build the patched Vulkan test variant first: scons test use_vulkan=yes -j2")
     binary = ROOT / "bin/vendor_upload_probe"
