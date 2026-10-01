@@ -42,7 +42,8 @@ Maximum scan_maximum(std::span<const float> logits, std::size_t begin, std::size
 }
 
 void for_each_part(
-    wlib::ParallelFor& parallel, std::size_t size,
+    wlib::ParallelFor& parallel,
+    std::size_t size,
     const std::function<void(std::size_t part, std::size_t begin, std::size_t end)>& body
 ) {
     const std::size_t chunk = (size + parallel.lanes() - 1) / parallel.lanes();
@@ -123,7 +124,8 @@ std::vector<llama_token> LlamaBatchSampler::sample(llama_context* context, std::
     return tokens;
 }
 
-llama_token LlamaBatchSampler::select(const LlamaSamplingSlot& slot, const float* logits, std::size_t lane, bool across_lanes) {
+llama_token
+LlamaBatchSampler::select(const LlamaSamplingSlot& slot, const float* logits, std::size_t lane, bool across_lanes) {
     const llama_token token = slot.path == LlamaSamplingPath::FirstMaximum
                                   ? llama_first_maximum({logits, _vocabulary_size}, across_lanes ? &_parallel : nullptr)
                                   : apply_chain(slot.sampler, logits, lane, across_lanes);
@@ -131,7 +133,8 @@ llama_token LlamaBatchSampler::select(const LlamaSamplingSlot& slot, const float
     return token;
 }
 
-llama_token LlamaBatchSampler::apply_chain(common_sampler* sampler, const float* logits, std::size_t lane, bool across_lanes) {
+llama_token
+LlamaBatchSampler::apply_chain(common_sampler* sampler, const float* logits, std::size_t lane, bool across_lanes) {
     auto& candidates = _candidates[lane];
     candidates.resize(_vocabulary_size);
     const auto fill = [&](std::size_t, std::size_t begin, std::size_t end) {

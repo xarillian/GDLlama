@@ -21,7 +21,8 @@ Dictionary ChorusProjectSettings::sync_generation_defaults() {
 
 Dictionary ChorusProjectSettings::reload_generation_defaults() {
     std::string error;
-    if (godot_chorus::reload_project_generation_defaults(error)) return result({godot_chorus::SettingsStatus::Ok, {}});
+    if (godot_chorus::reload_project_generation_defaults(error))
+        return result({godot_chorus::SettingsStatus::Ok, {}});
     return result({godot_chorus::SettingsStatus::SourceFailed, error});
 }
 

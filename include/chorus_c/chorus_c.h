@@ -268,25 +268,20 @@ CHORUS_API chorus_error chorus_request_set_unconstrained(chorus_request* req);
 CHORUS_API chorus_error chorus_request_clear_constraint(chorus_request* req);
 CHORUS_API chorus_error chorus_request_set_show_thinking(chorus_request* req, bool show_thinking);
 CHORUS_API chorus_error chorus_request_clear_show_thinking(chorus_request* req);
-CHORUS_API chorus_error chorus_request_set_provider_option_float(
-    chorus_request* req, const char* provider, const char* key, double value
-);
-CHORUS_API chorus_error chorus_request_set_provider_option_int(
-    chorus_request* req, const char* provider, const char* key, int64_t value
-);
-CHORUS_API chorus_error chorus_request_set_provider_option_bool(
-    chorus_request* req, const char* provider, const char* key, bool value
-);
+CHORUS_API chorus_error
+chorus_request_set_provider_option_float(chorus_request* req, const char* provider, const char* key, double value);
+CHORUS_API chorus_error
+chorus_request_set_provider_option_int(chorus_request* req, const char* provider, const char* key, int64_t value);
+CHORUS_API chorus_error
+chorus_request_set_provider_option_bool(chorus_request* req, const char* provider, const char* key, bool value);
 CHORUS_API chorus_error chorus_request_set_provider_option_string(
     chorus_request* req, const char* provider, const char* key, const char* value
 );
-CHORUS_API chorus_error chorus_request_clear_provider_option(
-    chorus_request* req, const char* provider, const char* key
-);
+CHORUS_API chorus_error
+chorus_request_clear_provider_option(chorus_request* req, const char* provider, const char* key);
 CHORUS_API chorus_error chorus_request_clear_provider_options(chorus_request* req);
-CHORUS_API chorus_error chorus_request_add_inject(
-    chorus_request* req, chorus_message_role role, const char* content, int32_t depth
-);
+CHORUS_API chorus_error
+chorus_request_add_inject(chorus_request* req, chorus_message_role role, const char* content, int32_t depth);
 /* An empty string selects an invalid template; use clear to remove the choice. */
 CHORUS_API chorus_error chorus_request_set_chat_template(chorus_request* req, const char* chat_template);
 CHORUS_API chorus_error chorus_request_clear_chat_template(chorus_request* req);
@@ -307,21 +302,18 @@ typedef struct chorus_embedding_request {
 } chorus_embedding_request;
 
 /* Result strings remain valid until the next submission, load, render, poll, or runtime destruction. */
-CHORUS_API chorus_error chorus_generate(
-    chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result
-);
+CHORUS_API chorus_error
+chorus_generate(chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result);
 CHORUS_API chorus_error chorus_generate_batch(
     chorus_runtime* rt, const chorus_request* const* reqs, size_t count, chorus_submit_result* out_results
 );
-CHORUS_API chorus_error chorus_embed(
-    chorus_runtime* rt, const chorus_embedding_request* req, chorus_submit_result* out_result
-);
+CHORUS_API chorus_error
+chorus_embed(chorus_runtime* rt, const chorus_embedding_request* req, chorus_submit_result* out_result);
 CHORUS_API chorus_error chorus_embed_batch(
     chorus_runtime* rt, const chorus_embedding_request* reqs, size_t count, chorus_submit_result* out_results
 );
-CHORUS_API chorus_error chorus_regenerate(
-    chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result
-);
+CHORUS_API chorus_error
+chorus_regenerate(chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result);
 CHORUS_API bool chorus_cancel(chorus_runtime* rt, chorus_request_id request_id);
 CHORUS_API bool chorus_is_request_active(const chorus_runtime* rt, chorus_request_id request_id);
 CHORUS_API chorus_request_id chorus_active_request_for_session(const chorus_runtime* rt, const char* session);
@@ -330,8 +322,8 @@ CHORUS_API chorus_request_id chorus_active_request_for_session(const chorus_runt
 CHORUS_API const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count);
 /*
  * Blocks until chorus_poll has work or timeout_us elapses, then returns whether work arrived.
- * Timeouts beyond one day wait one day. Waking drains nothing. Logs never wake; an engine failure with no request in flight
- * surfaces only on the next chorus_poll.
+ * Timeouts beyond one day wait one day. Waking drains nothing. Logs never wake; an engine failure with no request in
+ * flight surfaces only on the next chorus_poll.
  */
 CHORUS_API bool chorus_wait(chorus_runtime* rt, uint64_t timeout_us);
 /* The returned pointer is non-NULL even when out_count receives zero. */
@@ -346,23 +338,19 @@ CHORUS_API chorus_error chorus_history_export(
 );
 CHORUS_API void chorus_conversation_messages_free(chorus_conversation_message* messages, size_t count);
 CHORUS_API chorus_error chorus_history_clear(chorus_runtime* rt, const char* session);
-CHORUS_API chorus_error chorus_history_edit_message(
-    chorus_runtime* rt, const char* session, chorus_message_id message_id, const char* content
-);
-/* Caller-owned string array; free with chorus_string_list_free. */
 CHORUS_API chorus_error
-chorus_list_conversations(const chorus_runtime* rt, char*** out_sessions, size_t* out_count);
+chorus_history_edit_message(chorus_runtime* rt, const char* session, chorus_message_id message_id, const char* content);
+/* Caller-owned string array; free with chorus_string_list_free. */
+CHORUS_API chorus_error chorus_list_conversations(const chorus_runtime* rt, char*** out_sessions, size_t* out_count);
 CHORUS_API void chorus_string_list_free(char** strings, size_t count);
 CHORUS_API chorus_error chorus_reset_context(chorus_runtime* rt);
 CHORUS_API chorus_turn_outcome chorus_last_turn_outcome(const chorus_runtime* rt, const char* session);
 /* Read-only, nonoccupying preview. Success arrives through chorus_poll. */
-CHORUS_API chorus_error chorus_render_prompt(
-    chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result
-);
+CHORUS_API chorus_error
+chorus_render_prompt(chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result);
 /* Literal UTF-8 content count without BOS/EOS or control-token parsing. */
-CHORUS_API chorus_error chorus_count_message_tokens(
-    chorus_runtime* rt, const char* text, chorus_submit_result* out_result
-);
+CHORUS_API chorus_error
+chorus_count_message_tokens(chorus_runtime* rt, const char* text, chorus_submit_result* out_result);
 
 #ifdef __cplusplus
 }

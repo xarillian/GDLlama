@@ -184,7 +184,9 @@ void ChorusRuntime::lifecycle_loop() {
     auto& state = *_loading;
     for (;;) {
         std::unique_lock lock(state.mutex);
-        state.cv.wait(lock, [&] { return state.stopping || (state.attempt && !state.busy && !state.attempt->committed); });
+        state.cv.wait(lock, [&] {
+            return state.stopping || (state.attempt && !state.busy && !state.attempt->committed);
+        });
         if (state.stopping)
             return;
         auto attempt = state.attempt;
@@ -207,7 +209,9 @@ void ChorusRuntime::lifecycle_loop() {
                     if (attempt->test_hold_retirement) {
                         attempt->test_retirement_held = true;
                         state.cv.notify_all();
-                        state.cv.wait(guard, [&] { return !attempt->test_hold_retirement || attempt->stop.stop_requested(); });
+                        state.cv.wait(guard, [&] {
+                            return !attempt->test_hold_retirement || attempt->stop.stop_requested();
+                        });
                         attempt->test_retirement_held = false;
                     }
                 }
@@ -229,13 +233,16 @@ void ChorusRuntime::lifecycle_loop() {
                         {
                             std::lock_guard guard(_loading->mutex);
                             auto previous = current->progress_high_water;
-                            invalid = (sample.fraction && (!std::isfinite(*sample.fraction) || *sample.fraction < 0 || *sample.fraction > 1)) ||
-                                      (previous && static_cast<int>(sample.phase) < static_cast<int>(previous->phase)) ||
-                                      (previous && sample.phase == previous->phase && previous->fraction && sample.fraction &&
-                                       *sample.fraction < *previous->fraction);
+                            invalid =
+                                (sample.fraction &&
+                                 (!std::isfinite(*sample.fraction) || *sample.fraction < 0 || *sample.fraction > 1)) ||
+                                (previous && static_cast<int>(sample.phase) < static_cast<int>(previous->phase)) ||
+                                (previous && sample.phase == previous->phase && previous->fraction && sample.fraction &&
+                                 *sample.fraction < *previous->fraction);
                             if (!invalid && !current->committed) {
                                 auto retained = sample;
-                                if (previous && previous->phase == sample.phase && previous->fraction && !sample.fraction)
+                                if (previous && previous->phase == sample.phase && previous->fraction &&
+                                    !sample.fraction)
                                     retained.fraction = previous->fraction;
                                 current->progress_high_water = retained;
                                 current->progress = retained;
@@ -289,7 +296,9 @@ void ChorusRuntime::lifecycle_loop() {
         if (usable && !attempt->cancelled) {
             attempt->parked = true;
             _wakeup->raise();
-            state.cv.wait(lock, [&] { return attempt->cancelled || attempt->cleanup_requested || !attempt->candidate; });
+            state.cv.wait(lock, [&] {
+                return attempt->cancelled || attempt->cleanup_requested || !attempt->candidate;
+            });
             if (!attempt->candidate) {
                 state.busy = false;
                 continue;
@@ -349,8 +358,11 @@ void ChorusRuntime::append_load_events(std::vector<RuntimeEvent>& events, const 
     }
     if (!attempt->committed)
         return;
-    auto event = load_event(attempt->success ? RuntimeEvent::Kind::ModelLoaded : RuntimeEvent::Kind::ModelLoadFailed,
-                            attempt->id, attempt->config.model.model_id);
+    auto event = load_event(
+        attempt->success ? RuntimeEvent::Kind::ModelLoaded : RuntimeEvent::Kind::ModelLoadFailed,
+        attempt->id,
+        attempt->config.model.model_id
+    );
     if (!attempt->success) {
         event.error = attempt->failure.error;
         event.text = attempt->failure.message;

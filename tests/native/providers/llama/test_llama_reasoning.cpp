@@ -41,14 +41,16 @@ TEST_F(LlamaReasoningModelTest, LlamaReasoning_channels_split) {
     std::atomic<bool> stopped{false};
     Chorus::ChorusRequest request;
     request.id = 1001;
-    request.messages = {{Chorus::MessageRole::User, Chorus::MessageContent::text("What is 2+2? Answer with just the number.")}};
+    request.messages = {
+        {Chorus::MessageRole::User, Chorus::MessageContent::text("What is 2+2? Answer with just the number.")}
+    };
     request.gen_config.max_tokens = 512; // room for the think block
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
-            (std::get<Chorus::ChorusSignal::Token>(sig.event).channel == Chorus::TokenChannel::Reasoning
-                 ? reasoning
-                 : content) += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
+            (std::get<Chorus::ChorusSignal::Token>(sig.event).channel == Chorus::TokenChannel::Reasoning ? reasoning
+                                                                                                         : content) +=
+                std::get<Chorus::ChorusSignal::Token>(sig.event).text;
         }
         if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event)) {
             stopped = true;
@@ -87,9 +89,9 @@ TEST_F(LlamaReasoningModelTest, LlamaReasoning_show_thinking_off_no_reasoning) {
     request.on_event = [&](Chorus::ChorusSignal& sig) {
         std::lock_guard<std::mutex> lock(mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
-            (std::get<Chorus::ChorusSignal::Token>(sig.event).channel == Chorus::TokenChannel::Reasoning
-                 ? reasoning
-                 : content) += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
+            (std::get<Chorus::ChorusSignal::Token>(sig.event).channel == Chorus::TokenChannel::Reasoning ? reasoning
+                                                                                                         : content) +=
+                std::get<Chorus::ChorusSignal::Token>(sig.event).text;
         if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event)) {
             stopped = true;
             done = true;

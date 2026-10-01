@@ -25,9 +25,7 @@ class CollectingLog {
         return _records;
     }
 
-    size_t size() const {
-        return records().size();
-    }
+    size_t size() const { return records().size(); }
 
     // How many records carry `message` verbatim. Verbatim on purpose: a
     // message with an interpolated value in it is the defect this asserts away.

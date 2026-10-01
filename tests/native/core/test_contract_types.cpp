@@ -32,4 +32,3 @@ TEST(ContractTypes, InitialModelSpec_defaults) {
     ASSERT_TRUE(spec.assets.empty());
     ASSERT_TRUE(spec.provider_options.empty());
 }
-

@@ -36,7 +36,7 @@ inline constexpr bool is_valid_utf8_second_byte(unsigned char lead, unsigned cha
     return true;
 }
 
-}
+} // namespace detail
 
 /*
  * Finds the longest complete, valid UTF-8 prefix.
@@ -141,5 +141,4 @@ class Utf8Chunker {
     std::string _pending;
 };
 
-}
-
+} // namespace wlib

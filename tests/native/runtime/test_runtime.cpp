@@ -1,7 +1,7 @@
 #include "chorus/runtime/runtime.hpp"
+#include "gtest_utils.hpp"
 #include "support/runtime_test_utils.hpp"
 #include "sync_mock_engine.hpp"
-#include "gtest_utils.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -27,9 +27,9 @@ static Chorus::GenerationRequest make_request(const std::string& prompt, bool st
 static size_t terminal_count(const std::vector<Chorus::RuntimeEvent>& events, Chorus::RequestId id) {
     size_t count = 0;
     for (const auto& event : events)
-        count += event.request_id == id &&
-                 (event.kind == Chorus::RuntimeEvent::Kind::Complete || event.kind == Chorus::RuntimeEvent::Kind::Embedding ||
-                  event.kind == Chorus::RuntimeEvent::Kind::Error);
+        count += event.request_id == id && (event.kind == Chorus::RuntimeEvent::Kind::Complete ||
+                                            event.kind == Chorus::RuntimeEvent::Kind::Embedding ||
+                                            event.kind == Chorus::RuntimeEvent::Kind::Error);
     return count;
 }
 
@@ -161,12 +161,17 @@ TEST(Runtime, Runtime_truncation_event_reports_durable_ids_in_history_order) {
     engine->supports_render = true;
     engine->mock_per_request_context = 4;
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
-    ASSERT_FALSE(runtime.import_conversation_history("npc", {
-        {7, {Chorus::MessageRole::System, Chorus::MessageContent::text("persona")}},
-        {0, {Chorus::MessageRole::User, Chorus::MessageContent::text("old")}},
-        {1, {Chorus::MessageRole::Assistant, Chorus::MessageContent::text("answer")}},
-        {2, {Chorus::MessageRole::User, Chorus::MessageContent::text("again")}},
-    }).has_value());
+    ASSERT_FALSE(runtime
+                     .import_conversation_history(
+                         "npc",
+                         {
+                             {7, {Chorus::MessageRole::System, Chorus::MessageContent::text("persona")}},
+                             {0, {Chorus::MessageRole::User, Chorus::MessageContent::text("old")}},
+                             {1, {Chorus::MessageRole::Assistant, Chorus::MessageContent::text("answer")}},
+                             {2, {Chorus::MessageRole::User, Chorus::MessageContent::text("again")}},
+                         }
+                     )
+                     .has_value());
 
     Chorus::GenerationRequest request;
     request.session_id = "npc";
@@ -279,15 +284,15 @@ TEST_P(RuntimeBrokenEventDefense, Surfaces_only_the_accepted_request_stream_and_
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
     switch (GetParam().defect) {
-        case BrokenEventDefect::DuplicateTerminal:
-            engine->emit_duplicate_stop = true;
-            break;
-        case BrokenEventDefect::TokenAfterTerminal:
-            engine->emit_token_after_stop = true;
-            break;
-        case BrokenEventDefect::UnknownRequestId:
-            engine->rogue_extra_id = 999999;
-            break;
+    case BrokenEventDefect::DuplicateTerminal:
+        engine->emit_duplicate_stop = true;
+        break;
+    case BrokenEventDefect::TokenAfterTerminal:
+        engine->emit_token_after_stop = true;
+        break;
+    case BrokenEventDefect::UnknownRequestId:
+        engine->rogue_extra_id = 999999;
+        break;
     }
     const auto load_error = load_runtime(runtime, std::move(engine), make_config());
     ASSERT_TRUE(load_error.ok());
@@ -543,7 +548,9 @@ TEST(Runtime, Runtime_replacing_engine_cancels_and_new_engine_works) {
     auto events = err.events;
     auto fresh_events = drain_runtime_events(runtime);
     events.insert(events.end(), fresh_events.begin(), fresh_events.end());
-    std::erase_if(events, [](const auto& event) { return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress; });
+    std::erase_if(events, [](const auto& event) {
+        return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress;
+    });
     ASSERT_EQ(events.size(), 3U);
     ASSERT_EQ(events[0].request_id, held.request_id);
     ASSERT_EQ(events[1].kind, Chorus::RuntimeEvent::Kind::ModelLoaded);
@@ -567,7 +574,9 @@ TEST(Runtime, Runtime_failed_replacement_cancels_and_unloads) {
     ASSERT_TRUE(!err.ok());
     ASSERT_TRUE(!runtime.is_loaded());
 
-    std::erase_if(err.events, [](const auto& event) { return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress; });
+    std::erase_if(err.events, [](const auto& event) {
+        return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress;
+    });
     ASSERT_EQ(err.events.size(), 2U);
     ASSERT_EQ(err.events[0].request_id, held.request_id);
     ASSERT_TRUE(err.events[0].error == Chorus::ChorusError::Cancelled);
@@ -590,7 +599,9 @@ TEST(Runtime, Replacement_preserves_provider_error_and_rolls_back_the_old_sessio
     failure->fail_initialize_with = Chorus::ChorusError::ModelLoad;
     auto loaded = wait_load_terminal(runtime, runtime.load_engine(std::move(failure), make_config()));
     ASSERT_EQ(loaded.error, Chorus::ChorusError::ModelLoad);
-    std::erase_if(loaded.events, [](const auto& event) { return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress; });
+    std::erase_if(loaded.events, [](const auto& event) {
+        return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress;
+    });
     ASSERT_EQ(loaded.events.size(), 2U);
     ASSERT_EQ(loaded.events[0].request_id, held.request_id);
     ASSERT_EQ(loaded.events[0].error, Chorus::ChorusError::Decode);
@@ -804,7 +815,6 @@ TEST(Runtime, Runtime_destruction_with_active_requests_shuts_down_engine_once) {
     ASSERT_EQ(shutdown_count, 1);
 }
 
-
 TEST(Runtime, Caller_choices_reach_provider_without_filling_absence_or_merging_option_values) {
     using namespace Chorus;
     ChorusRuntime runtime;
@@ -827,11 +837,12 @@ TEST(Runtime, Caller_choices_reach_provider_without_filling_absence_or_merging_o
     defaults.options.constraint = OutputConstraint{ConstraintFormat::Gbnf, "root ::= 'a'"};
     defaults.options.show_thinking = false;
     defaults.options.provider_options = {
-        {"mock", ProviderOptionMap{
-            {"map", ProviderOptionMap{{"old", int64_t{1}}}},
-            {"list", ProviderOptionList{int64_t{1}, int64_t{2}}},
-            {"untouched", false}
-        }},
+        {"mock",
+         ProviderOptionMap{
+             {"map", ProviderOptionMap{{"old", int64_t{1}}}},
+             {"list", ProviderOptionList{int64_t{1}, int64_t{2}}},
+             {"untouched", false}
+         }},
         {"unused", ProviderOptionMap{}}
     };
     runtime.set_generation_defaults(defaults);
@@ -841,9 +852,8 @@ TEST(Runtime, Caller_choices_reach_provider_without_filling_absence_or_merging_o
     request.options.constraint = UnconstrainedOutput{};
     request.options.show_thinking = true;
     request.options.provider_options = {
-        {"mock", ProviderOptionMap{
-            {"map", ProviderOptionMap{{"new", int64_t{2}}}}, {"list", ProviderOptionList{int64_t{3}}}
-        }},
+        {"mock",
+         ProviderOptionMap{{"map", ProviderOptionMap{{"new", int64_t{2}}}}, {"list", ProviderOptionList{int64_t{3}}}}},
         {"empty", ProviderOptionMap{}}
     };
     ASSERT_TRUE(runtime.submit(request).ok());
@@ -909,7 +919,9 @@ TEST(Runtime, Namespace_shape_collisions_replace_whole_but_empty_namespaces_supp
     request.options.provider_options = {{"mock", ProviderOptionMap{{"key", false}}}};
     ASSERT_TRUE(runtime.submit(request).ok());
     drain_runtime_events(runtime);
-    EXPECT_EQ(std::get<bool>(std::get<ProviderOptionMap>(seen->last_config.provider_options.at("mock")).at("key")), false);
+    EXPECT_EQ(
+        std::get<bool>(std::get<ProviderOptionMap>(seen->last_config.provider_options.at("mock")).at("key")), false
+    );
     defaults.options.provider_options = {{"mock", ProviderOptionMap{{"key", true}}}};
     runtime.set_generation_defaults(defaults);
     request.options.provider_options = {{"mock", int64_t{4}}};
@@ -947,9 +959,9 @@ TEST(Runtime, Empty_option_value_replaces_whole_default_and_not_neighbor) {
     auto* seen = engine.get();
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
     GenerationDefaults defaults;
-    defaults.options.provider_options = {{"mock", ProviderOptionMap{
-        {"map", ProviderOptionMap{{"old", int64_t{1}}}}, {"neighbor", std::string{""}}
-    }}};
+    defaults.options.provider_options = {
+        {"mock", ProviderOptionMap{{"map", ProviderOptionMap{{"old", int64_t{1}}}}, {"neighbor", std::string{""}}}}
+    };
     runtime.set_generation_defaults(defaults);
     auto request = make_request("empty map");
     request.options.provider_options = {{"mock", ProviderOptionMap{{"map", ProviderOptionMap{}}}}};

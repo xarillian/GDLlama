@@ -5,16 +5,15 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <string>
-#include <optional>
 #include <limits>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace Chorus {
 namespace LlamaUtils {
 namespace detail {
-template <typename Reader>
-inline std::string read_string(Reader&& reader) {
+template <typename Reader> inline std::string read_string(Reader&& reader) {
     std::array<char, 256> buffer{};
     int32_t length = reader(buffer.data(), buffer.size());
     if (length < 0)
@@ -37,9 +36,7 @@ class Batch {
     Batch(const Batch&) = delete;
     Batch& operator=(const Batch&) = delete;
 
-    ~Batch() {
-        reset();
-    }
+    ~Batch() { reset(); }
 
     void initialize(int32_t token_capacity, int32_t embedding_size, int32_t max_sequences) {
         reset();
@@ -55,9 +52,7 @@ class Batch {
         _initialized = false;
     }
 
-    llama_batch& get() {
-        return _batch;
-    }
+    llama_batch& get() { return _batch; }
 
   private:
     llama_batch _batch{};
@@ -65,15 +60,15 @@ class Batch {
 };
 
 inline std::string model_metadata(const llama_model* model, const char* key) {
-    return detail::read_string(
-        [model, key](char* buffer, std::size_t size) { return llama_model_meta_val_str(model, key, buffer, size); }
-    );
+    return detail::read_string([model, key](char* buffer, std::size_t size) {
+        return llama_model_meta_val_str(model, key, buffer, size);
+    });
 }
 
 inline std::string model_description(const llama_model* model) {
-    return detail::read_string(
-        [model](char* buffer, std::size_t size) { return llama_model_desc(model, buffer, size); }
-    );
+    return detail::read_string([model](char* buffer, std::size_t size) {
+        return llama_model_desc(model, buffer, size);
+    });
 }
 
 inline void batch_add_seq(llama_batch& batch, llama_token token, int seq_id, int pos, bool logits) {
@@ -85,9 +80,8 @@ inline void batch_add_seq(llama_batch& batch, llama_token token, int seq_id, int
     batch.n_tokens++;
 }
 
-inline std::optional<std::vector<llama_token>> tokenize_vocabulary(
-    const llama_vocab* vocab, const std::string& text, bool add_special, bool parse_special = false
-) {
+inline std::optional<std::vector<llama_token>>
+tokenize_vocabulary(const llama_vocab* vocab, const std::string& text, bool add_special, bool parse_special = false) {
     if (!vocab || text.size() > static_cast<size_t>(INT32_MAX) - 2)
         return std::nullopt;
     const auto length = static_cast<int32_t>(text.size());

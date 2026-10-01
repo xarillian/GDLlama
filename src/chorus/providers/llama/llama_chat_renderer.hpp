@@ -42,7 +42,8 @@ class LlamaChatRenderer {
      *  - `Chorus::ChorusError::Tokenize`: the rendered prompt could not be tokenized.
      */
     std::variant<LlamaPreparedChat, RequestRejection> render(
-        const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override,
+        const std::vector<ChatMessage>& messages,
+        const std::optional<std::string>& template_override,
         std::optional<bool> enable_thinking
     ) const;
 
@@ -54,7 +55,8 @@ class LlamaChatRenderer {
      *  - `Chorus::ChorusError::Tokenize`: the rendered prompt could not be tokenized.
      */
     std::variant<LlamaPreparedChat, RequestRejection> take(
-        const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override,
+        const std::vector<ChatMessage>& messages,
+        const std::optional<std::string>& template_override,
         std::optional<bool> enable_thinking
     ) const;
 
@@ -72,12 +74,15 @@ class LlamaChatRenderer {
     };
 
     std::variant<LlamaPreparedChat, RequestRejection> render_borrowed(
-        const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override,
+        const std::vector<ChatMessage>& messages,
+        const std::optional<std::string>& template_override,
         std::optional<bool> enable_thinking
     ) const;
     std::variant<LlamaPreparedChat, RequestRejection> render_with(
-        TemplateSet& templates, const std::vector<ChatMessage>& messages,
-        const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
+        TemplateSet& templates,
+        const std::vector<ChatMessage>& messages,
+        const std::optional<std::string>& template_override,
+        std::optional<bool> enable_thinking
     ) const;
     std::variant<const common_chat_templates*, RequestRejection>
     templates_for(TemplateSet& templates, const std::optional<std::string>& source) const;

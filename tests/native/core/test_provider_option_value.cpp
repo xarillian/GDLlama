@@ -11,4 +11,3 @@ TEST(ProviderOptionValue, Option_value_literal_is_string) {
     ASSERT_TRUE(std::holds_alternative<std::string>(v));
     ASSERT_EQ(std::get<std::string>(v), std::string("gemma"));
 }
-

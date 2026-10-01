@@ -1,8 +1,8 @@
 #pragma once
 
-#include <string>
-#include <godot_cpp/variant/string.hpp>
 #include "chorus/runtime/runtime.hpp"
+#include <godot_cpp/variant/string.hpp>
+#include <string>
 
 namespace godot_chorus {
 

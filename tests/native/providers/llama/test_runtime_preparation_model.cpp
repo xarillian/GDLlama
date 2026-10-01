@@ -1,14 +1,14 @@
 #include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/providers/llama/llama_utils.hpp"
 #include "chorus/runtime/runtime.hpp"
-#include "support/runtime_test_utils.hpp"
-#include "support/gtest_utils.hpp"
 #include "silent_llama_log.hpp"
+#include "support/gtest_utils.hpp"
+#include "support/runtime_test_utils.hpp"
 
 #include <chrono>
+#include <condition_variable>
 #include <iostream>
 #include <mutex>
-#include <condition_variable>
 
 namespace {
 using namespace Chorus;
@@ -32,7 +32,9 @@ struct ObservedPreparation : RequestPreparation {
         return inner->validate_request(request);
     }
     std::variant<RenderedPrompt, RequestRejection> render_chat_prompt(
-        const std::vector<ChatMessage>& messages, const std::optional<std::string>& selected, std::optional<bool> thinking
+        const std::vector<ChatMessage>& messages,
+        const std::optional<std::string>& selected,
+        std::optional<bool> thinking
     ) const override {
         ++renders;
         return inner->render_chat_prompt(messages, selected, thinking);
@@ -55,7 +57,9 @@ class ObservedLlamaEngine : public LlamaEngine {
 
 class RuntimePreparationModelTest : public ChorusModelTest {};
 
-TEST_F(RuntimePreparationModelTest, Literal_counts_match_independent_vendor_tokenization_and_retained_service_is_revoked) {
+TEST_F(
+    RuntimePreparationModelTest, Literal_counts_match_independent_vendor_tokenization_and_retained_service_is_revoked
+) {
     const std::vector<std::string> content{"", "hello world", "é 日本語 😀", "<bos><start_of_turn>user", "abcd"};
     std::vector<int64_t> expected;
     {
@@ -67,8 +71,15 @@ TEST_F(RuntimePreparationModelTest, Literal_counts_match_independent_vendor_toke
         const auto* vocabulary = llama_model_get_vocab(model);
         for (const auto& text : content) {
             std::vector<llama_token> tokens(text.size() + 32);
-            const auto count = llama_tokenize(vocabulary, text.data(), static_cast<int32_t>(text.size()),
-                                             tokens.data(), static_cast<int32_t>(tokens.size()), false, false);
+            const auto count = llama_tokenize(
+                vocabulary,
+                text.data(),
+                static_cast<int32_t>(text.size()),
+                tokens.data(),
+                static_cast<int32_t>(tokens.size()),
+                false,
+                false
+            );
             EXPECT_GE(count, 0);
             expected.push_back(count);
         }
@@ -93,7 +104,10 @@ TEST_F(RuntimePreparationModelTest, Literal_counts_match_independent_vendor_toke
     ChorusRequest request;
     ASSERT_EQ(observer->validate_request(request)->error, ChorusError::EngineNotReady);
     ASSERT_EQ(std::get<RequestRejection>(observer->count_message_tokens("x")).error, ChorusError::EngineNotReady);
-    ASSERT_EQ(std::get<RequestRejection>(observer->render_chat_prompt({}, std::nullopt, true)).error, ChorusError::EngineNotReady);
+    ASSERT_EQ(
+        std::get<RequestRejection>(observer->render_chat_prompt({}, std::nullopt, true)).error,
+        ChorusError::EngineNotReady
+    );
     ASSERT_FALSE(LlamaUtils::tokenize_vocabulary(nullptr, "x", false));
 }
 
@@ -112,7 +126,10 @@ TEST_F(RuntimePreparationModelTest, Scheduler_checks_actual_render_budget_before
     std::condition_variable cv;
     std::optional<ChorusSignal::Error> failure;
     size_t batches = 0;
-    engine.set_batch_observer([&](const auto&) { std::lock_guard<std::mutex> lock(mutex); ++batches; });
+    engine.set_batch_observer([&](const auto&) {
+        std::lock_guard<std::mutex> lock(mutex);
+        ++batches;
+    });
     ChorusRequest request;
     request.id = 7;
     request.messages = messages;
@@ -120,7 +137,8 @@ TEST_F(RuntimePreparationModelTest, Scheduler_checks_actual_render_budget_before
     request.exact_prompt_budget = 1;
     request.on_event = [&](ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
-        if (auto* error = std::get_if<ChorusSignal::Error>(&signal.event)) failure = *error;
+        if (auto* error = std::get_if<ChorusSignal::Error>(&signal.event))
+            failure = *error;
         cv.notify_all();
     };
     engine.submit_request(std::move(request));
@@ -133,7 +151,9 @@ TEST_F(RuntimePreparationModelTest, Scheduler_checks_actual_render_budget_before
     engine.shutdown();
 }
 
-TEST_F(RuntimePreparationModelTest, Changed_provider_render_after_preparation_fails_instead_of_bypassing_the_fit_guarantee) {
+TEST_F(
+    RuntimePreparationModelTest, Changed_provider_render_after_preparation_fails_instead_of_bypassing_the_fit_guarantee
+) {
     class ChangedTemplateEngine : public LlamaEngine {
       public:
         void submit_request(ChorusRequest request) override {
@@ -157,19 +177,31 @@ TEST_F(RuntimePreparationModelTest, Changed_provider_render_after_preparation_fa
     ASSERT_TRUE(runtime.export_conversation_history("changed-template").empty());
 }
 
-TEST_F(RuntimePreparationModelTest, Reports_separate_host_admission_completion_and_worker_work_for_review_history_shape) {
+TEST_F(
+    RuntimePreparationModelTest, Reports_separate_host_admission_completion_and_worker_work_for_review_history_shape
+) {
     using Clock = std::chrono::steady_clock;
     const auto milliseconds = [](auto duration) { return std::chrono::duration<double, std::milli>(duration).count(); };
-    for (const auto [turns, old_bytes] : std::vector<std::pair<int, size_t>>{{0, 0}, {32, 0}, {128, 0}, {256, 0}, {128, 65536}}) {
+    for (const auto [turns, old_bytes] :
+         std::vector<std::pair<int, size_t>>{{0, 0}, {32, 0}, {128, 0}, {256, 0}, {128, 65536}}) {
         ChorusRuntime runtime;
         auto engine = std::make_unique<ObservedLlamaEngine>();
         auto work = engine->observation;
         ASSERT_TRUE(load_runtime(runtime, std::move(engine), preparation_config()).ok());
-        std::vector<ConversationMessage> history{{0, {MessageRole::System, MessageContent::text("You are the village blacksmith.")}}};
+        std::vector<ConversationMessage> history{
+            {0, {MessageRole::System, MessageContent::text("You are the village blacksmith.")}}
+        };
         for (int i = 0; i < turns; ++i) {
             const std::string padding = i < turns / 2 ? std::string(old_bytes, 'x') : std::string{};
-            history.push_back({2 * i + 1, {MessageRole::User, MessageContent::text(padding + "Tell me about the weather in the village today.")}});
-            history.push_back({2 * i + 2, {MessageRole::Assistant, MessageContent::text(padding + "The sun is shining and the village is peaceful.")}});
+            history.push_back(
+                {2 * i + 1,
+                 {MessageRole::User, MessageContent::text(padding + "Tell me about the weather in the village today.")}}
+            );
+            history.push_back(
+                {2 * i + 2,
+                 {MessageRole::Assistant,
+                  MessageContent::text(padding + "The sun is shining and the village is peaceful.")}}
+            );
         }
         ASSERT_FALSE(runtime.import_conversation_history("npc", std::move(history)).has_value());
         GenerationRequest request;
@@ -200,10 +232,13 @@ TEST_F(RuntimePreparationModelTest, Reports_separate_host_admission_completion_a
             std::sort(poll_samples.begin(), poll_samples.end());
             ASSERT_EQ(events.back().kind, RuntimeEvent::Kind::PromptRendered);
             std::cout << "F3_PERF operation=preview turns=" << turns << " old_bytes=" << old_bytes << " run=" << run
-                      << " admission_ms=" << milliseconds(admission - begin) << " completion_ms=" << milliseconds(completed - begin)
-                      << " count_calls=" << work->counts - counts_before << " count_bytes=" << work->bytes - bytes_before
-                      << " renders=" << work->renders - renders_before << " omitted=" << events.back().omitted_message_ids.size()
-                      << " poll_p50_ms=" << poll_samples[poll_samples.size() / 2] << " poll_max_ms=" << poll_samples.back() << '\n';
+                      << " admission_ms=" << milliseconds(admission - begin)
+                      << " completion_ms=" << milliseconds(completed - begin)
+                      << " count_calls=" << work->counts - counts_before
+                      << " count_bytes=" << work->bytes - bytes_before << " renders=" << work->renders - renders_before
+                      << " omitted=" << events.back().omitted_message_ids.size()
+                      << " poll_p50_ms=" << poll_samples[poll_samples.size() / 2]
+                      << " poll_max_ms=" << poll_samples.back() << '\n';
         }
         const auto begin = Clock::now();
         auto admitted = runtime.submit(request);
@@ -213,7 +248,8 @@ TEST_F(RuntimePreparationModelTest, Reports_separate_host_admission_completion_a
         const auto completed = Clock::now();
         ASSERT_EQ(events.back().kind, RuntimeEvent::Kind::Complete);
         std::cout << "F3_PERF operation=generate turns=" << turns << " old_bytes=" << old_bytes
-                  << " admission_ms=" << milliseconds(admission - begin) << " completion_ms=" << milliseconds(completed - begin) << '\n';
+                  << " admission_ms=" << milliseconds(admission - begin)
+                  << " completion_ms=" << milliseconds(completed - begin) << '\n';
     }
 }
 

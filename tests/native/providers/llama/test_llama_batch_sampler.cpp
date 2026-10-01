@@ -1,8 +1,8 @@
 #include "chorus/providers/llama/llama_batch_sampler.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_generation_options.hpp"
-#include "silent_llama_log.hpp"
 #include "gtest_utils.hpp"
+#include "silent_llama_log.hpp"
 
 class LlamaBatchSamplerModelTest : public ChorusModelTest {};
 
@@ -82,13 +82,21 @@ TEST_F(LlamaBatchSamplerModelTest, Only_a_temperature_only_zero_temperature_chai
     params.n_gpu_layers = 0;
     llama_model* model = llama_model_load_from_file("tests/models/gemma-3-270m-it-F16.gguf", params);
     ASSERT_NE(model, nullptr);
-    const Chorus::ProviderOptionMap temperature_only{{"sampler_order", Chorus::ProviderOptionList{std::string("temperature")}}};
+    const Chorus::ProviderOptionMap temperature_only{
+        {"sampler_order", Chorus::ProviderOptionList{std::string("temperature")}}
+    };
 
     EXPECT_EQ(path_for(model, 0.0f, temperature_only), Chorus::LlamaSamplingPath::FirstMaximum);
     EXPECT_EQ(path_for(model, 0.7f, temperature_only), Chorus::LlamaSamplingPath::Chain);
     EXPECT_EQ(path_for(model, 0.0f, {}), Chorus::LlamaSamplingPath::Chain);
-    EXPECT_EQ(path_for(model, 0.0f, {{"sampler_order", Chorus::ProviderOptionList{std::string("temperature")}},
-                                     {"logit_bias", Chorus::ProviderOptionMap{{"5", 1.0}}}}),
-              Chorus::LlamaSamplingPath::Chain);
+    EXPECT_EQ(
+        path_for(
+            model,
+            0.0f,
+            {{"sampler_order", Chorus::ProviderOptionList{std::string("temperature")}},
+             {"logit_bias", Chorus::ProviderOptionMap{{"5", 1.0}}}}
+        ),
+        Chorus::LlamaSamplingPath::Chain
+    );
     llama_model_free(model);
 }

@@ -145,98 +145,93 @@ make_llama_sampler(const llama_model* model, ResolvedLlamaGeneration resolved) {
 namespace {
 
 RequestRejection common_option_rejection(
-        const std::string& key, const std::string& expected, const std::string& received, const std::string& range
-    ) {
-        return {
-            ChorusError::UnsupportedOption,
-            "Option namespace 'common', key '" + key + "' expected " + expected + ", received " + received +
-                ", allowed range " + range + ".",
-        };
-    }
+    const std::string& key, const std::string& expected, const std::string& received, const std::string& range
+) {
+    return {
+        ChorusError::UnsupportedOption,
+        "Option namespace 'common', key '" + key + "' expected " + expected + ", received " + received +
+            ", allowed range " + range + ".",
+    };
+}
 
-    std::optional<RequestRejection> validate_common(const GenerationConfig& config) {
-        if (config.max_tokens && *config.max_tokens < -1)
-            return common_option_rejection("max_tokens", "int32", "int32", "[-1, 2147483647]");
-        if (config.temperature && (!std::isfinite(*config.temperature) || *config.temperature < 0.0f))
-            return common_option_rejection("temperature", "float", "float", "[0.0, finite float maximum]");
-        if (config.top_k && *config.top_k < 0)
-            return common_option_rejection("top_k", "int32", "int32", "[0, 2147483647]");
-        if (config.top_p && (!std::isfinite(*config.top_p) || *config.top_p < 0.0f || *config.top_p > 1.0f))
-            return common_option_rejection("top_p", "float", "float", "[0.0, 1.0]");
-        if (config.seed && *config.seed > std::numeric_limits<uint32_t>::max())
-            return common_option_rejection("seed", "uint64", "uint64", "[0, 4294967295]");
-        if (config.frequency_penalty && !std::isfinite(*config.frequency_penalty))
-            return common_option_rejection("frequency_penalty", "float", "float", "finite float range");
-        if (config.presence_penalty && !std::isfinite(*config.presence_penalty))
-            return common_option_rejection("presence_penalty", "float", "float", "finite float range");
-        if (config.stop) {
-            if (auto rejection = validate_stop_sequences(*config.stop))
-                return rejection;
+std::optional<RequestRejection> validate_common(const GenerationConfig& config) {
+    if (config.max_tokens && *config.max_tokens < -1)
+        return common_option_rejection("max_tokens", "int32", "int32", "[-1, 2147483647]");
+    if (config.temperature && (!std::isfinite(*config.temperature) || *config.temperature < 0.0f))
+        return common_option_rejection("temperature", "float", "float", "[0.0, finite float maximum]");
+    if (config.top_k && *config.top_k < 0)
+        return common_option_rejection("top_k", "int32", "int32", "[0, 2147483647]");
+    if (config.top_p && (!std::isfinite(*config.top_p) || *config.top_p < 0.0f || *config.top_p > 1.0f))
+        return common_option_rejection("top_p", "float", "float", "[0.0, 1.0]");
+    if (config.seed && *config.seed > std::numeric_limits<uint32_t>::max())
+        return common_option_rejection("seed", "uint64", "uint64", "[0, 4294967295]");
+    if (config.frequency_penalty && !std::isfinite(*config.frequency_penalty))
+        return common_option_rejection("frequency_penalty", "float", "float", "finite float range");
+    if (config.presence_penalty && !std::isfinite(*config.presence_penalty))
+        return common_option_rejection("presence_penalty", "float", "float", "finite float range");
+    if (config.stop) {
+        if (auto rejection = validate_stop_sequences(*config.stop))
+            return rejection;
+    }
+    return std::nullopt;
+}
+
+std::optional<RequestRejection>
+resolve_constraint(common_params_sampling& sampling, const std::optional<ConstraintChoice>& constraint) {
+    if (!constraint || std::holds_alternative<UnconstrainedOutput>(*constraint))
+        return std::nullopt;
+    const auto& selected = std::get<OutputConstraint>(*constraint);
+
+    switch (selected.format) {
+    case ConstraintFormat::Gbnf:
+        if (selected.source.empty()) {
+            return RequestRejection{ChorusError::InvalidRequest, "GBNF constraint source must not be empty."};
+        }
+        sampling.grammar = common_grammar{COMMON_GRAMMAR_TYPE_USER, selected.source};
+        return std::nullopt;
+    case ConstraintFormat::JsonSchema:
+        if (selected.source.empty()) {
+            return RequestRejection{ChorusError::InvalidRequest, "JSON Schema constraint source must not be empty."};
+        }
+        try {
+            const auto schema = common_json::parse(selected.source);
+            sampling.grammar = common_grammar{COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT, json_schema_to_grammar(schema, true)};
+        } catch (const std::exception& error) {
+            return RequestRejection{
+                ChorusError::InvalidRequest, "Invalid JSON Schema constraint: " + std::string(error.what())
+            };
         }
         return std::nullopt;
-    }
-
-    std::optional<RequestRejection>
-    resolve_constraint(common_params_sampling& sampling, const std::optional<ConstraintChoice>& constraint) {
-        if (!constraint || std::holds_alternative<UnconstrainedOutput>(*constraint))
-            return std::nullopt;
-        const auto& selected = std::get<OutputConstraint>(*constraint);
-
-        switch (selected.format) {
-        case ConstraintFormat::Gbnf:
-            if (selected.source.empty()) {
-                return RequestRejection{ChorusError::InvalidRequest, "GBNF constraint source must not be empty."};
-            }
-            sampling.grammar = common_grammar{COMMON_GRAMMAR_TYPE_USER, selected.source};
-            return std::nullopt;
-        case ConstraintFormat::JsonSchema:
-            if (selected.source.empty()) {
-                return RequestRejection{
-                    ChorusError::InvalidRequest, "JSON Schema constraint source must not be empty."
-                };
-            }
-            try {
-                const auto schema = common_json::parse(selected.source);
-                sampling.grammar =
-                    common_grammar{COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT, json_schema_to_grammar(schema, true)};
-            } catch (const std::exception& error) {
-                return RequestRejection{
-                    ChorusError::InvalidRequest, "Invalid JSON Schema constraint: " + std::string(error.what())
-                };
-            }
-            return std::nullopt;
-        case ConstraintFormat::Regex:
-            return RequestRejection{
-                ChorusError::UnsupportedFeature, "Regex output constraints are not supported by Llama."
-            };
-        case ConstraintFormat::Lark:
-            return RequestRejection{
-                ChorusError::UnsupportedFeature, "Lark output constraints are not supported by Llama."
-            };
-        }
-        return RequestRejection{ChorusError::UnsupportedFeature, "Unknown output constraint format."};
-    }
-
-    bool collapses_to_argmax(const common_params_sampling& sampling) {
-        const auto includes = [&sampling](common_sampler_type type) {
-            return std::ranges::find(sampling.samplers, type) != sampling.samplers.end();
+    case ConstraintFormat::Regex:
+        return RequestRejection{
+            ChorusError::UnsupportedFeature, "Regex output constraints are not supported by Llama."
         };
-        return sampling.mirostat == 0 && sampling.temp <= 0.0f && sampling.dynatemp_range <= 0.0f &&
-               includes(COMMON_SAMPLER_TYPE_TEMPERATURE) && !includes(COMMON_SAMPLER_TYPE_ADAPTIVE_P);
+    case ConstraintFormat::Lark:
+        return RequestRejection{ChorusError::UnsupportedFeature, "Lark output constraints are not supported by Llama."};
     }
+    return RequestRejection{ChorusError::UnsupportedFeature, "Unknown output constraint format."};
+}
 
-    // Zero temperature leaves one finite logit, yet llama.cpp still ends the chain with a
-    // distribution draw that exponentiates the entire vocabulary for every token. Greedy
-    // selection picks the same token without that work.
-    void select_argmax_directly(common_sampler* sampler) {
-        llama_sampler* chain = common_sampler_get(sampler);
-        const int32_t last = llama_sampler_chain_n(chain) - 1;
-        if (last < 0 || std::string_view(llama_sampler_name(llama_sampler_chain_get(chain, last))) != "dist")
-            return;
-        llama_sampler_free(llama_sampler_chain_remove(chain, last));
-        llama_sampler_chain_add(chain, llama_sampler_init_greedy());
-    }
+bool collapses_to_argmax(const common_params_sampling& sampling) {
+    const auto includes = [&sampling](common_sampler_type type) {
+        return std::ranges::find(sampling.samplers, type) != sampling.samplers.end();
+    };
+    return sampling.mirostat == 0 && sampling.temp <= 0.0f && sampling.dynatemp_range <= 0.0f &&
+           includes(COMMON_SAMPLER_TYPE_TEMPERATURE) && !includes(COMMON_SAMPLER_TYPE_ADAPTIVE_P);
+}
 
-    } // namespace
+// Zero temperature leaves one finite logit, yet llama.cpp still ends the chain with a
+// distribution draw that exponentiates the entire vocabulary for every token. Greedy
+// selection picks the same token without that work.
+void select_argmax_directly(common_sampler* sampler) {
+    llama_sampler* chain = common_sampler_get(sampler);
+    const int32_t last = llama_sampler_chain_n(chain) - 1;
+    if (last < 0 || std::string_view(llama_sampler_name(llama_sampler_chain_get(chain, last))) != "dist")
+        return;
+    llama_sampler_free(llama_sampler_chain_remove(chain, last));
+    llama_sampler_chain_add(chain, llama_sampler_init_greedy());
+}
+
+} // namespace
 
 } // namespace Chorus

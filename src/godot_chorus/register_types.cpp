@@ -1,9 +1,9 @@
 #include "godot_chorus/register_types.hpp"
-#include "godot_chorus/editor_import_guard.hpp"
-#include "godot_chorus/project_generation_defaults.hpp"
 #include "godot_chorus/chorus_project_settings.hpp"
 #include "godot_chorus/chorus_types.hpp"
+#include "godot_chorus/editor_import_guard.hpp"
 #include "godot_chorus/godot_chorus.hpp"
+#include "godot_chorus/project_generation_defaults.hpp"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/classes/editor_plugin_registration.hpp>

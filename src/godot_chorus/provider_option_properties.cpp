@@ -55,13 +55,7 @@ PropertyInfo property_info_for(const Chorus::ProviderOptionDescriptor& descripto
     uint32_t usage = PROPERTY_USAGE_DEFAULT;
     if (!enabled)
         usage |= PROPERTY_USAGE_READ_ONLY;
-    return PropertyInfo(
-        type,
-        godot_chorus::to_godot_string(descriptor.key),
-        hint,
-        hint_string,
-        usage
-    );
+    return PropertyInfo(type, godot_chorus::to_godot_string(descriptor.key), hint, hint_string, usage);
 }
 
 Variant option_value_to_variant(const Chorus::ProviderOptionValue& value) {
@@ -100,8 +94,7 @@ coerce_to_descriptor(const Chorus::ProviderOptionDescriptor& descriptor, const V
         if (value.get_type() != Variant::STRING)
             return std::nullopt;
         std::string converted(((String)value).utf8().get_data());
-        if (!descriptor.choices.empty() &&
-            std::ranges::find(descriptor.choices, converted) == descriptor.choices.end())
+        if (!descriptor.choices.empty() && std::ranges::find(descriptor.choices, converted) == descriptor.choices.end())
             return std::nullopt;
         return Chorus::ProviderOptionValue{std::move(converted)};
     }

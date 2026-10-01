@@ -31,10 +31,13 @@ TEST(ParallelFor, A_failing_body_reaches_the_caller_and_the_pool_keeps_working) 
     wlib::ParallelFor parallel(4);
 
     ASSERT_THROW(
-        parallel.run(64, [](std::size_t index, std::size_t) {
-            if (index == 7)
-                throw std::runtime_error("sensor offline");
-        }),
+        parallel.run(
+            64,
+            [](std::size_t index, std::size_t) {
+                if (index == 7)
+                    throw std::runtime_error("sensor offline");
+            }
+        ),
         std::runtime_error
     );
 

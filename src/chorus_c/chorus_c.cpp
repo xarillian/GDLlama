@@ -1,18 +1,18 @@
 #include <chorus_c/chorus_c.h>
 
+#include "../host_settings/generation_defaults_codec.hpp"
 #include "chorus/core/common.hpp"
 #include "chorus/engine_factory.hpp"
 #include "chorus/runtime/runtime.hpp"
-#include "../host_settings/generation_defaults_codec.hpp"
 
-#include <chrono>
-#include <atomic>
 #include <algorithm>
-#include <climits>
-#include <iterator>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
+#include <climits>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <system_error>
 #if defined(_WIN32)
 #include <fcntl.h>
@@ -345,13 +345,9 @@ template <typename Action> chorus_error guard_builder(Action&& action) noexcept 
 }
 template <typename Value>
 void set_request_provider_option(
-    Chorus::GenerationRequest& request,
-    const char* provider,
-    const char* key,
-    Value&& value
+    Chorus::GenerationRequest& request, const char* provider, const char* key, Value&& value
 ) {
-    auto [namespace_it, inserted] =
-        request.options.provider_options.try_emplace(provider, Chorus::ProviderOptionMap{});
+    auto [namespace_it, inserted] = request.options.provider_options.try_emplace(provider, Chorus::ProviderOptionMap{});
     if (!inserted && !std::holds_alternative<Chorus::ProviderOptionMap>(namespace_it->second))
         namespace_it->second = Chorus::ProviderOptionMap{};
     std::get<Chorus::ProviderOptionMap>(namespace_it->second)[key] = std::forward<Value>(value);
@@ -395,8 +391,8 @@ FileRead read_settings_file(const fs::path& path) {
         return {FileState::Error, {}, "Cannot size settings file."};
     std::string bytes(static_cast<size_t>(length), '\0');
     input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-    if (input.gcount() != static_cast<std::streamsize>(bytes.size()) ||
-        input.peek() != std::char_traits<char>::eof() || input.bad())
+    if (input.gcount() != static_cast<std::streamsize>(bytes.size()) || input.peek() != std::char_traits<char>::eof() ||
+        input.bad())
         return {FileState::Error, {}, "Cannot read stable settings file."};
     return {FileState::Present, std::move(bytes), {}};
 }
@@ -435,14 +431,20 @@ void close_file(int fd) {
 
 #if defined(_WIN32)
 bool same_windows_file(const fs::path& path, const BY_HANDLE_FILE_INFORMATION& owned) {
-    const HANDLE current = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-        FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    const HANDLE current = CreateFileW(
+        path.c_str(),
+        FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr
+    );
     if (current == INVALID_HANDLE_VALUE)
         return false;
     BY_HANDLE_FILE_INFORMATION observed{};
-    const bool matched = GetFileInformationByHandle(current, &observed) &&
-        owned.dwVolumeSerialNumber == observed.dwVolumeSerialNumber &&
+    const bool matched =
+        GetFileInformationByHandle(current, &observed) && owned.dwVolumeSerialNumber == observed.dwVolumeSerialNumber &&
         owned.nFileIndexHigh == observed.nFileIndexHigh && owned.nFileIndexLow == observed.nFileIndexLow;
     CloseHandle(current);
     return matched;
@@ -457,8 +459,8 @@ bool remove_owned_file(const fs::path& path, int fd) {
         return false;
 #else
     struct stat owned{}, current{};
-    if (::fstat(fd, &owned) != 0 || ::lstat(path.c_str(), &current) != 0 ||
-        owned.st_dev != current.st_dev || owned.st_ino != current.st_ino)
+    if (::fstat(fd, &owned) != 0 || ::lstat(path.c_str(), &current) != 0 || owned.st_dev != current.st_dev ||
+        owned.st_ino != current.st_ino)
         return false;
 #endif
     std::error_code ec;
@@ -485,8 +487,8 @@ bool finish_owned_file(int fd, const fs::path& path) {
     }
 #else
     const bool closed = ::close(fd) == 0;
-    if (!closed && identified && ::lstat(path.c_str(), &current) == 0 &&
-        owned.st_dev == current.st_dev && owned.st_ino == current.st_ino)
+    if (!closed && identified && ::lstat(path.c_str(), &current) == 0 && owned.st_dev == current.st_dev &&
+        owned.st_ino == current.st_ino)
         ::unlink(path.c_str());
 #endif
     return synced && closed;
@@ -533,8 +535,8 @@ int open_temporary_file(const fs::path& path, fs::path& temporary) {
     static std::atomic<uint64_t> counter{0};
     for (int attempt = 0; attempt < 16; ++attempt) {
         temporary = path;
-        temporary += ".chorus-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-                     "-" + std::to_string(counter.fetch_add(1));
+        temporary += ".chorus-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                     std::to_string(counter.fetch_add(1));
         const int fd = open_exclusive(temporary);
         if (fd >= 0 || errno != EEXIST)
             return fd;
@@ -859,8 +861,11 @@ chorus_error chorus_load(
         rt->result_strings.emplace_back();
         auto result = rt->value.load_engine(Chorus::make_engine(cpp_provider), config);
         rt->result_strings.front() = std::move(result.message);
-        *out_result = {result.load_id, to_c_error(result.error),
-                       rt->result_strings.front().empty() ? nullptr : rt->result_strings.front().c_str()};
+        *out_result = {
+            result.load_id,
+            to_c_error(result.error),
+            rt->result_strings.front().empty() ? nullptr : rt->result_strings.front().c_str()
+        };
         clear_last_error(rt);
         return CHORUS_OK;
     } catch (const std::exception& error) {
@@ -1093,9 +1098,7 @@ chorus_error chorus_request_clear_stop(chorus_request* req) {
     return CHORUS_OK;
 }
 
-chorus_error chorus_request_set_constraint(
-    chorus_request* req, chorus_constraint_format format, const char* source
-) {
+chorus_error chorus_request_set_constraint(chorus_request* req, chorus_constraint_format format, const char* source) {
     if (!req || !source)
         return CHORUS_ERR_INVALID_REQUEST;
     Chorus::ConstraintFormat cpp_format = Chorus::ConstraintFormat::Gbnf;
@@ -1134,25 +1137,22 @@ chorus_error chorus_request_clear_show_thinking(chorus_request* req) {
     return CHORUS_OK;
 }
 
-chorus_error chorus_request_set_provider_option_float(
-    chorus_request* req, const char* provider, const char* key, double value
-) {
+chorus_error
+chorus_request_set_provider_option_float(chorus_request* req, const char* provider, const char* key, double value) {
     if (!req || !provider || !key)
         return CHORUS_ERR_INVALID_REQUEST;
     return guard_builder([&] { set_request_provider_option(req->value, provider, key, value); });
 }
 
-chorus_error chorus_request_set_provider_option_int(
-    chorus_request* req, const char* provider, const char* key, int64_t value
-) {
+chorus_error
+chorus_request_set_provider_option_int(chorus_request* req, const char* provider, const char* key, int64_t value) {
     if (!req || !provider || !key)
         return CHORUS_ERR_INVALID_REQUEST;
     return guard_builder([&] { set_request_provider_option(req->value, provider, key, value); });
 }
 
-chorus_error chorus_request_set_provider_option_bool(
-    chorus_request* req, const char* provider, const char* key, bool value
-) {
+chorus_error
+chorus_request_set_provider_option_bool(chorus_request* req, const char* provider, const char* key, bool value) {
     if (!req || !provider || !key)
         return CHORUS_ERR_INVALID_REQUEST;
     return guard_builder([&] { set_request_provider_option(req->value, provider, key, value); });
@@ -1163,9 +1163,7 @@ chorus_error chorus_request_set_provider_option_string(
 ) {
     if (!req || !provider || !key || !value)
         return CHORUS_ERR_INVALID_REQUEST;
-    return guard_builder(
-        [&] { set_request_provider_option(req->value, provider, key, std::string(value)); }
-    );
+    return guard_builder([&] { set_request_provider_option(req->value, provider, key, std::string(value)); });
 }
 
 chorus_error chorus_request_clear_provider_option(chorus_request* req, const char* provider, const char* key) {
@@ -1190,17 +1188,16 @@ chorus_error chorus_request_clear_provider_options(chorus_request* req) {
     return CHORUS_OK;
 }
 
-chorus_error chorus_request_add_inject(
-    chorus_request* req, chorus_message_role role, const char* content, int32_t depth
-) {
+chorus_error
+chorus_request_add_inject(chorus_request* req, chorus_message_role role, const char* content, int32_t depth) {
     if (!req || !content)
         return CHORUS_ERR_INVALID_REQUEST;
     const auto cpp_role = to_cpp_role(role);
     if (!cpp_role)
         return CHORUS_ERR_INVALID_REQUEST;
-    return guard_builder(
-        [&] { req->value.inject.push_back({{*cpp_role, Chorus::MessageContent::text(content)}, depth}); }
-    );
+    return guard_builder([&] {
+        req->value.inject.push_back({{*cpp_role, Chorus::MessageContent::text(content)}, depth});
+    });
 }
 
 chorus_error chorus_request_set_chat_template(chorus_request* req, const char* chat_template) {
@@ -1265,7 +1262,9 @@ chorus_error chorus_generate_batch(
         results.reserve(count);
         for (size_t i = 0; i < count; ++i) {
             if (!reqs[i]) {
-                results.push_back({-1, std::nullopt, std::nullopt, Chorus::ChorusError::InvalidRequest, "request is required."});
+                results.push_back(
+                    {-1, std::nullopt, std::nullopt, Chorus::ChorusError::InvalidRequest, "request is required."}
+                );
                 continue;
             }
             results.push_back(rt->value.submit(reqs[i]->value));
@@ -1318,8 +1317,13 @@ chorus_error chorus_embed_batch(
         for (size_t i = 0; i < count; ++i) {
             const auto request = to_cpp_embedding_request(reqs[i]);
             if (!request) {
-                results.push_back({-1, std::nullopt, std::nullopt, Chorus::ChorusError::InvalidRequest,
-                                   "embedding content and execution are required."});
+                results.push_back(
+                    {-1,
+                     std::nullopt,
+                     std::nullopt,
+                     Chorus::ChorusError::InvalidRequest,
+                     "embedding content and execution are required."}
+                );
                 continue;
             }
             results.push_back(rt->value.submit(*request));
@@ -1433,7 +1437,8 @@ const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count) {
             event.error = to_c_error(source.error);
             event.reasoning = source.kind == Chorus::RuntimeEvent::Kind::Complete ? source.reasoning.c_str() : nullptr;
             event.message_id = source.message_id.value_or(-1);
-            event.omitted_message_ids = source.omitted_message_ids.empty() ? nullptr : source.omitted_message_ids.data();
+            event.omitted_message_ids =
+                source.omitted_message_ids.empty() ? nullptr : source.omitted_message_ids.data();
             event.omitted_message_id_count = source.omitted_message_ids.size();
             event.embedding = source.kind == Chorus::RuntimeEvent::Kind::Embedding && !source.embedding.empty()
                                   ? source.embedding.data()
@@ -1442,7 +1447,8 @@ const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count) {
             event.token_count = source.token_count;
             event.load_id = source.load_id.value_or(-1);
             event.model_id = source.load_id ? source.model_id.c_str() : nullptr;
-            event.load_phase = source.load_progress ? to_c_load_phase(source.load_progress->phase) : CHORUS_LOAD_RELEASING_ENGINE;
+            event.load_phase =
+                source.load_progress ? to_c_load_phase(source.load_progress->phase) : CHORUS_LOAD_RELEASING_ENGINE;
             event.has_load_fraction = source.load_progress && source.load_progress->fraction.has_value();
             event.load_fraction = event.has_load_fraction ? *source.load_progress->fraction : 0.0f;
         }
@@ -1518,8 +1524,7 @@ const chorus_log_record* chorus_poll_logs(chorus_runtime* rt, size_t* out_count)
             record.field_count = fields.size();
             record.request_id = source.request_id.value_or(-1);
             record.session = source.session_id ? source.session_id->c_str() : nullptr;
-            record.produced_at =
-                std::chrono::duration<double>(source.timestamp.time_since_epoch()).count();
+            record.produced_at = std::chrono::duration<double>(source.timestamp.time_since_epoch()).count();
         }
 
         *out_count = rt->logs.size();
@@ -1669,9 +1674,7 @@ chorus_error chorus_history_edit_message(
     }
 }
 
-chorus_error chorus_list_conversations(
-    const chorus_runtime* rt, char*** out_sessions, size_t* out_count
-) {
+chorus_error chorus_list_conversations(const chorus_runtime* rt, char*** out_sessions, size_t* out_count) {
     if (out_sessions)
         *out_sessions = nullptr;
     if (out_count)
@@ -1745,9 +1748,7 @@ chorus_turn_outcome chorus_last_turn_outcome(const chorus_runtime* rt, const cha
     }
 }
 
-chorus_error chorus_render_prompt(
-    chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result
-) {
+chorus_error chorus_render_prompt(chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result) {
     initialize_submit_result(out_result);
     if (!rt)
         return CHORUS_ERR_INVALID_REQUEST;

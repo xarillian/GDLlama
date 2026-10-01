@@ -58,15 +58,9 @@ std::optional<RequestRejection> assign_bounded_integer(
 
 template <typename Target>
 std::optional<RequestRejection> assign_bounded_integer(
-    Target& destination,
-    int64_t value,
-    int64_t minimum,
-    int64_t maximum,
-    const char* rejection_message
+    Target& destination, int64_t value, int64_t minimum, int64_t maximum, const char* rejection_message
 ) {
-    return assign_bounded_integer(
-        destination, value, minimum, maximum, rejection_message, rejection_message
-    );
+    return assign_bounded_integer(destination, value, minimum, maximum, rejection_message, rejection_message);
 }
 
 std::optional<RequestRejection> apply_context_size(LlamaLoadConfig& config, const ProviderOptionValue& option) {
@@ -107,9 +101,8 @@ std::optional<RequestRejection> apply_gpu_layers(LlamaLoadConfig& config, const 
     return rejection;
 }
 
-std::optional<RequestRejection> apply_max_concurrent_requests(
-    LlamaLoadConfig& config, const ProviderOptionValue& option
-) {
+std::optional<RequestRejection>
+apply_max_concurrent_requests(LlamaLoadConfig& config, const ProviderOptionValue& option) {
     return assign_bounded_integer(
         config.max_concurrent_requests,
         std::get<int64_t>(option),
@@ -197,11 +190,8 @@ constexpr std::array load_option_bindings{
     LoadOptionBinding{"embeddings", apply_embeddings},
 };
 
-std::optional<RequestRejection> apply_load_option(
-    LlamaLoadConfig& config,
-    const std::string& key,
-    const ProviderOptionValue& option
-) {
+std::optional<RequestRejection>
+apply_load_option(LlamaLoadConfig& config, const std::string& key, const ProviderOptionValue& option) {
     if (auto rejection = check_against_schema(key, option))
         return rejection;
 
@@ -251,7 +241,11 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
              "use_gpu"},
             {"max_concurrent_requests",
              "Max Concurrent Requests",
-             "Maximum generation and embedding requests processed concurrently. One processes requests individually; higher values automatically co-batch compatible work. Additional requests remain queued. Higher values divide Context Size among concurrent requests and may increase resource use. Idle slots keep recent conversations cached, so their next turn processes only new messages. Takes effect on the next load_model().",
+             "Maximum generation and embedding requests processed concurrently. One processes requests individually; "
+             "higher values automatically co-batch compatible work. Additional requests remain queued. Higher values "
+             "divide Context Size among concurrent requests and may increase resource use. Idle slots keep recent "
+             "conversations cached, so their next turn processes only new messages. Takes effect on the next "
+             "load_model().",
              int64_t{d.max_concurrent_requests},
              1,
              32,
@@ -292,7 +286,8 @@ const ProviderOptionDescriptors& llama_load_option_descriptors() {
              {"model", "none", "mean", "cls", "last"}},
             {"embeddings",
              "Embeddings",
-             "Also serve embedding requests from a generation model. Off saves the memory those batches need. Embedding models always serve embeddings.",
+             "Also serve embedding requests from a generation model. Off saves the memory those batches need. "
+             "Embedding models always serve embeddings.",
              d.embeddings,
              std::nullopt,
              std::nullopt,

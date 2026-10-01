@@ -2,16 +2,16 @@
 
 #include <chrono>
 #include <cmath>
-#include <memory>
 #include <limits>
-#include <variant>
+#include <memory>
 #include <utility>
+#include <variant>
 
 #include "chorus/engine_factory.hpp"
-#include "godot_chorus/request_conversion.hpp"
-#include "godot_chorus/project_generation_defaults.hpp"
 #include "godot_chorus/option_conversion.hpp"
+#include "godot_chorus/project_generation_defaults.hpp"
 #include "godot_chorus/provider_option_properties.hpp"
+#include "godot_chorus/request_conversion.hpp"
 
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
@@ -54,9 +54,12 @@ static const char* chorus_error_name(Chorus::ChorusError e) {
 
 static ChorusLoadPhase::Value to_godot_load_phase(Chorus::LoadPhase phase) {
     switch (phase) {
-    case Chorus::LoadPhase::ReleasingEngine: return ChorusLoadPhase::RELEASING_ENGINE;
-    case Chorus::LoadPhase::LoadingModel: return ChorusLoadPhase::LOADING_MODEL;
-    case Chorus::LoadPhase::InitializingEngine: return ChorusLoadPhase::INITIALIZING_ENGINE;
+    case Chorus::LoadPhase::ReleasingEngine:
+        return ChorusLoadPhase::RELEASING_ENGINE;
+    case Chorus::LoadPhase::LoadingModel:
+        return ChorusLoadPhase::LOADING_MODEL;
+    case Chorus::LoadPhase::InitializingEngine:
+        return ChorusLoadPhase::INITIALIZING_ENGINE;
     }
     return ChorusLoadPhase::LOADING_MODEL;
 }
@@ -67,7 +70,8 @@ static Chorus::Provider to_chorus_provider(GodotChorus::ProviderChoice provider)
 
 using godot_chorus::to_godot_string;
 
-static Ref<ChorusSubmitResult> submit_result(const Ref<ChorusInferenceRequest>& request, const Chorus::SubmitResult& result) {
+static Ref<ChorusSubmitResult>
+submit_result(const Ref<ChorusInferenceRequest>& request, const Chorus::SubmitResult& result) {
     return Ref<ChorusSubmitResult>(memnew(ChorusSubmitResult(
         request,
         result.request_id,
@@ -79,11 +83,16 @@ static Ref<ChorusSubmitResult> submit_result(const Ref<ChorusInferenceRequest>& 
 }
 
 static Ref<ChorusSubmitResult> rejected_submit(const Ref<ChorusInferenceRequest>& request, const String& message) {
-    return Ref<ChorusSubmitResult>(memnew(ChorusSubmitResult(request, -1, -1, -1, GodotChorus::ERR_INVALID_REQUEST, message)));
+    return Ref<ChorusSubmitResult>(
+        memnew(ChorusSubmitResult(request, -1, -1, -1, GodotChorus::ERR_INVALID_REQUEST, message))
+    );
 }
 
 static Ref<ChorusResult> operation_result(std::optional<Chorus::ChorusError> error) {
-    return Ref<ChorusResult>(memnew(ChorusResult(error ? GodotChorus::to_godot(*error) : GodotChorus::ERR_NONE, error ? String(chorus_error_name(*error)) : String())));
+    return Ref<ChorusResult>(memnew(ChorusResult(
+        error ? GodotChorus::to_godot(*error) : GodotChorus::ERR_NONE,
+        error ? String(chorus_error_name(*error)) : String()
+    )));
 }
 
 int GodotChorus::to_godot(Chorus::TurnOutcome outcome) {
@@ -298,16 +307,26 @@ void GodotChorus::_process(double /*delta*/) {
             emit_signal("engine_failed", to_godot(event.error), to_godot_string(event.text));
             break;
         case Chorus::RuntimeEvent::Kind::ModelLoadProgress:
-            emit_signal("model_load_progress", event.load_id.value(), to_godot_string(event.model_id),
+            emit_signal(
+                "model_load_progress",
+                event.load_id.value(),
+                to_godot_string(event.model_id),
                 to_godot_load_phase(event.load_progress->phase),
-                event.load_progress->fraction.has_value(), event.load_progress->fraction.value_or(0.0f));
+                event.load_progress->fraction.has_value(),
+                event.load_progress->fraction.value_or(0.0f)
+            );
             break;
         case Chorus::RuntimeEvent::Kind::ModelLoaded:
             emit_signal("model_loaded", event.load_id.value(), to_godot_string(event.model_id));
             break;
         case Chorus::RuntimeEvent::Kind::ModelLoadFailed:
-            emit_signal("model_load_failed", event.load_id.value(), to_godot_string(event.model_id),
-                to_godot(event.error), to_godot_string(event.text));
+            emit_signal(
+                "model_load_failed",
+                event.load_id.value(),
+                to_godot_string(event.model_id),
+                to_godot(event.error),
+                to_godot_string(event.text)
+            );
             break;
         }
     }
@@ -327,8 +346,8 @@ Ref<ChorusLoadResult> GodotChorus::load_model() {
     Chorus::ChorusConfig config;
     config.log_level = effective_log_level();
     const String filesystem_path = _model_path.begins_with("res://") || _model_path.begins_with("user://")
-        ? ProjectSettings::get_singleton()->globalize_path(_model_path)
-        : _model_path;
+                                       ? ProjectSettings::get_singleton()->globalize_path(_model_path)
+                                       : _model_path;
     config.model = Chorus::make_initial_model_spec(
         provider,
         std::string(_model_path.get_file().get_basename().utf8().get_data()),
@@ -347,13 +366,23 @@ Ref<ChorusLoadResult> GodotChorus::load_model() {
 }
 
 #ifdef CHORUS_HOST_TEST
-void GodotChorus::test_hold_next_retirement() { _runtime.test_hold_next_retirement(); }
-bool GodotChorus::test_retirement_held() const { return _runtime.test_retirement_held(); }
-void GodotChorus::test_release_retirement() { _runtime.test_release_retirement(); }
+void GodotChorus::test_hold_next_retirement() {
+    _runtime.test_hold_next_retirement();
+}
+bool GodotChorus::test_retirement_held() const {
+    return _runtime.test_retirement_held();
+}
+void GodotChorus::test_release_retirement() {
+    _runtime.test_release_retirement();
+}
 #endif
 
-bool GodotChorus::cancel_load(int64_t load_id) { return _runtime.cancel_load(load_id); }
-int64_t GodotChorus::get_active_load_id() const { return _runtime.active_load_id().value_or(-1); }
+bool GodotChorus::cancel_load(int64_t load_id) {
+    return _runtime.cancel_load(load_id);
+}
+int64_t GodotChorus::get_active_load_id() const {
+    return _runtime.active_load_id().value_or(-1);
+}
 
 void GodotChorus::stop_all() {
     _runtime.stop_all();
@@ -377,7 +406,6 @@ int64_t GodotChorus::get_effective_context_size() const {
     const auto info = _runtime.loaded_model_info();
     return info ? info->per_request_context.value_or(0) : 0;
 }
-
 
 Ref<ChorusSubmitResult> GodotChorus::generate(const Ref<ChorusRequest>& request) {
     Ref<ChorusInferenceRequest> source = request;
@@ -470,23 +498,37 @@ int64_t GodotChorus::active_request_for_session(const StringName& session) const
 
 // Conversation history
 
-Ref<ChorusResult> GodotChorus::import_conversation_history(const StringName& session, const TypedArray<ChorusMessage>& history) {
+Ref<ChorusResult>
+GodotChorus::import_conversation_history(const StringName& session, const TypedArray<ChorusMessage>& history) {
     std::vector<Chorus::ConversationMessage> messages;
     messages.reserve(history.size());
     for (int i = 0; i < history.size(); ++i) {
         Ref<ChorusMessage> item = history[i];
         if (item.is_null())
-            return Ref<ChorusResult>(memnew(ChorusResult(ERR_INVALID_REQUEST, "history contains a null ChorusMessage.")));
+            return Ref<ChorusResult>(
+                memnew(ChorusResult(ERR_INVALID_REQUEST, "history contains a null ChorusMessage."))
+            );
         Chorus::MessageRole role;
         switch (item->get_role()) {
-        case ChorusRole::SYSTEM: role = Chorus::MessageRole::System; break;
-        case ChorusRole::USER: role = Chorus::MessageRole::User; break;
-        case ChorusRole::ASSISTANT: role = Chorus::MessageRole::Assistant; break;
-        default: return Ref<ChorusResult>(memnew(ChorusResult(ERR_INVALID_REQUEST, "history role is invalid.")));
+        case ChorusRole::SYSTEM:
+            role = Chorus::MessageRole::System;
+            break;
+        case ChorusRole::USER:
+            role = Chorus::MessageRole::User;
+            break;
+        case ChorusRole::ASSISTANT:
+            role = Chorus::MessageRole::Assistant;
+            break;
+        default:
+            return Ref<ChorusResult>(memnew(ChorusResult(ERR_INVALID_REQUEST, "history role is invalid.")));
         }
-        messages.push_back({item->get_id(), {role, Chorus::MessageContent::text(std::string(item->get_content().utf8().get_data()))}});
+        messages.push_back(
+            {item->get_id(), {role, Chorus::MessageContent::text(std::string(item->get_content().utf8().get_data()))}}
+        );
     }
-    return operation_result(_runtime.import_conversation_history(std::string(String(session).utf8().get_data()), std::move(messages)));
+    return operation_result(
+        _runtime.import_conversation_history(std::string(String(session).utf8().get_data()), std::move(messages))
+    );
 }
 
 TypedArray<ChorusMessage> GodotChorus::export_conversation_history(const StringName& session) const {
@@ -494,10 +536,17 @@ TypedArray<ChorusMessage> GodotChorus::export_conversation_history(const StringN
     for (const auto& item : _runtime.export_conversation_history(std::string(String(session).utf8().get_data()))) {
         ChorusRole::Value role;
         switch (item.message.role) {
-        case Chorus::MessageRole::System: role = ChorusRole::SYSTEM; break;
-        case Chorus::MessageRole::User: role = ChorusRole::USER; break;
-        case Chorus::MessageRole::Assistant: role = ChorusRole::ASSISTANT; break;
-        default: continue;
+        case Chorus::MessageRole::System:
+            role = ChorusRole::SYSTEM;
+            break;
+        case Chorus::MessageRole::User:
+            role = ChorusRole::USER;
+            break;
+        case Chorus::MessageRole::Assistant:
+            role = ChorusRole::ASSISTANT;
+            break;
+        default:
+            continue;
         }
         const auto content = Chorus::joined_text(item.message.content);
         if (content)
@@ -511,7 +560,11 @@ Ref<ChorusResult> GodotChorus::clear_conversation_history(const StringName& sess
 }
 
 Ref<ChorusResult> GodotChorus::edit_message(const StringName& session, int64_t message_id, const String& content) {
-    return operation_result(_runtime.edit_message(std::string(String(session).utf8().get_data()), message_id, Chorus::MessageContent::text(std::string(content.utf8().get_data()))));
+    return operation_result(_runtime.edit_message(
+        std::string(String(session).utf8().get_data()),
+        message_id,
+        Chorus::MessageContent::text(std::string(content.utf8().get_data()))
+    ));
 }
 
 TypedArray<StringName> GodotChorus::list_conversations() const {
@@ -526,7 +579,9 @@ Ref<ChorusResult> GodotChorus::reset_context() {
 }
 
 GodotChorus::TurnOutcomeCode GodotChorus::last_turn_outcome(const StringName& session) const {
-    return static_cast<TurnOutcomeCode>(to_godot(_runtime.last_turn_outcome(std::string(String(session).utf8().get_data()))));
+    return static_cast<TurnOutcomeCode>(
+        to_godot(_runtime.last_turn_outcome(std::string(String(session).utf8().get_data())))
+    );
 }
 
 Ref<ChorusSubmitResult> GodotChorus::render_prompt(const Ref<ChorusRequest>& request) {
@@ -542,8 +597,12 @@ Ref<ChorusSubmitResult> GodotChorus::render_prompt(const Ref<ChorusRequest>& req
 
 Ref<ChorusSubmitResult> GodotChorus::count_message_tokens(const String& content) {
     const CharString utf8 = content.utf8();
-    return submit_result({}, _runtime.count_message_tokens(Chorus::MessageContent::text(
-        std::string(utf8.get_data(), static_cast<size_t>(utf8.length())))));
+    return submit_result(
+        {},
+        _runtime.count_message_tokens(
+            Chorus::MessageContent::text(std::string(utf8.get_data(), static_cast<size_t>(utf8.length())))
+        )
+    );
 }
 
 // Properties
@@ -600,7 +659,9 @@ bool GodotChorus::_set(const StringName& name, const Variant& value) {
     }
     _load_options[descriptor->key] = std::move(*coerced);
     if (is_loaded() || get_active_load_id() >= 0)
-        UtilityFunctions::push_warning("[Chorus] load option changed while loaded or loading; takes effect on the next accepted load_model().");
+        UtilityFunctions::push_warning(
+            "[Chorus] load option changed while loaded or loading; takes effect on the next accepted load_model()."
+        );
     if (is_prerequisite_for_any_option(load_option_descriptors(), descriptor->key)) {
         // Dependent options may have entered or left the Inspector surface.
         notify_property_list_changed();
@@ -630,7 +691,9 @@ void GodotChorus::_get_property_list(List<PropertyInfo>* list) const {
         const bool enabled = Chorus::is_prerequisite_option_enabled(descriptors, descriptor, _load_options);
         list->push_back(godot_chorus::property_info_for(descriptor, enabled));
     }
-    list->push_back(PropertyInfo(Variant::NIL, "Advanced Provider Options", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_GROUP));
+    list->push_back(
+        PropertyInfo(Variant::NIL, "Advanced Provider Options", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_GROUP)
+    );
     for (const auto& descriptor : descriptors) {
         if (descriptor.presentation != Chorus::ProviderOptionPresentation::Advanced)
             continue;
@@ -711,14 +774,24 @@ float GodotChorus::similarity_cos(PackedFloat32Array array1, PackedFloat32Array 
 
 void GodotChorus::_bind_methods() {
     // Signals
-    ADD_SIGNAL(MethodInfo("model_load_progress", PropertyInfo(Variant::INT, "load_id"),
+    ADD_SIGNAL(MethodInfo(
+        "model_load_progress",
+        PropertyInfo(Variant::INT, "load_id"),
         PropertyInfo(Variant::STRING, "model_id"),
         PropertyInfo(Variant::INT, "phase", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT, "ChorusLoadPhase.Value"),
-        PropertyInfo(Variant::BOOL, "has_fraction"), PropertyInfo(Variant::FLOAT, "fraction")));
-    ADD_SIGNAL(MethodInfo("model_loaded", PropertyInfo(Variant::INT, "load_id"), PropertyInfo(Variant::STRING, "model_id")));
-    ADD_SIGNAL(MethodInfo("model_load_failed", PropertyInfo(Variant::INT, "load_id"),
-        PropertyInfo(Variant::STRING, "model_id"), PropertyInfo(Variant::INT, "error_code"),
-        PropertyInfo(Variant::STRING, "message")));
+        PropertyInfo(Variant::BOOL, "has_fraction"),
+        PropertyInfo(Variant::FLOAT, "fraction")
+    ));
+    ADD_SIGNAL(
+        MethodInfo("model_loaded", PropertyInfo(Variant::INT, "load_id"), PropertyInfo(Variant::STRING, "model_id"))
+    );
+    ADD_SIGNAL(MethodInfo(
+        "model_load_failed",
+        PropertyInfo(Variant::INT, "load_id"),
+        PropertyInfo(Variant::STRING, "model_id"),
+        PropertyInfo(Variant::INT, "error_code"),
+        PropertyInfo(Variant::STRING, "message")
+    ));
     ADD_SIGNAL(MethodInfo(
         "token_generated",
         PropertyInfo(Variant::INT, "request_id"),
@@ -774,11 +847,16 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::FLOAT, "produced_at")
     ));
 
-    ADD_SIGNAL(MethodInfo("prompt_rendered", PropertyInfo(Variant::INT, "request_id"),
-        PropertyInfo(Variant::STRING_NAME, "session"), PropertyInfo(Variant::STRING, "text"),
-        PropertyInfo(Variant::PACKED_INT64_ARRAY, "omitted_message_ids")));
-    ADD_SIGNAL(MethodInfo("message_token_counted", PropertyInfo(Variant::INT, "request_id"),
-        PropertyInfo(Variant::INT, "token_count")));
+    ADD_SIGNAL(MethodInfo(
+        "prompt_rendered",
+        PropertyInfo(Variant::INT, "request_id"),
+        PropertyInfo(Variant::STRING_NAME, "session"),
+        PropertyInfo(Variant::STRING, "text"),
+        PropertyInfo(Variant::PACKED_INT64_ARRAY, "omitted_message_ids")
+    ));
+    ADD_SIGNAL(MethodInfo(
+        "message_token_counted", PropertyInfo(Variant::INT, "request_id"), PropertyInfo(Variant::INT, "token_count")
+    ));
 
     // `GodotChorus::ErrorCode`
     BIND_ENUM_CONSTANT(ERR_NONE);
@@ -834,7 +912,9 @@ void GodotChorus::_bind_methods() {
     ClassDB::bind_method(D_METHOD("is_request_active", "request_id"), &GodotChorus::is_request_active);
     ClassDB::bind_method(D_METHOD("active_request_for_session", "session"), &GodotChorus::active_request_for_session);
 
-    ClassDB::bind_method(D_METHOD("import_conversation_history", "session", "history"), &GodotChorus::import_conversation_history);
+    ClassDB::bind_method(
+        D_METHOD("import_conversation_history", "session", "history"), &GodotChorus::import_conversation_history
+    );
     ClassDB::bind_method(D_METHOD("export_conversation_history", "session"), &GodotChorus::export_conversation_history);
     ClassDB::bind_method(D_METHOD("clear_conversation_history", "session"), &GodotChorus::clear_conversation_history);
     ClassDB::bind_method(D_METHOD("edit_message", "session", "message_id", "content"), &GodotChorus::edit_message);
@@ -855,8 +935,16 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::STRING, "model_path", PROPERTY_HINT_FILE, "*.gguf"), "set_model_path", "get_model_path"
     );
     ClassDB::bind_method(D_METHOD("get_effective_context_size"), &GodotChorus::get_effective_context_size);
-    ADD_PROPERTY(PropertyInfo(Variant::INT, "effective_context_size", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_effective_context_size");
-    ADD_PROPERTY(PropertyInfo(Variant::INT, "active_load_id", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_active_load_id");
+    ADD_PROPERTY(
+        PropertyInfo(Variant::INT, "effective_context_size", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY),
+        "",
+        "get_effective_context_size"
+    );
+    ADD_PROPERTY(
+        PropertyInfo(Variant::INT, "active_load_id", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY),
+        "",
+        "get_active_load_id"
+    );
 
     // Provider load options such as `context_size` and `use_gpu` are not bound
     // here. `GodotChorus::_get_property_list` renders the selected provider's

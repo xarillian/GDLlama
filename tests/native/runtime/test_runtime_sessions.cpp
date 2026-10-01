@@ -1,7 +1,7 @@
 #include "chorus/runtime/runtime.hpp"
+#include "gtest_utils.hpp"
 #include "support/runtime_test_utils.hpp"
 #include "sync_mock_engine.hpp"
-#include "gtest_utils.hpp"
 
 #include <iostream>
 #include <map>
@@ -118,7 +118,9 @@ TEST(RuntimeSessions, Runtime_session_released_only_when_terminal_drained) {
     auto load = wait_load_terminal(runtime, std::move(admission));
     ASSERT_TRUE(load.ok());
     auto events = load.events;
-    std::erase_if(events, [](const auto& event) { return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress; });
+    std::erase_if(events, [](const auto& event) {
+        return event.kind == Chorus::RuntimeEvent::Kind::ModelLoadProgress;
+    });
     ASSERT_EQ(events.size(), 2U);
     ASSERT_EQ(events[1].kind, Chorus::RuntimeEvent::Kind::ModelLoaded);
     ASSERT_TRUE(events[0].error == Chorus::ChorusError::Cancelled);
@@ -268,9 +270,9 @@ TEST(RuntimeSessions, Runtime_embedding_batch_cancellation_is_independent) {
     mock->emit_cancelled_on_cancel = true;
     load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
 
-    const auto results = runtime.submit_batch(std::vector<Chorus::EmbeddingRequest>{
-        embedding("first", "one"), embedding("second", "two")
-    });
+    const auto results = runtime.submit_batch(
+        std::vector<Chorus::EmbeddingRequest>{embedding("first", "one"), embedding("second", "two")}
+    );
     ASSERT_EQ(results.size(), 2U);
     ASSERT_TRUE(results[0].ok());
     ASSERT_TRUE(results[1].ok());
@@ -289,7 +291,9 @@ TEST(RuntimeSessions, Runtime_batches_follow_singular_input_order) {
     auto mock = std::make_unique<SyncMockEngine>();
     mock->hold_requests = true;
     load_runtime(runtime, std::move(mock), Chorus::ChorusConfig{});
-    const auto results = runtime.submit_batch(std::vector<Chorus::GenerationRequest>{sessioned("one", "s"), sessioned("two", "s"), stateless("three")});
+    const auto results = runtime.submit_batch(
+        std::vector<Chorus::GenerationRequest>{sessioned("one", "s"), sessioned("two", "s"), stateless("three")}
+    );
     ASSERT_EQ(results.size(), 3U);
     ASSERT_TRUE(results[0].ok());
     ASSERT_EQ(results[1].error, Chorus::ChorusError::SessionBusy);

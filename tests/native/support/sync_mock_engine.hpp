@@ -5,10 +5,10 @@
 #include "chorus/core/log.hpp"
 
 #include <algorithm>
-#include <functional>
-#include <optional>
-#include <mutex>
 #include <atomic>
+#include <functional>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -50,12 +50,13 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     std::vector<int64_t> submitted_ids;
     std::vector<Chorus::RequestId> cancelled_ids;
     std::vector<Chorus::ChatMessage> last_messages; // messages of the last submitted request
-    std::optional<std::string> last_chat_template;                 // template of the last submitted request
+    std::optional<std::string> last_chat_template;  // template of the last submitted request
     Chorus::GenerationConfig last_config;           // resolved config of the last submitted request
     Chorus::ExecutionMode last_execution = Chorus::ExecutionMode::Shared;
 
-    std::optional<Chorus::InitializationFailure>
-    initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger, const Chorus::InitializationControl& control) override {
+    std::optional<Chorus::InitializationFailure> initialize(
+        const Chorus::ChorusConfig& config, Chorus::Logger logger, const Chorus::InitializationControl& control
+    ) override {
         if (control.stop_token.stop_requested())
             return Chorus::InitializationFailure{Chorus::ChorusError::Cancelled, "mock initialization cancelled"};
         initialize_calls++;
@@ -160,8 +161,12 @@ class SyncMockEngine : public Chorus::InferenceEngine {
             int64_t count = 0;
             bool word = false;
             for (char c : text) {
-                if (c == ' ') word = false;
-                else if (!word) { word = true; ++count; }
+                if (c == ' ')
+                    word = false;
+                else if (!word) {
+                    word = true;
+                    ++count;
+                }
             }
             return count;
         }
@@ -203,7 +208,9 @@ class SyncMockEngine : public Chorus::InferenceEngine {
             if (emit_embedding_event)
                 send(req.on_event, req.id, Chorus::ChorusSignal::Embedding{embedding_values});
             if (emit_error_instead_of_stop) {
-                send(req.on_event, req.id, Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "embedding failed"});
+                send(
+                    req.on_event, req.id, Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "embedding failed"}
+                );
                 return;
             }
             if (emit_stop)
@@ -221,11 +228,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
 
         if (!tokens.empty()) {
             for (const auto& text : tokens)
-                send(
-                    req.on_event,
-                    req.id,
-                    Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, text}
-                );
+                send(req.on_event, req.id, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, text});
         } else if (!req.messages.empty()) {
             // Deterministic assistant reply for chat-shaped tests: the last
             // user message's content, echoed as a single Token. Opt in by
@@ -237,18 +240,10 @@ class SyncMockEngine : public Chorus::InferenceEngine {
                     break;
                 }
             }
-            send(
-                req.on_event,
-                req.id,
-                Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, std::move(reply)}
-            );
+            send(req.on_event, req.id, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, std::move(reply)});
         }
         if (rogue_extra_id >= 0)
-            send(
-                req.on_event,
-                rogue_extra_id,
-                Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, "rogue"}
-            );
+            send(req.on_event, rogue_extra_id, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, "rogue"});
         if (emit_embedding_event)
             send(req.on_event, req.id, Chorus::ChorusSignal::Embedding{});
         if (emit_error_instead_of_stop) {
@@ -264,11 +259,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         if (emit_duplicate_stop)
             send(req.on_event, req.id, Chorus::ChorusSignal::Stop{});
         if (emit_token_after_stop)
-            send(
-                req.on_event,
-                req.id,
-                Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, "late"}
-            );
+            send(req.on_event, req.id, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, "late"});
     }
 
     void cancel_request(Chorus::RequestId id) override {

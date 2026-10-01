@@ -44,7 +44,8 @@ TEST(EngineFactory, Factory_echo_engine_round_trips_through_interface) {
 
     std::lock_guard<std::mutex> lock(sig_mutex);
     ASSERT_EQ(sigs.size(), 3); // "seam " + "proof" + Stop
-    std::string reassembled = std::get<Chorus::ChorusSignal::Token>(sigs[0].event).text + std::get<Chorus::ChorusSignal::Token>(sigs[1].event).text;
+    std::string reassembled = std::get<Chorus::ChorusSignal::Token>(sigs[0].event).text +
+                              std::get<Chorus::ChorusSignal::Token>(sigs[1].event).text;
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Token>(sigs[0].event));
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Token>(sigs[1].event));
     ASSERT_TRUE(reassembled == "seam proof");

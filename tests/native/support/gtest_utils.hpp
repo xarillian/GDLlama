@@ -20,9 +20,7 @@ class ChorusModelTest : public ::testing::Test {
             GTEST_SKIP() << "model tests disabled (CHORUS_SKIP_MODEL_TESTS=1)";
     }
 
-    void SetUp() override {
-        skip_if_model_tests_disabled();
-    }
+    void SetUp() override { skip_if_model_tests_disabled(); }
 };
 
 class ChorusGpuModelTest : public ::testing::Test {

@@ -9,9 +9,7 @@ namespace Chorus {
 
 class LlamaSequenceIdPool {
   public:
-    explicit LlamaSequenceIdPool(int count = 0) {
-        reset(count);
-    }
+    explicit LlamaSequenceIdPool(int count = 0) { reset(count); }
 
     void reset(int count = 0) {
         if (count < 0)

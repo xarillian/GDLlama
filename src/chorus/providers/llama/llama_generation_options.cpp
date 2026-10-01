@@ -31,29 +31,24 @@ enum class FloatRange {
 
 struct IntegerOption {
     IntegerRange range;
-    int32_t common_params_sampling::*member;
+    int32_t common_params_sampling::* member;
 };
 
 struct FloatOption {
     FloatRange range;
-    float common_params_sampling::*member;
+    float common_params_sampling::* member;
 };
 
 struct BoolOption {
-    bool common_params_sampling::*member;
+    bool common_params_sampling::* member;
 };
 
 struct DrySequenceBreakersOption {};
 struct SamplerOrderOption {};
 struct LogitBiasOption {};
 
-using OptionRule = std::variant<
-    IntegerOption,
-    FloatOption,
-    BoolOption,
-    DrySequenceBreakersOption,
-    SamplerOrderOption,
-    LogitBiasOption>;
+using OptionRule = std::
+    variant<IntegerOption, FloatOption, BoolOption, DrySequenceBreakersOption, SamplerOrderOption, LogitBiasOption>;
 
 struct OptionDescriptor {
     const char* public_key;
@@ -77,10 +72,8 @@ const std::array<OptionDescriptor, 23> kProviderOptions{{
     {"min_keep", IntegerOption{IntegerRange::NonnegativeInt32, &common_params_sampling::min_keep}},
     {"min_p", FloatOption{FloatRange::Probability, &common_params_sampling::min_p}},
     {"typical_p", FloatOption{FloatRange::Probability, &common_params_sampling::typ_p}},
-    {"dynamic_temperature_range",
-     FloatOption{FloatRange::Nonnegative, &common_params_sampling::dynatemp_range}},
-    {"dynamic_temperature_exponent",
-     FloatOption{FloatRange::Finite, &common_params_sampling::dynatemp_exponent}},
+    {"dynamic_temperature_range", FloatOption{FloatRange::Nonnegative, &common_params_sampling::dynatemp_range}},
+    {"dynamic_temperature_exponent", FloatOption{FloatRange::Finite, &common_params_sampling::dynatemp_exponent}},
     {"penalty_last_n", IntegerOption{IntegerRange::SentinelInt32, &common_params_sampling::penalty_last_n}},
     {"repeat_penalty", FloatOption{FloatRange::RepeatPenalty, &common_params_sampling::penalty_repeat}},
     {"ignore_eos", BoolOption{&common_params_sampling::ignore_eos}},
@@ -91,10 +84,8 @@ const std::array<OptionDescriptor, 23> kProviderOptions{{
     {"xtc_threshold", FloatOption{FloatRange::Probability, &common_params_sampling::xtc_threshold}},
     {"dry_multiplier", FloatOption{FloatRange::Nonnegative, &common_params_sampling::dry_multiplier}},
     {"dry_base", FloatOption{FloatRange::DryBase, &common_params_sampling::dry_base}},
-    {"dry_allowed_length",
-     IntegerOption{IntegerRange::NonnegativeInt32, &common_params_sampling::dry_allowed_length}},
-    {"dry_penalty_last_n",
-     IntegerOption{IntegerRange::SentinelInt32, &common_params_sampling::dry_penalty_last_n}},
+    {"dry_allowed_length", IntegerOption{IntegerRange::NonnegativeInt32, &common_params_sampling::dry_allowed_length}},
+    {"dry_penalty_last_n", IntegerOption{IntegerRange::SentinelInt32, &common_params_sampling::dry_penalty_last_n}},
     {"dry_sequence_breakers", DrySequenceBreakersOption{}},
     {"sampler_order", SamplerOrderOption{}},
     {"logit_bias", LogitBiasOption{}},
@@ -236,7 +227,6 @@ const OptionDescriptor* find_descriptor(const std::string& key) {
     }
     return nullptr;
 }
-
 
 std::optional<common_sampler_type> sampler_type_for_name(const std::string& name) {
     constexpr std::array<std::pair<const char*, common_sampler_type>, 10> sampler_types{{

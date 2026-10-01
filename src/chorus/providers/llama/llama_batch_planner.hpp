@@ -58,18 +58,21 @@ inline std::optional<LlamaPlannedBatch> llama_plan_batch(
     if (sequences.empty())
         return std::nullopt;
     const int priority = sequences.front().priority;
-    std::erase_if(sequences, [priority](const LlamaPlannerSequence& sequence) { return sequence.priority != priority; });
+    std::erase_if(sequences, [priority](const LlamaPlannerSequence& sequence) {
+        return sequence.priority != priority;
+    });
     const bool has_generation = std::ranges::any_of(sequences, [](const LlamaPlannerSequence& sequence) {
         return sequence.type == RequestType::Generate;
     });
     const bool has_embedding = std::ranges::any_of(sequences, [](const LlamaPlannerSequence& sequence) {
         return sequence.type == RequestType::Embedding;
     });
-    const RequestType type = has_generation && has_embedding
-                                 ? (last_contested_type ? (*last_contested_type == RequestType::Generate ? RequestType::Embedding
-                                                                                                           : RequestType::Generate)
-                                                        : sequences.front().type)
-                                 : (has_generation ? RequestType::Generate : RequestType::Embedding);
+    const RequestType type =
+        has_generation && has_embedding
+            ? (last_contested_type
+                   ? (*last_contested_type == RequestType::Generate ? RequestType::Embedding : RequestType::Generate)
+                   : sequences.front().type)
+            : (has_generation ? RequestType::Generate : RequestType::Embedding);
     std::erase_if(sequences, [type](const LlamaPlannerSequence& sequence) { return sequence.type != type; });
 
     LlamaPlannedBatch plan{type};
@@ -99,13 +102,15 @@ inline std::optional<LlamaPlannedBatch> llama_plan_batch(
         if (sequence.phase == LlamaPlannerPhase::Decode)
             decoders.push_back(sequence);
     }
-    std::ranges::sort(decoders, [decode_fairness_cursor](const LlamaPlannerSequence& left, const LlamaPlannerSequence& right) {
-        const bool left_after = left.submission_sequence >= decode_fairness_cursor;
-        const bool right_after = right.submission_sequence >= decode_fairness_cursor;
-        if (left_after != right_after)
-            return left_after;
-        return left.submission_sequence < right.submission_sequence;
-    });
+    std::ranges::sort(
+        decoders, [decode_fairness_cursor](const LlamaPlannerSequence& left, const LlamaPlannerSequence& right) {
+            const bool left_after = left.submission_sequence >= decode_fairness_cursor;
+            const bool right_after = right.submission_sequence >= decode_fairness_cursor;
+            if (left_after != right_after)
+                return left_after;
+            return left.submission_sequence < right.submission_sequence;
+        }
+    );
     for (const auto& sequence : decoders) {
         if (remaining == 0)
             break;

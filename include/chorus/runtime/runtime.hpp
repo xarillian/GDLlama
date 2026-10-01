@@ -406,10 +406,17 @@ class ChorusRuntime {
     void lifecycle_loop();
     void retire_lifetime(EngineLifetime& lifetime);
     void append_load_events(std::vector<RuntimeEvent>& events, const std::function<void()>& drain_retiring);
-    static void enqueue_signal(PreparationState& state, const ChorusSignal& signal, const std::shared_ptr<Control>& control);
+    static void
+    enqueue_signal(PreparationState& state, const ChorusSignal& signal, const std::shared_ptr<Control>& control);
     static void preparation_loop(std::shared_ptr<PreparationState> state);
     static void prepare(PreparationState& state, PreparationJob& job);
-    static void publish_error(PreparationState& state, RequestId id, const std::shared_ptr<Control>& control, ChorusError error, std::string message);
+    static void publish_error(
+        PreparationState& state,
+        RequestId id,
+        const std::shared_ptr<Control>& control,
+        ChorusError error,
+        std::string message
+    );
     static void fail_preparation(PreparationState& state);
     void append_signal_events(const ChorusSignal& signal, std::vector<RuntimeEvent>& events);
     void append_engine_failure(std::vector<RuntimeEvent>& events);

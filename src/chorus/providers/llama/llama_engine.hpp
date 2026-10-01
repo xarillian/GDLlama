@@ -38,14 +38,17 @@ class LlamaEngine : public InferenceEngine {
   public:
     ~LlamaEngine() override;
 
-    std::optional<Chorus::InitializationFailure>
-    initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger, const InitializationControl& control) override;
+    std::optional<Chorus::InitializationFailure> initialize(
+        const Chorus::ChorusConfig& config, Chorus::Logger logger, const InitializationControl& control
+    ) override;
     bool is_initialized() const override;
 
     EngineCapabilities capabilities() const override;
     std::optional<LoadedModelInfo> loaded_model_info() const override;
     std::optional<RenderedPrompt> render_chat_prompt(
-        const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
+        const std::vector<ChatMessage>& messages,
+        const std::optional<std::string>& template_override,
+        std::optional<bool> enable_thinking
     ) const override;
 
     std::optional<RequestRejection> validate_request(const Chorus::ChorusRequest& request) const override;

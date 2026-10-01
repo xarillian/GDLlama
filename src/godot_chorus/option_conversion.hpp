@@ -8,8 +8,8 @@
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/string.hpp>
-#include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_cpp/variant/variant.hpp>
 
 #include "chorus/core/provider_option_value.hpp"
 
@@ -124,9 +124,8 @@ class OptionValueConversion {
  *  - `std::optional<Chorus::ProviderOptionValue>`: the converted value.
  *  - `std::nullopt`: invalid input, with a diagnostic in `error`.
  */
-inline std::optional<Chorus::ProviderOptionValue> variant_to_option_value(
-    const godot::Variant& value, std::string& error
-) {
+inline std::optional<Chorus::ProviderOptionValue>
+variant_to_option_value(const godot::Variant& value, std::string& error) {
     error.clear();
     return detail::OptionValueConversion(error).convert(value);
 }

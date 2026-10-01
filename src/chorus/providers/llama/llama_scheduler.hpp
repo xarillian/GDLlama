@@ -3,20 +3,20 @@
 #include "chorus/core/capabilities.hpp"
 #include "chorus/core/common.hpp"
 #include "chorus/core/inference_engine.hpp"
-#include <shared_mutex>
 #include "chorus/providers/llama/llama_batch_planner.hpp"
 #include "chorus/providers/llama/llama_batch_sampler.hpp"
 #include "chorus/providers/llama/llama_chat.hpp"
 #include "chorus/providers/llama/llama_chat_renderer.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
+#include "chorus/providers/llama/llama_log_bridge.hpp"
 #include "chorus/providers/llama/llama_recovery_planner.hpp"
 #include "chorus/providers/llama/llama_sequence_id_pool.hpp"
 #include "chorus/providers/llama/llama_session_cache.hpp"
-#include "chorus/providers/llama/llama_log_bridge.hpp"
 #include "chorus/providers/llama/llama_utils.hpp"
 #include "chorus/providers/llama/stop_sequence_filter.hpp"
 #include "wlib/utf8.hpp"
+#include <shared_mutex>
 
 #include <atomic>
 #include <condition_variable>
@@ -54,7 +54,8 @@ class LlamaScheduler : public Chorus::RequestPreparation {
   public:
     ~LlamaScheduler();
 
-    std::optional<Chorus::InitializationFailure> initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger, const Chorus::InitializationControl& control);
+    std::optional<Chorus::InitializationFailure>
+    initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger, const Chorus::InitializationControl& control);
     bool push_request(Chorus::ChorusRequest req);
     void cancel_request(Chorus::RequestId id);
     void shutdown();
@@ -71,7 +72,9 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     std::optional<Chorus::RequestRejection> validate_request(const Chorus::ChorusRequest& request) const override;
     std::variant<int64_t, Chorus::RequestRejection> count_message_tokens(const std::string& text) const override;
     std::variant<Chorus::RenderedPrompt, Chorus::RequestRejection> render_chat_prompt(
-        const std::vector<Chorus::ChatMessage>& messages, const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
+        const std::vector<Chorus::ChatMessage>& messages,
+        const std::optional<std::string>& template_override,
+        std::optional<bool> enable_thinking
     ) const;
 
   private:
@@ -150,8 +153,12 @@ class LlamaScheduler : public Chorus::RequestPreparation {
         std::optional<uint64_t> decode_fairness;
     };
 
-    bool load_model_from_file(const Chorus::LlamaLoadConfig& config, const Chorus::InitializationControl& control,
-                              bool& callback_cancelled, bool& callback_failed);
+    bool load_model_from_file(
+        const Chorus::LlamaLoadConfig& config,
+        const Chorus::InitializationControl& control,
+        bool& callback_cancelled,
+        bool& callback_failed
+    );
     bool init_context(const Chorus::LlamaLoadConfig& config);
     void worker_loop();
     void run_worker();
@@ -180,7 +187,8 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     void advance_sequence(Sequence& sequence, llama_token token);
     void process_embedding_plan(const BatchPlan& plan);
     bool recover_decode(const BatchPlan& failed);
-    std::optional<BatchPlan> recovery_plan(const BatchPlan& failed, const Chorus::LlamaRecoverySelection& selection) const;
+    std::optional<BatchPlan>
+    recovery_plan(const BatchPlan& failed, const Chorus::LlamaRecoverySelection& selection) const;
     std::string recovery_capacity_message() const;
 
     void retire_sequence(int sequence_id, Chorus::ChorusSignal::Event event, std::vector<PendingSignal>& signals);

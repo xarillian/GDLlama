@@ -1,12 +1,12 @@
 #include "chorus_c/chorus_c.h"
 #include "gtest_utils.hpp"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <atomic>
-#include <algorithm>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <thread>
@@ -30,7 +30,9 @@ RuntimePtr loaded_runtime() {
     EXPECT_TRUE(runtime != nullptr);
     if (runtime) {
         chorus_load_result result{};
-        EXPECT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, &result), CHORUS_OK);
+        EXPECT_EQ(
+            chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, &result), CHORUS_OK
+        );
         EXPECT_EQ(result.error, CHORUS_OK);
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         bool loaded = false;
@@ -42,7 +44,8 @@ RuntimePtr loaded_runtime() {
                 EXPECT_NE(events[i].kind, CHORUS_EVENT_MODEL_LOAD_FAILED);
                 loaded |= events[i].kind == CHORUS_EVENT_MODEL_LOADED;
             }
-            if (!loaded) std::this_thread::yield();
+            if (!loaded)
+                std::this_thread::yield();
         }
         EXPECT_TRUE(loaded);
     }
@@ -179,14 +182,18 @@ TEST(ChorusC, Chat_choices_clear_locally_and_invalid_builder_inputs_do_not_chang
     ASSERT_EQ(chorus_request_set_chat_template(request.get(), "template"), CHORUS_OK);
     generate(CHORUS_ERR_UNSUPPORTED_OPTION);
     ASSERT_EQ(chorus_request_clear_chat_template(request.get()), CHORUS_OK);
-    ASSERT_EQ(chorus_request_set_constraint(request.get(), static_cast<chorus_constraint_format>(99), "x"), CHORUS_ERR_INVALID_REQUEST);
-    ASSERT_EQ(chorus_request_set_constraint(request.get(), CHORUS_CONSTRAINT_GBNF, nullptr), CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(
+        chorus_request_set_constraint(request.get(), static_cast<chorus_constraint_format>(99), "x"),
+        CHORUS_ERR_INVALID_REQUEST
+    );
+    ASSERT_EQ(
+        chorus_request_set_constraint(request.get(), CHORUS_CONSTRAINT_GBNF, nullptr), CHORUS_ERR_INVALID_REQUEST
+    );
     ASSERT_EQ(chorus_request_add_stop(request.get(), nullptr), CHORUS_ERR_INVALID_REQUEST);
     ASSERT_EQ(chorus_request_clear_provider_option(request.get(), nullptr, "key"), CHORUS_ERR_INVALID_REQUEST);
     ASSERT_EQ(chorus_request_clear_provider_option(request.get(), "echo", nullptr), CHORUS_ERR_INVALID_REQUEST);
     generate(CHORUS_OK);
 }
-
 
 TEST(ChorusC, Load_admission_cancellation_and_retry_are_identified_and_keep_event_storage) {
     RuntimePtr runtime = loaded_runtime();
@@ -198,15 +205,23 @@ TEST(ChorusC, Load_admission_cancellation_and_retry_are_identified_and_keep_even
     ASSERT_EQ(generated[0].kind, CHORUS_EVENT_COMPLETE);
 
     chorus_load_result rejected{42, CHORUS_OK, nullptr};
-    ASSERT_EQ(chorus_load(runtime.get(), static_cast<chorus_provider>(99), nullptr, nullptr, CHORUS_LOG_OFF, &rejected), CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(
+        chorus_load(runtime.get(), static_cast<chorus_provider>(99), nullptr, nullptr, CHORUS_LOG_OFF, &rejected),
+        CHORUS_ERR_INVALID_REQUEST
+    );
     ASSERT_EQ(rejected.load_id, -1);
     ASSERT_EQ(rejected.error, CHORUS_ERR_INVALID_REQUEST);
     ASSERT_TRUE(chorus_is_loaded(runtime.get()));
-    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, nullptr), CHORUS_ERR_INVALID_REQUEST);
+    ASSERT_EQ(
+        chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, nullptr),
+        CHORUS_ERR_INVALID_REQUEST
+    );
     ASSERT_TRUE(chorus_is_loaded(runtime.get()));
 
     chorus_load_result cancelled{};
-    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, &cancelled), CHORUS_OK);
+    ASSERT_EQ(
+        chorus_load(runtime.get(), CHORUS_PROVIDER_ECHO, nullptr, nullptr, CHORUS_LOG_OFF, &cancelled), CHORUS_OK
+    );
     ASSERT_EQ(cancelled.error, CHORUS_OK);
     ASSERT_FALSE(chorus_is_loaded(runtime.get()));
     ASSERT_EQ(chorus_active_load_id(runtime.get()), cancelled.load_id);
@@ -225,14 +240,16 @@ TEST(ChorusC, Load_admission_cancellation_and_retry_are_identified_and_keep_even
         size_t count = 0;
         const auto* events = chorus_poll(runtime.get(), &count);
         for (size_t i = 0; i < count; ++i) {
-            if (events[i].kind != CHORUS_EVENT_MODEL_LOAD_FAILED) continue;
+            if (events[i].kind != CHORUS_EVENT_MODEL_LOAD_FAILED)
+                continue;
             EXPECT_EQ(events[i].load_id, cancelled.load_id);
             EXPECT_EQ(events[i].error, CHORUS_ERR_CANCELLED);
             EXPECT_STREQ(events[i].model_id, "");
             EXPECT_EQ(events[i].request_id, -1);
             failed = true;
         }
-        if (!failed) std::this_thread::yield();
+        if (!failed)
+            std::this_thread::yield();
     }
     ASSERT_TRUE(failed);
     ASSERT_EQ(chorus_active_load_id(runtime.get()), -1);
@@ -246,7 +263,8 @@ TEST(ChorusC, Load_admission_cancellation_and_retry_are_identified_and_keep_even
         size_t count = 0;
         const auto* events = chorus_poll(runtime.get(), &count);
         for (size_t i = 0; i < count; ++i) {
-            if (events[i].kind != CHORUS_EVENT_MODEL_LOADED) continue;
+            if (events[i].kind != CHORUS_EVENT_MODEL_LOADED)
+                continue;
             EXPECT_EQ(events[i].load_id, retry.load_id);
             EXPECT_EQ(events[i].request_id, -1);
             const char* model = events[i].model_id;
@@ -256,7 +274,8 @@ TEST(ChorusC, Load_admission_cancellation_and_retry_are_identified_and_keep_even
             EXPECT_STREQ(model, "");
             loaded = true;
         }
-        if (!loaded) std::this_thread::yield();
+        if (!loaded)
+            std::this_thread::yield();
     }
     ASSERT_TRUE(loaded);
     ASSERT_TRUE(chorus_is_loaded(runtime.get()));
@@ -293,7 +312,8 @@ TEST(ChorusC, Request_event_snapshot_survives_load_submission_and_log_poll) {
         const auto* events = chorus_poll(runtime.get(), &count);
         if (count && events[0].kind == CHORUS_EVENT_COMPLETE)
             snapshot = events;
-        if (!snapshot) std::this_thread::yield();
+        if (!snapshot)
+            std::this_thread::yield();
     }
     ASSERT_NE(snapshot, nullptr);
     const char* text = snapshot[0].text;
@@ -310,7 +330,12 @@ TEST(ChorusC, Request_event_snapshot_survives_load_submission_and_log_poll) {
 TEST(ChorusC, Missing_model_fails_after_admission_and_diagnostic_survives_other_calls) {
     RuntimePtr runtime = loaded_runtime();
     chorus_load_result result{};
-    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_LLAMA, "tests/models/not-present.gguf", nullptr, CHORUS_LOG_OFF, &result), CHORUS_OK);
+    ASSERT_EQ(
+        chorus_load(
+            runtime.get(), CHORUS_PROVIDER_LLAMA, "tests/models/not-present.gguf", nullptr, CHORUS_LOG_OFF, &result
+        ),
+        CHORUS_OK
+    );
     ASSERT_EQ(result.error, CHORUS_OK);
     const auto id = result.load_id;
     ASSERT_FALSE(chorus_is_loaded(runtime.get()));
@@ -320,7 +345,8 @@ TEST(ChorusC, Missing_model_fails_after_admission_and_diagnostic_survives_other_
         size_t count = 0;
         const auto* events = chorus_poll(runtime.get(), &count);
         for (size_t i = 0; i < count; ++i) {
-            if (events[i].kind != CHORUS_EVENT_MODEL_LOAD_FAILED) continue;
+            if (events[i].kind != CHORUS_EVENT_MODEL_LOAD_FAILED)
+                continue;
             ASSERT_EQ(events[i].load_id, id);
             ASSERT_EQ(events[i].error, CHORUS_ERR_MODEL_LOAD);
             ASSERT_NE(events[i].model_id, nullptr);
@@ -332,7 +358,8 @@ TEST(ChorusC, Missing_model_fails_after_admission_and_diagnostic_survives_other_
             ASSERT_FALSE(std::string(text).empty());
             failed = true;
         }
-        if (!failed) std::this_thread::yield();
+        if (!failed)
+            std::this_thread::yield();
     }
     ASSERT_TRUE(failed);
     ASSERT_FALSE(chorus_is_loaded(runtime.get()));
@@ -365,7 +392,9 @@ TEST(ChorusC, Generation_batch_initializes_every_slot_and_preserves_diagnostics)
     ASSERT_EQ(results[2].error, CHORUS_OK);
     ASSERT_TRUE(results[2].request_id >= 0);
     const auto events = wait_events(runtime.get(), 3);
-    const auto failed = std::find_if(events.begin(), events.end(), [&](const auto& event) { return event.id == results[1].request_id; });
+    const auto failed = std::find_if(events.begin(), events.end(), [&](const auto& event) {
+        return event.id == results[1].request_id;
+    });
     ASSERT_NE(failed, events.end());
     ASSERT_EQ(failed->error, CHORUS_ERR_UNSUPPORTED_OPTION);
 }
@@ -562,8 +591,8 @@ void write_bytes(const std::filesystem::path& path, const std::string& bytes) {
 std::filesystem::path disposable_dir() {
     static std::atomic<unsigned> next{0};
     auto path = std::filesystem::path("_project/verification/adr-compliance-2026-09-25/adr-007") /
-        ("c-files-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-         "-" + std::to_string(next++));
+                ("c-files-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+                 std::to_string(next++));
     std::filesystem::create_directories(path);
     return path;
 }
@@ -582,7 +611,8 @@ TEST(ChorusC, Defaults_content_file_and_two_runtimes_preserve_presence_and_prior
     auto request = request_with_prompt("hello");
     const auto directory = disposable_dir();
     const auto path = directory / "selected.json";
-    const std::string content = R"({"version":1,"generation":{"max_tokens":0,"stop":[],"show_thinking":false,"provider_options":{"llama":{"logit_bias":{}}}}})";
+    const std::string content =
+        R"({"version":1,"generation":{"max_tokens":0,"stop":[],"show_thinking":false,"provider_options":{"llama":{"logit_bias":{}}}}})";
     write_bytes(path, content);
     ASSERT_EQ(chorus_generation_defaults_load_file(first.get(), path.c_str()), CHORUS_OK);
     ASSERT_EQ(chorus_generation_defaults_apply_json(second.get(), content.data(), content.size()), CHORUS_OK);
@@ -606,7 +636,8 @@ TEST(ChorusC, Defaults_validation_failure_does_not_replace_runtime_or_destinatio
     auto request = request_with_prompt("hello");
     const std::string selected = R"({"version":1,"generation":{"max_tokens":0}})";
     ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), selected.data(), selected.size()), CHORUS_OK);
-    const std::string escaped_nul = R"({"version":1,"generation":{"max_tokens":0,"provider_options":{"foreign":{"a\u0000b":"x\u0000y"}}}})";
+    const std::string escaped_nul =
+        R"({"version":1,"generation":{"max_tokens":0,"provider_options":{"foreign":{"a\u0000b":"x\u0000y"}}}})";
     ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), escaped_nul.data(), escaped_nul.size()), CHORUS_OK);
     EXPECT_NE(defaults_json(runtime.get()).find("\\u0000"), std::string::npos);
     EXPECT_EQ(generate_echo(runtime.get(), request.get()).text, "");
@@ -633,7 +664,10 @@ TEST(ChorusC, Defaults_validation_failure_does_not_replace_runtime_or_destinatio
     EXPECT_EQ(chorus_generation_defaults_apply_json(runtime.get(), bad.data(), bad.size()), CHORUS_ERR_INVALID_REQUEST);
     for (const auto& suffix : {std::string(1, '\0'), std::string("\0garbage", 8)}) {
         const auto invalid_bytes = selected + suffix;
-        EXPECT_EQ(chorus_generation_defaults_apply_json(runtime.get(), invalid_bytes.data(), invalid_bytes.size()), CHORUS_ERR_INVALID_REQUEST);
+        EXPECT_EQ(
+            chorus_generation_defaults_apply_json(runtime.get(), invalid_bytes.data(), invalid_bytes.size()),
+            CHORUS_ERR_INVALID_REQUEST
+        );
         EXPECT_EQ(defaults_json(runtime.get()), selected);
     }
     EXPECT_EQ(chorus_generation_defaults_apply_json(runtime.get(), "", 0), CHORUS_ERR_INVALID_REQUEST);
@@ -658,7 +692,8 @@ TEST(ChorusC, Defaults_missing_file_creation_and_explicit_save_do_not_write_on_a
     ASSERT_EQ(chorus_generation_defaults_load_file(runtime.get(), selected.c_str()), CHORUS_OK);
     EXPECT_EQ(read_bytes(selected), R"({"version":1,"generation":{}})");
     EXPECT_EQ(defaults_json(runtime.get()), read_bytes(selected));
-    const std::string content = R"({"version":1,"generation":{"max_tokens":0,"seed":18446744073709551615,"constraint":{"kind":"unconstrained"},"chat_template":""}})";
+    const std::string content =
+        R"({"version":1,"generation":{"max_tokens":0,"seed":18446744073709551615,"constraint":{"kind":"unconstrained"},"chat_template":""}})";
     ASSERT_EQ(chorus_generation_defaults_apply_json(runtime.get(), content.data(), content.size()), CHORUS_OK);
     EXPECT_EQ(read_bytes(selected), R"({"version":1,"generation":{}})");
     ASSERT_EQ(chorus_generation_defaults_save_file(runtime.get(), selected.c_str()), CHORUS_OK);
@@ -688,21 +723,25 @@ TEST(ChorusC, Defaults_concurrent_missing_file_selection_adopts_one_complete_doc
         threads.emplace_back([&, i] {
             RuntimePtr runtime(chorus_runtime_new());
             ready.fetch_add(1);
-            while (!start.load()) std::this_thread::yield();
+            while (!start.load())
+                std::this_thread::yield();
             errors[i] = chorus_generation_defaults_load_file(runtime.get(), selected.c_str());
             if (errors[i] != CHORUS_OK)
                 diagnostics[i] = chorus_last_error_message(runtime.get());
             if (errors[i] == CHORUS_OK) {
                 char* json = nullptr;
                 errors[i] = chorus_generation_defaults_export_json(runtime.get(), &json);
-                if (json) exports[i] = json;
+                if (json)
+                    exports[i] = json;
                 chorus_string_free(json);
             }
         });
     }
-    while (ready.load() != callers) std::this_thread::yield();
+    while (ready.load() != callers)
+        std::this_thread::yield();
     start.store(true);
-    for (auto& thread : threads) thread.join();
+    for (auto& thread : threads)
+        thread.join();
     for (int i = 0; i < callers; ++i) {
         EXPECT_EQ(errors[i], CHORUS_OK) << i << ": " << diagnostics[i];
         EXPECT_EQ(exports[i], R"({"version":1,"generation":{}})") << i;
@@ -762,7 +801,17 @@ class ChorusCModelTest : public ChorusModelTest {};
 TEST_F(ChorusCModelTest, Async_count_copies_input_and_event_storage_survives_submission_and_log_polling) {
     RuntimePtr runtime(chorus_runtime_new());
     chorus_load_result load{};
-    ASSERT_EQ(chorus_load(runtime.get(), CHORUS_PROVIDER_LLAMA, "tests/models/gemma-3-270m-it-F16.gguf", nullptr, CHORUS_LOG_OFF, &load), CHORUS_OK);
+    ASSERT_EQ(
+        chorus_load(
+            runtime.get(),
+            CHORUS_PROVIDER_LLAMA,
+            "tests/models/gemma-3-270m-it-F16.gguf",
+            nullptr,
+            CHORUS_LOG_OFF,
+            &load
+        ),
+        CHORUS_OK
+    );
     ASSERT_EQ(load.error, CHORUS_OK);
     const auto load_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     bool loaded = false;
@@ -773,7 +822,8 @@ TEST_F(ChorusCModelTest, Async_count_copies_input_and_event_storage_survives_sub
             ASSERT_NE(events[i].kind, CHORUS_EVENT_MODEL_LOAD_FAILED);
             loaded |= events[i].kind == CHORUS_EVENT_MODEL_LOADED && events[i].load_id == load.load_id;
         }
-        if (!loaded) std::this_thread::yield();
+        if (!loaded)
+            std::this_thread::yield();
     }
     ASSERT_TRUE(loaded);
     chorus_capabilities caps{};

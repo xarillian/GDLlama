@@ -258,11 +258,15 @@ TEST_P(LlamaSessionCacheSlotsTest, Conversations_finishing_out_of_order_all_cont
     for (int index = 0; index < 3; ++index)
         histories.push_back(history_of(40 + index)); // each longer than one 512-token micro-batch
     // The middle conversation replies shortest, leaving a hole while the others still run.
-    const auto first = npcs.say_together({{sessions[0], histories[0], 24}, {sessions[1], histories[1], 4}, {sessions[2], histories[2], 16}});
+    const auto first = npcs.say_together(
+        {{sessions[0], histories[0], 24}, {sessions[1], histories[1], 4}, {sessions[2], histories[2], 16}}
+    );
 
     std::vector<Conversations::Line> follow_ups;
     for (int index = 0; index < 3; ++index)
-        follow_ups.push_back({sessions[index], histories[index] + first[index].text + "<end_of_turn>\n" + user_turn("Anything else?")});
+        follow_ups.push_back(
+            {sessions[index], histories[index] + first[index].text + "<end_of_turn>\n" + user_turn("Anything else?")}
+        );
     const auto second = npcs.say_together(follow_ups);
 
     for (int index = 0; index < 3; ++index) {

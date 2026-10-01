@@ -208,7 +208,6 @@ class GodotChorus : public godot::Node {
 
     bool _override_log_level = false;
     int64_t _log_level = (int64_t)Chorus::log_level_default;
-
 };
 
 VARIANT_ENUM_CAST(GodotChorus::ErrorCode);

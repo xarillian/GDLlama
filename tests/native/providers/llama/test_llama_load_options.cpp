@@ -5,8 +5,8 @@
 
 #include <cstdint>
 #include <functional>
-#include <limits>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -66,14 +66,20 @@ TEST(LlamaLoadOptions, Llama_load_options_map_to_distinct_config_fields) {
         {"context_size", int64_t{4096}, [](const auto& load) { ASSERT_EQ(load.context_size, uint32_t{4096}); }},
         {"thread_count", int64_t{6}, [](const auto& load) { ASSERT_EQ(load.thread_count, int32_t{6}); }},
         {"use_gpu", false, [](const auto& load) { ASSERT_TRUE(!load.use_gpu); }},
-        {"gpu_layers", int64_t{17}, [](const auto& load) {
+        {"gpu_layers",
+         int64_t{17},
+         [](const auto& load) {
              ASSERT_EQ(load.gpu_layers, int32_t{17});
              ASSERT_TRUE(load.gpu_layers_explicit);
          }},
-        {"max_concurrent_requests", int64_t{3}, [](const auto& load) { ASSERT_EQ(load.max_concurrent_requests, uint32_t{3}); }},
+        {"max_concurrent_requests",
+         int64_t{3},
+         [](const auto& load) { ASSERT_EQ(load.max_concurrent_requests, uint32_t{3}); }},
         {"n_batch", int64_t{1024}, [](const auto& load) { ASSERT_EQ(load.n_batch, uint32_t{1024}); }},
         {"n_ubatch", int64_t{32}, [](const auto& load) { ASSERT_EQ(load.n_ubatch, uint32_t{32}); }},
-        {"main_gpu", int64_t{2}, [](const auto& load) {
+        {"main_gpu",
+         int64_t{2},
+         [](const auto& load) {
              ASSERT_EQ(load.main_gpu, int32_t{2});
              ASSERT_TRUE(load.main_gpu_explicit);
          }},

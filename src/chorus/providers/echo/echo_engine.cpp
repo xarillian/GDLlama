@@ -103,13 +103,15 @@ struct EchoEngine::Preparation : RequestPreparation {
         const std::vector<ChatMessage>&, const std::optional<std::string>&, std::optional<bool>
     ) const override {
         std::lock_guard<std::mutex> lock(mutex);
-        return RequestRejection{closed ? ChorusError::EngineNotReady : ChorusError::UnsupportedFeature,
-                                "Echo does not render chat prompts."};
+        return RequestRejection{
+            closed ? ChorusError::EngineNotReady : ChorusError::UnsupportedFeature, "Echo does not render chat prompts."
+        };
     }
     std::variant<int64_t, RequestRejection> count_message_tokens(const std::string&) const override {
         std::lock_guard<std::mutex> lock(mutex);
-        return RequestRejection{closed ? ChorusError::EngineNotReady : ChorusError::UnsupportedFeature,
-                                "Echo has no tokenizer."};
+        return RequestRejection{
+            closed ? ChorusError::EngineNotReady : ChorusError::UnsupportedFeature, "Echo has no tokenizer."
+        };
     }
 };
 
@@ -117,7 +119,8 @@ EchoEngine::~EchoEngine() {
     shutdown();
 }
 
-std::optional<InitializationFailure> EchoEngine::initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) {
+std::optional<InitializationFailure>
+EchoEngine::initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) {
     _log = std::move(logger);
 
     if (_initialized) {
@@ -395,9 +398,8 @@ void EchoEngine::worker_loop() {
         }
 
         ChorusSignal terminal =
-            cancelled
-                ? ChorusSignal{req.id, ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled."}}
-                : ChorusSignal{req.id, ChorusSignal::Stop{}};
+            cancelled ? ChorusSignal{req.id, ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled."}}
+                      : ChorusSignal{req.id, ChorusSignal::Stop{}};
         req.on_event(terminal);
     }
 }

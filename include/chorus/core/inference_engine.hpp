@@ -12,8 +12,8 @@ namespace Chorus {
  * Provider-owned preparation, independent of host-confined engine methods.
  *
  * Several consumer threads may validate, render and count concurrently with one
- * another, with inference and with host control, so implementations must be thread-safe. Shutdown fences these operations before releasing resources;
- * retained handles reject with `Chorus::ChorusError::EngineNotReady` afterward.
+ * another, with inference and with host control, so implementations must be thread-safe. Shutdown fences these
+ * operations before releasing resources; retained handles reject with `Chorus::ChorusError::EngineNotReady` afterward.
  * Operations never invoke host callbacks. Expected failures are returned, while
  * unexpected exceptions are handled by the consumer's worker failure boundary.
  */
@@ -22,7 +22,9 @@ class RequestPreparation {
     virtual ~RequestPreparation() = default;
     virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
     virtual std::variant<RenderedPrompt, RequestRejection> render_chat_prompt(
-        const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
+        const std::vector<ChatMessage>& messages,
+        const std::optional<std::string>& template_override,
+        std::optional<bool> enable_thinking
     ) const = 0;
 
     /*
@@ -105,7 +107,9 @@ class InferenceEngine {
      *  - `std::nullopt`: no local render is available.
      */
     virtual std::optional<RenderedPrompt> render_chat_prompt(
-        const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
+        const std::vector<ChatMessage>& messages,
+        const std::optional<std::string>& template_override,
+        std::optional<bool> enable_thinking
     ) const {
         (void)messages;
         (void)template_override;

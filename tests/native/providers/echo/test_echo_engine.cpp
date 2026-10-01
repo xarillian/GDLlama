@@ -1,10 +1,10 @@
 #include "chorus/core/common.hpp"
 #include "chorus/providers/echo/echo_engine.hpp"
 #include "chorus/runtime/runtime.hpp"
-#include "support/runtime_test_utils.hpp"
 #include "engine_contract_suite.hpp"
-#include "process_test.hpp"
 #include "gtest_utils.hpp"
+#include "process_test.hpp"
+#include "support/runtime_test_utils.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -39,9 +39,9 @@ TEST(EchoEngine, Echo_progress_cancellation_leaves_no_worker_and_allows_reload) 
     std::stop_source stop;
     std::vector<Chorus::LoadProgress> progress;
     Chorus::InitializationControl control{stop.get_token(), [&](const Chorus::LoadProgress& sample) {
-        progress.push_back(sample);
-        stop.request_stop();
-    }};
+                                              progress.push_back(sample);
+                                              stop.request_stop();
+                                          }};
     const auto failure = engine.initialize({}, {}, control);
     ASSERT_TRUE(failure.has_value());
     EXPECT_EQ(failure->error, Chorus::ChorusError::Cancelled);
@@ -236,8 +236,11 @@ TEST(EchoEngine, Echo_honors_empty_stop_unconstrained_and_false_reasoning_but_re
         for (const auto& event : events)
             terminals += runtime_terminal(event.kind);
         EXPECT_EQ(terminals, size_t{1});
-        EXPECT_EQ(events.back().kind, error == Chorus::ChorusError::None
-                                              ? Chorus::RuntimeEvent::Kind::Complete : Chorus::RuntimeEvent::Kind::Error);
+        EXPECT_EQ(
+            events.back().kind,
+            error == Chorus::ChorusError::None ? Chorus::RuntimeEvent::Kind::Complete
+                                               : Chorus::RuntimeEvent::Kind::Error
+        );
         EXPECT_EQ(events.back().error, error);
     };
     request.options.stop = std::vector<std::string>{};
@@ -495,7 +498,8 @@ TEST(EchoEngine, Echo_cancels_queued_request_without_affecting_another) {
         std::unique_lock<std::mutex> lock(mutex);
         ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(2), [&] {
             for (const auto& signal : signals)
-                if (signal.request_id == survivor.id && std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
+                if (signal.request_id == survivor.id &&
+                    std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
                     return true;
             return false;
         }));
@@ -807,9 +811,7 @@ int run_echo_reentrant_shutdown_child() {
 } // namespace
 
 TEST(EchoEngine, Echo_queued_cancellation_callback_can_reenter_shutdown) {
-    ASSERT_TRUE(
-        run_isolated_test_child(std::string(ECHO_REENTRANT_SHUTDOWN_CHILD), std::chrono::seconds(10))
-    );
+    ASSERT_TRUE(run_isolated_test_child(std::string(ECHO_REENTRANT_SHUTDOWN_CHILD), std::chrono::seconds(10)));
 }
 
 int run_echo_engine_child_mode(std::string_view child_name) {

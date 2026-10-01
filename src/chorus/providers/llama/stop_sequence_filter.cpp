@@ -9,8 +9,7 @@
 namespace Chorus {
 namespace {
 
-std::optional<size_t>
-find_earliest_marker(std::string_view pending, const std::vector<std::string>& markers) {
+std::optional<size_t> find_earliest_marker(std::string_view pending, const std::vector<std::string>& markers) {
     std::optional<size_t> earliest;
     for (const auto& marker : markers) {
         const size_t position = pending.find(marker);
@@ -20,9 +19,7 @@ find_earliest_marker(std::string_view pending, const std::vector<std::string>& m
     return earliest;
 }
 
-size_t find_pending_marker_prefix_length(
-    std::string_view pending, const std::vector<std::string>& markers
-) {
+size_t find_pending_marker_prefix_length(std::string_view pending, const std::vector<std::string>& markers) {
     size_t longest_prefix = 0;
     for (const auto& marker : markers) {
         const size_t maximum = std::min(marker.size(), pending.size());

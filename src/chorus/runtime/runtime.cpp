@@ -1,6 +1,6 @@
 #include "chorus/runtime/runtime.hpp"
-#include "chorus/runtime/runtime_preparation.hpp"
 #include "chorus/runtime/runtime_loading.hpp"
+#include "chorus/runtime/runtime_preparation.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -17,30 +17,45 @@ SubmitResult rejection(ChorusError error, std::string message) {
 }
 
 bool valid_content(const MessageContent& content) {
-    return std::ranges::all_of(content.parts, [](const auto& part) { return std::holds_alternative<std::string>(part); });
+    return std::ranges::all_of(content.parts, [](const auto& part) {
+        return std::holds_alternative<std::string>(part);
+    });
 }
 
 GenerationConfig compose_choices(const GenerationConfig& defaults, const GenerationConfig& request) {
     GenerationConfig result = defaults;
-    if (request.max_tokens) result.max_tokens = request.max_tokens;
-    if (request.temperature) result.temperature = request.temperature;
-    if (request.top_k) result.top_k = request.top_k;
-    if (request.top_p) result.top_p = request.top_p;
-    if (request.seed) result.seed = request.seed;
-    if (request.frequency_penalty) result.frequency_penalty = request.frequency_penalty;
-    if (request.presence_penalty) result.presence_penalty = request.presence_penalty;
-    if (request.stop) result.stop = request.stop;
-    if (request.constraint) result.constraint = request.constraint;
-    if (request.show_thinking) result.show_thinking = request.show_thinking;
+    if (request.max_tokens)
+        result.max_tokens = request.max_tokens;
+    if (request.temperature)
+        result.temperature = request.temperature;
+    if (request.top_k)
+        result.top_k = request.top_k;
+    if (request.top_p)
+        result.top_p = request.top_p;
+    if (request.seed)
+        result.seed = request.seed;
+    if (request.frequency_penalty)
+        result.frequency_penalty = request.frequency_penalty;
+    if (request.presence_penalty)
+        result.presence_penalty = request.presence_penalty;
+    if (request.stop)
+        result.stop = request.stop;
+    if (request.constraint)
+        result.constraint = request.constraint;
+    if (request.show_thinking)
+        result.show_thinking = request.show_thinking;
 
     for (auto it = result.provider_options.begin(); it != result.provider_options.end();) {
         const auto* entries = std::get_if<ProviderOptionMap>(&it->second);
-        if (entries && entries->empty()) it = result.provider_options.erase(it);
-        else ++it;
+        if (entries && entries->empty())
+            it = result.provider_options.erase(it);
+        else
+            ++it;
     }
     for (const auto& [provider, choice] : request.provider_options) {
         const auto* incoming = std::get_if<ProviderOptionMap>(&choice);
-        if (incoming && incoming->empty()) continue;
+        if (incoming && incoming->empty())
+            continue;
         auto existing = result.provider_options.find(provider);
         if (existing != result.provider_options.end() && incoming) {
             if (auto* entries = std::get_if<ProviderOptionMap>(&existing->second)) {
@@ -90,7 +105,9 @@ void ChorusRuntime::set_generation_defaults(GenerationDefaults defaults) {
 }
 
 ChorusRuntime::ResolvedRequest ChorusRuntime::resolve_request(const GenerationRequest& request) const {
-    ResolvedRequest resolved{request, compose_choices(_generation_defaults.options, request.options), request.chat_template};
+    ResolvedRequest resolved{
+        request, compose_choices(_generation_defaults.options, request.options), request.chat_template
+    };
     if (!request.session_id) {
         if (!request.options.show_thinking)
             resolved.config.show_thinking.reset();
@@ -109,8 +126,12 @@ ChorusRequest ChorusRuntime::make_engine_request(const ResolvedRequest& resolved
 }
 
 SubmitResult ChorusRuntime::not_ready() const {
-    return rejection(ChorusError::EngineNotReady, active_load_id() ? "An engine is loading." :
-                     _lifetime ? "The engine has failed; load it again." : "No engine is loaded.");
+    return rejection(
+        ChorusError::EngineNotReady,
+        active_load_id() ? "An engine is loading."
+        : _lifetime      ? "The engine has failed; load it again."
+                         : "No engine is loaded."
+    );
 }
 
 SubmitResult ChorusRuntime::submit(const GenerationRequest& request) {
@@ -147,7 +168,8 @@ SubmitResult ChorusRuntime::admit_generation(const GenerationRequest& request, O
     job->operation = operation;
     job->resolved = resolve_request(request);
     const auto& resolved = job->resolved;
-    if (!request.session_id && (!request.inject.empty() || request.chat_template.has_value() || request.options.show_thinking.has_value()))
+    if (!request.session_id &&
+        (!request.inject.empty() || request.chat_template.has_value() || request.options.show_thinking.has_value()))
         return rejection(ChorusError::InvalidRequest, "inject/chat_template/show_thinking require a session.");
     job->request = make_engine_request(resolved);
     MessageNodePtr replaced;
@@ -156,7 +178,9 @@ SubmitResult ChorusRuntime::admit_generation(const GenerationRequest& request, O
         job->history = it == _histories.end() ? std::make_shared<const HistoryNodes>() : it->second.messages;
         if (regenerate) {
             if (job->history->empty() || job->history->back()->value.message.role != MessageRole::Assistant)
-                return rejection(ChorusError::InvalidRequest, "Regeneration needs history ending in an assistant reply.");
+                return rejection(
+                    ChorusError::InvalidRequest, "Regeneration needs history ending in an assistant reply."
+                );
             replaced = job->history->back();
             auto prospective = std::make_shared<HistoryNodes>(job->history->begin(), job->history->end() - 1);
             job->history = std::move(prospective);
@@ -226,8 +250,10 @@ SubmitResult ChorusRuntime::admit(std::unique_ptr<PreparationJob> job, MessageNo
         }
     }
     if (session && !replaced_reply) {
-        job->pending = make_node({result.request_message_id.value_or(-1),
-                                 {MessageRole::User, MessageContent::text(std::move(job->resolved.request.prompt))}});
+        job->pending = make_node(
+            {result.request_message_id.value_or(-1),
+             {MessageRole::User, MessageContent::text(std::move(job->resolved.request.prompt))}}
+        );
     }
     HistorySnapshot changed_history;
     if (generation && session) {
@@ -277,7 +303,9 @@ SubmitResult ChorusRuntime::admit(std::unique_ptr<PreparationJob> job, MessageNo
     if (changed_history)
         _histories.at(*session).messages = std::move(changed_history);
     if (result.request_message_id)
-        _next_message_id = *result.response_message_id == INT64_MAX ? std::nullopt : std::optional<MessageId>{*result.response_message_id + 1};
+        _next_message_id = *result.response_message_id == INT64_MAX
+                               ? std::nullopt
+                               : std::optional<MessageId>{*result.response_message_id + 1};
     ++_next_request_id;
     ++state.outstanding;
     lock.unlock();
@@ -361,15 +389,17 @@ std::vector<RuntimeEvent> ChorusRuntime::poll() {
                     std::lock_guard<std::mutex> lock(state->mutex);
                     job->control->preparation_drained = true;
                     state->release_preparation(job->control);
-                    forward = !job->control->terminal && !job->control->cancelled &&
-                              _lifetime && _lifetime->preparation == state && is_loaded();
+                    forward = !job->control->terminal && !job->control->cancelled && _lifetime &&
+                              _lifetime->preparation == state && is_loaded();
                     if (forward)
                         job->control->provider_active = true;
                 }
                 if (!forward)
                     continue;
                 if (!job->omitted.empty()) {
-                    RuntimeEvent truncated{job->request.id, job->request.session_id, RuntimeEvent::Kind::HistoryTruncated};
+                    RuntimeEvent truncated{
+                        job->request.id, job->request.session_id, RuntimeEvent::Kind::HistoryTruncated
+                    };
                     truncated.omitted_message_ids = std::move(job->omitted);
                     events.push_back(std::move(truncated));
                 }
@@ -386,8 +416,9 @@ std::vector<RuntimeEvent> ChorusRuntime::poll() {
             drain(state);
     });
     std::erase_if(_draining_states, [&](const auto& state) {
-        return std::none_of(_live_requests.begin(), _live_requests.end(),
-                            [&](const auto& item) { return item.second.preparation == state; });
+        return std::none_of(_live_requests.begin(), _live_requests.end(), [&](const auto& item) {
+            return item.second.preparation == state;
+        });
     });
     append_engine_failure(events);
     return events;
@@ -402,7 +433,13 @@ void ChorusRuntime::append_signal_events(const ChorusSignal& signal, std::vector
     if (const auto* embedding = std::get_if<ChorusSignal::Embedding>(&signal.event)) {
         if (live.operation != Operation::Embed) {
             finish_turn(live, TurnOutcome::Errored, "");
-            events.push_back({id, live.session_id, RuntimeEvent::Kind::Error, "Provider emitted an embedding for a generation request.", ChorusError::Unknown});
+            events.push_back(
+                {id,
+                 live.session_id,
+                 RuntimeEvent::Kind::Error,
+                 "Provider emitted an embedding for a generation request.",
+                 ChorusError::Unknown}
+            );
             retire_request(id);
             return;
         }
@@ -411,7 +448,13 @@ void ChorusRuntime::append_signal_events(const ChorusSignal& signal, std::vector
     }
     if (const auto* token = std::get_if<ChorusSignal::Token>(&signal.event)) {
         if (live.operation != Operation::Generate) {
-            events.push_back({id, live.session_id, RuntimeEvent::Kind::Error, "Provider emitted a token for an embedding request.", ChorusError::Unknown});
+            events.push_back(
+                {id,
+                 live.session_id,
+                 RuntimeEvent::Kind::Error,
+                 "Provider emitted a token for an embedding request.",
+                 ChorusError::Unknown}
+            );
             retire_request(id);
             return;
         }
@@ -429,7 +472,13 @@ void ChorusRuntime::append_signal_events(const ChorusSignal& signal, std::vector
     if (std::holds_alternative<ChorusSignal::Stop>(signal.event)) {
         if (live.operation == Operation::Embed) {
             if (!live.embedding) {
-                events.push_back({id, live.session_id, RuntimeEvent::Kind::Error, "Provider stopped an embedding request without a vector.", ChorusError::Unknown});
+                events.push_back(
+                    {id,
+                     live.session_id,
+                     RuntimeEvent::Kind::Error,
+                     "Provider stopped an embedding request without a vector.",
+                     ChorusError::Unknown}
+                );
             } else {
                 RuntimeEvent event{id, live.session_id, RuntimeEvent::Kind::Embedding};
                 event.embedding = std::move(*live.embedding);
@@ -438,7 +487,8 @@ void ChorusRuntime::append_signal_events(const ChorusSignal& signal, std::vector
             retire_request(id);
             return;
         }
-        const auto completed_id = live.replaced_reply ? std::optional<MessageId>{live.replaced_reply->value.id} : live.reserved_assistant_id;
+        const auto completed_id =
+            live.replaced_reply ? std::optional<MessageId>{live.replaced_reply->value.id} : live.reserved_assistant_id;
         finish_turn(live, TurnOutcome::Completed, live.accumulated_text);
         RuntimeEvent event{id, live.session_id, RuntimeEvent::Kind::Complete, std::move(live.accumulated_text)};
         event.reasoning = std::move(live.accumulated_reasoning);
@@ -449,7 +499,9 @@ void ChorusRuntime::append_signal_events(const ChorusSignal& signal, std::vector
     }
     if (const auto* error = std::get_if<ChorusSignal::Error>(&signal.event)) {
         if (live.operation == Operation::Generate)
-            finish_turn(live, error->code == ChorusError::Cancelled ? TurnOutcome::Cancelled : TurnOutcome::Errored, "");
+            finish_turn(
+                live, error->code == ChorusError::Cancelled ? TurnOutcome::Cancelled : TurnOutcome::Errored, ""
+            );
         events.push_back({id, live.session_id, RuntimeEvent::Kind::Error, error->message, error->code});
         retire_request(id);
     }
@@ -459,7 +511,9 @@ void ChorusRuntime::append_engine_failure(std::vector<RuntimeEvent>& events) {
     if (!_lifetime || _engine_failure_reported || is_loaded())
         return;
     _engine_failure_reported = true;
-    events.push_back({-1, std::nullopt, RuntimeEvent::Kind::EngineFailed, "The engine has failed.", ChorusError::EngineNotReady});
+    events.push_back(
+        {-1, std::nullopt, RuntimeEvent::Kind::EngineFailed, "The engine has failed.", ChorusError::EngineNotReady}
+    );
 }
 
 bool ChorusRuntime::wait_for_events(std::chrono::nanoseconds timeout) {
@@ -506,7 +560,9 @@ void ChorusRuntime::close_preparation(PreparationState& state) {
         for (const auto& [id, control] : state.controls) {
             control->cancelled = true;
             if (!control->provider_active && !control->terminal) {
-                state.publish(ChorusSignal{id, ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled: engine stopped."}});
+                state.publish(
+                    ChorusSignal{id, ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled: engine stopped."}}
+                );
                 control->terminal = true;
             }
         }
@@ -584,12 +640,20 @@ void ChorusRuntime::retire_request(RequestId id) {
     _live_requests.erase(request);
 }
 
-void ChorusRuntime::enqueue_signal(PreparationState& state, const ChorusSignal& signal, const std::shared_ptr<Control>& control) {
+void ChorusRuntime::enqueue_signal(
+    PreparationState& state, const ChorusSignal& signal, const std::shared_ptr<Control>& control
+) {
     std::lock_guard<std::mutex> lock(state.mutex);
     state.publish_signal(signal, control);
 }
 
-void ChorusRuntime::publish_error(PreparationState& state, RequestId id, const std::shared_ptr<Control>& control, ChorusError error, std::string message) {
+void ChorusRuntime::publish_error(
+    PreparationState& state,
+    RequestId id,
+    const std::shared_ptr<Control>& control,
+    ChorusError error,
+    std::string message
+) {
     enqueue_signal(state, {id, ChorusSignal::Error{error, std::move(message)}}, control);
 }
 

@@ -10,7 +10,7 @@ void check_cancelled(const std::atomic<bool>& cancelled) {
     if (cancelled)
         throw RequestRejection{ChorusError::Cancelled, "Request cancelled."};
 }
-}
+} // namespace
 
 int64_t ChorusRuntime::PreparationState::count_text(const std::string& text) {
     const size_t hash = std::hash<std::string>{}(text);
@@ -36,7 +36,7 @@ int64_t ChorusRuntime::PreparationState::count_text(const std::string& text) {
         std::lock_guard<std::mutex> lock(cache_mutex);
         if (find() == content_counts.end()) {
             while (!content_counts.empty() && (content_counts.size() >= kContentCountCacheEntries ||
-                   content_bytes > kContentCountCacheBytes - text.size())) {
+                                               content_bytes > kContentCountCacheBytes - text.size())) {
                 content_bytes -= content_counts.back().text.size();
                 content_counts.pop_back();
             }
@@ -85,30 +85,40 @@ void ChorusRuntime::PreparationState::clear_caches() {
     content_bytes = 0;
 }
 
-void ChorusRuntime::PreparationState::publish_signal(const ChorusSignal& signal, const std::shared_ptr<Control>& control) {
+void ChorusRuntime::PreparationState::publish_signal(
+    const ChorusSignal& signal, const std::shared_ptr<Control>& control
+) {
     if (control->terminal || signal.request_id != control->id)
         return;
     publish(signal);
-    if (std::holds_alternative<ChorusSignal::Stop>(signal.event) || std::holds_alternative<ChorusSignal::Error>(signal.event))
+    if (std::holds_alternative<ChorusSignal::Stop>(signal.event) ||
+        std::holds_alternative<ChorusSignal::Error>(signal.event))
         control->terminal = true;
 }
 
 void ChorusRuntime::PreparationState::finish(uint64_t ticket, Outcome outcome) {
     finished.emplace(ticket, std::move(outcome));
-    for (auto next = finished.begin(); next != finished.end() && next->first == next_publication; next = finished.begin()) {
+    for (auto next = finished.begin(); next != finished.end() && next->first == next_publication;
+         next = finished.begin()) {
         Outcome ready = std::move(next->second);
         finished.erase(next);
         ++next_publication;
         auto& job = *ready.job;
         const auto control = job.control;
         if (ready.failure && !ready.abandoned)
-            publish_signal({job.request.id, ChorusSignal::Error{ready.failure->error, ready.failure->message}}, control);
+            publish_signal(
+                {job.request.id, ChorusSignal::Error{ready.failure->error, ready.failure->message}}, control
+            );
         control->preparation_finished = true;
         if (ready.abandoned || ready.failure || control->terminal || control->cancelled) {
             release_preparation(control);
         } else if (job.operation == Operation::Count || job.operation == Operation::Preview) {
-            RuntimeEvent event{job.request.id, job.request.session_id,
-                job.operation == Operation::Count ? RuntimeEvent::Kind::MessageTokenCount : RuntimeEvent::Kind::PromptRendered};
+            RuntimeEvent event{
+                job.request.id,
+                job.request.session_id,
+                job.operation == Operation::Count ? RuntimeEvent::Kind::MessageTokenCount
+                                                  : RuntimeEvent::Kind::PromptRendered
+            };
             event.text = std::move(job.rendered);
             event.token_count = job.token_count;
             event.omitted_message_ids = std::move(job.omitted);
@@ -150,10 +160,13 @@ void ChorusRuntime::fit_turn_messages(PreparationState& state, PreparationJob& j
     std::optional<int64_t> budget;
     if (state.model_info && state.model_info->per_request_context) {
         const int64_t reservation = job.resolved.config.max_tokens && *job.resolved.config.max_tokens >= 0
-                                        ? *job.resolved.config.max_tokens : 512;
+                                        ? *job.resolved.config.max_tokens
+                                        : 512;
         budget = static_cast<int64_t>(*state.model_info->per_request_context) - reservation;
         if (*budget <= 0)
-            throw RequestRejection{ChorusError::InvalidRequest, "Response reservation leaves no prompt room in the per-request context."};
+            throw RequestRejection{
+                ChorusError::InvalidRequest, "Response reservation leaves no prompt room in the per-request context."
+            };
         job.request.exact_prompt_budget = budget;
     }
     size_t selected = 0;
@@ -199,8 +212,8 @@ void ChorusRuntime::fit_turn_messages(PreparationState& state, PreparationJob& j
     const auto probe = [&](size_t index) {
         auto messages = materialize(boundaries[index]);
         check_cancelled(job.control->cancelled);
-        auto result = state.service->render_chat_prompt(messages, job.resolved.chat_template,
-                                                       job.resolved.config.show_thinking);
+        auto result =
+            state.service->render_chat_prompt(messages, job.resolved.chat_template, job.resolved.config.show_thinking);
         check_cancelled(job.control->cancelled);
         if (auto* failure = std::get_if<RequestRejection>(&result))
             throw *failure;
@@ -222,7 +235,9 @@ void ChorusRuntime::fit_turn_messages(PreparationState& state, PreparationJob& j
     for (size_t i = 0; i < selected; ++i)
         if (probe(i))
             return;
-    throw RequestRejection{ChorusError::InvalidRequest, "Conversation does not fit the context window even after truncation."};
+    throw RequestRejection{
+        ChorusError::InvalidRequest, "Conversation does not fit the context window even after truncation."
+    };
 }
 
 void ChorusRuntime::prepare(PreparationState& state, PreparationJob& job) {
@@ -299,7 +314,11 @@ void ChorusRuntime::fail_preparation(PreparationState& state) {
         for (const auto& [id, control] : state.controls) {
             control->cancelled = true;
             if (!control->provider_active && !control->terminal) {
-                state.publish(ChorusSignal{id, ChorusSignal::Error{ChorusError::Unknown, "Preparation worker or provider failed."}});
+                state.publish(
+                    ChorusSignal{
+                        id, ChorusSignal::Error{ChorusError::Unknown, "Preparation worker or provider failed."}
+                    }
+                );
                 control->terminal = true;
             }
         }

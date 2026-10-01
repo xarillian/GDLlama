@@ -27,9 +27,8 @@ inline ObservedLoad wait_load_terminal(Chorus::ChorusRuntime& runtime, Chorus::L
     bool terminal = false;
     while (!terminal && std::chrono::steady_clock::now() < deadline) {
         for (auto& event : runtime.poll()) {
-            if (event.load_id == admission.load_id &&
-                (event.kind == Chorus::RuntimeEvent::Kind::ModelLoaded ||
-                 event.kind == Chorus::RuntimeEvent::Kind::ModelLoadFailed)) {
+            if (event.load_id == admission.load_id && (event.kind == Chorus::RuntimeEvent::Kind::ModelLoaded ||
+                                                       event.kind == Chorus::RuntimeEvent::Kind::ModelLoadFailed)) {
                 observed.error = event.error;
                 observed.message = event.text;
                 terminal = true;
@@ -45,8 +44,9 @@ inline ObservedLoad wait_load_terminal(Chorus::ChorusRuntime& runtime, Chorus::L
     return observed;
 }
 
-inline ObservedLoad load_runtime(Chorus::ChorusRuntime& runtime, std::unique_ptr<Chorus::InferenceEngine> engine,
-                                 const Chorus::ChorusConfig& config) {
+inline ObservedLoad load_runtime(
+    Chorus::ChorusRuntime& runtime, std::unique_ptr<Chorus::InferenceEngine> engine, const Chorus::ChorusConfig& config
+) {
     auto observed = wait_load_terminal(runtime, runtime.load_engine(std::move(engine), config));
     for (const auto& event : observed.events)
         EXPECT_TRUE(event.load_id.has_value()) << "Fixture load discarded a request event";
@@ -55,8 +55,8 @@ inline ObservedLoad load_runtime(Chorus::ChorusRuntime& runtime, std::unique_ptr
 
 inline bool runtime_terminal(Chorus::RuntimeEvent::Kind kind) {
     using Kind = Chorus::RuntimeEvent::Kind;
-    return kind == Kind::Complete || kind == Kind::Embedding || kind == Kind::Error ||
-           kind == Kind::PromptRendered || kind == Kind::MessageTokenCount;
+    return kind == Kind::Complete || kind == Kind::Embedding || kind == Kind::Error || kind == Kind::PromptRendered ||
+           kind == Kind::MessageTokenCount;
 }
 
 inline std::vector<Chorus::RuntimeEvent> drain_runtime_events(Chorus::ChorusRuntime& runtime, size_t terminals = 1) {
@@ -76,8 +76,7 @@ inline std::vector<Chorus::RuntimeEvent> drain_runtime_events(Chorus::ChorusRunt
     return events;
 }
 
-template <typename Predicate>
-void forward_runtime_until(Chorus::ChorusRuntime& runtime, Predicate done) {
+template <typename Predicate> void forward_runtime_until(Chorus::ChorusRuntime& runtime, Predicate done) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (!done() && std::chrono::steady_clock::now() < deadline) {
         EXPECT_TRUE(runtime.poll().empty());

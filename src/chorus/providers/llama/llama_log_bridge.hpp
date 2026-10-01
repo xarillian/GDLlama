@@ -32,8 +32,10 @@ class LlamaLogAssembler {
      * first so the new fragment's level is never buried under it.
      *
      * Returns:
-     *  - non-empty `std::vector<Chorus::LogRecord>`: the completed whole lines, oldest first, with framing newlines removed.
-     *  - empty `std::vector<Chorus::LogRecord>`: no line completed because the fragment was empty, continued an open line, or had no reader-facing level.
+     *  - non-empty `std::vector<Chorus::LogRecord>`: the completed whole lines, oldest first, with framing newlines
+     * removed.
+     *  - empty `std::vector<Chorus::LogRecord>`: no line completed because the fragment was empty, continued an open
+     * line, or had no reader-facing level.
      */
     std::vector<LogRecord> feed(int ggml_level, const char* text);
 

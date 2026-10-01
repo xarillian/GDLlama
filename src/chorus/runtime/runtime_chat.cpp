@@ -7,9 +7,11 @@
 namespace Chorus {
 namespace {
 bool valid_content(const MessageContent& content) {
-    return std::ranges::all_of(content.parts, [](const auto& part) { return std::holds_alternative<std::string>(part); });
+    return std::ranges::all_of(content.parts, [](const auto& part) {
+        return std::holds_alternative<std::string>(part);
+    });
 }
-}
+} // namespace
 
 ChorusRuntime::MessageNodePtr ChorusRuntime::make_node(ConversationMessage message) {
     if (_next_content_identity == UINT64_MAX)
@@ -29,7 +31,8 @@ ChorusRuntime::import_conversation_history(const SessionId& session, std::vector
     std::unordered_set<MessageId> ids;
     std::optional<MessageId> largest;
     for (const auto& entry : history) {
-        if (entry.id < 0 || !ids.insert(entry.id).second || !message_role_name(entry.message.role) || !valid_content(entry.message.content))
+        if (entry.id < 0 || !ids.insert(entry.id).second || !message_role_name(entry.message.role) ||
+            !valid_content(entry.message.content))
             return ChorusError::InvalidRequest;
         if (!largest || entry.id > *largest)
             largest = entry.id;
@@ -80,11 +83,14 @@ ChorusRuntime::edit_message(const SessionId& session, MessageId message_id, Mess
     if (it == _histories.end())
         return ChorusError::InvalidRequest;
     const auto& current = *it->second.messages;
-    auto message = std::find_if(current.begin(), current.end(), [message_id](const auto& node) { return node->value.id == message_id; });
+    auto message = std::find_if(current.begin(), current.end(), [message_id](const auto& node) {
+        return node->value.id == message_id;
+    });
     if (message == current.end())
         return ChorusError::InvalidRequest;
     auto nodes = std::make_shared<HistoryNodes>(current);
-    (*nodes)[static_cast<size_t>(message - current.begin())] = make_node({message_id, {(*message)->value.message.role, std::move(content)}});
+    (*nodes)[static_cast<size_t>(message - current.begin())] =
+        make_node({message_id, {(*message)->value.message.role, std::move(content)}});
     it->second.messages = std::move(nodes);
     return std::nullopt;
 }
@@ -121,7 +127,8 @@ void ChorusRuntime::finish_turn(const LiveRequest& live, TurnOutcome outcome, co
     auto& history = history_it->second;
     auto nodes = std::make_shared<HistoryNodes>(*history.messages);
     if (outcome == TurnOutcome::Completed) {
-        const auto id = live.replaced_reply ? std::optional<MessageId>{live.replaced_reply->value.id} : live.reserved_assistant_id;
+        const auto id =
+            live.replaced_reply ? std::optional<MessageId>{live.replaced_reply->value.id} : live.reserved_assistant_id;
         if (id)
             nodes->push_back(make_node({*id, {MessageRole::Assistant, MessageContent::text(text)}}));
     } else if (live.replaced_reply) {

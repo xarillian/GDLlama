@@ -29,7 +29,8 @@ LlamaEngine::~LlamaEngine() {
     shutdown();
 }
 
-std::optional<InitializationFailure> LlamaEngine::initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) {
+std::optional<InitializationFailure>
+LlamaEngine::initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) {
     bool holds_dead_scheduler = false;
     {
         std::lock_guard<std::mutex> lock(_lifecycle_mutex);
@@ -99,7 +100,9 @@ std::optional<LoadedModelInfo> LlamaEngine::loaded_model_info() const {
 }
 
 std::optional<RenderedPrompt> LlamaEngine::render_chat_prompt(
-    const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
+    const std::vector<ChatMessage>& messages,
+    const std::optional<std::string>& template_override,
+    std::optional<bool> enable_thinking
 ) const {
     auto current_scheduler = scheduler_snapshot();
     if (!current_scheduler || !current_scheduler->is_healthy())

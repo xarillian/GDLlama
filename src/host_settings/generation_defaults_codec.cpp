@@ -2,8 +2,8 @@
 
 #include <nlohmann/json.hpp>
 
-#include <cmath>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <new>
 #include <set>
@@ -24,15 +24,19 @@ std::string child(const std::string& path, const std::string& key) {
     std::string result = path;
     result += '/';
     for (char c : key) {
-        if (c == '~') result += "~0";
-        else if (c == '/') result += "~1";
-        else result += c;
+        if (c == '~')
+            result += "~0";
+        else if (c == '/')
+            result += "~1";
+        else
+            result += c;
     }
     return result;
 }
 
 void require(bool valid, const std::string& path, const char* reason) {
-    if (!valid) throw CodecError(path, reason);
+    if (!valid)
+        throw CodecError(path, reason);
 }
 
 void valid_text(const std::string& text, const std::string& path) {
@@ -47,7 +51,8 @@ void keys(const Json& object, const std::string& path, std::initializer_list<con
     require(object.is_object(), path, "expected object");
     for (auto it = object.begin(); it != object.end(); ++it) {
         bool known = false;
-        for (auto key : allowed) known |= it.key() == key;
+        for (auto key : allowed)
+            known |= it.key() == key;
         require(known, child(path, it.key()), "unknown field");
     }
 }
@@ -64,7 +69,8 @@ int64_t integer(const Json& value, const std::string& path) {
 
 uint64_t unsigned_integer(const Json& value, const std::string& path) {
     require(value.is_number_integer(), path, "expected nonnegative integer literal");
-    if (value.is_number_unsigned()) return value.get<uint64_t>();
+    if (value.is_number_unsigned())
+        return value.get<uint64_t>();
     auto n = value.get<int64_t>();
     require(n >= 0, path, "expected nonnegative integer");
     return static_cast<uint64_t>(n);
@@ -87,14 +93,17 @@ float float32(const Json& value, const std::string& path) {
 Chorus::ProviderOptionValue option(const Json& value, const std::string& path, size_t depth) {
     using namespace Chorus;
     require(!value.is_null(), path, "null is not a value");
-    if (value.is_boolean()) return value.get<bool>();
-    if (value.is_number_integer()) return integer(value, path);
+    if (value.is_boolean())
+        return value.get<bool>();
+    if (value.is_number_integer())
+        return integer(value, path);
     if (value.is_number_float()) {
         const double number = value.get<double>();
         require(std::isfinite(number), path, "nonfinite number");
         return number;
     }
-    if (value.is_string()) return value.get<std::string>();
+    if (value.is_string())
+        return value.get<std::string>();
     require(value.is_array() || value.is_object(), path, "unsupported option type");
     require(depth < 64, path, "option container nesting exceeds 64");
     if (value.is_array()) {
@@ -111,8 +120,10 @@ Chorus::ProviderOptionValue option(const Json& value, const std::string& path, s
 
 Json option_json(const Chorus::ProviderOptionValue& value, const std::string& path, size_t depth) {
     using namespace Chorus;
-    if (const auto* v = std::get_if<bool>(&value)) return *v;
-    if (const auto* v = std::get_if<int64_t>(&value)) return *v;
+    if (const auto* v = std::get_if<bool>(&value))
+        return *v;
+    if (const auto* v = std::get_if<int64_t>(&value))
+        return *v;
     if (const auto* v = std::get_if<double>(&value)) {
         require(std::isfinite(*v), path, "nonfinite number");
         return *v;
@@ -146,11 +157,16 @@ Chorus::ConstraintChoice constraint(const Json& value, const std::string& path) 
         return Chorus::UnconstrainedOutput{};
     }
     Chorus::ConstraintFormat format;
-    if (kind == "gbnf") format = Chorus::ConstraintFormat::Gbnf;
-    else if (kind == "json_schema") format = Chorus::ConstraintFormat::JsonSchema;
-    else if (kind == "regex") format = Chorus::ConstraintFormat::Regex;
-    else if (kind == "lark") format = Chorus::ConstraintFormat::Lark;
-    else throw CodecError(child(path, "kind"), "unknown constraint kind");
+    if (kind == "gbnf")
+        format = Chorus::ConstraintFormat::Gbnf;
+    else if (kind == "json_schema")
+        format = Chorus::ConstraintFormat::JsonSchema;
+    else if (kind == "regex")
+        format = Chorus::ConstraintFormat::Regex;
+    else if (kind == "lark")
+        format = Chorus::ConstraintFormat::Lark;
+    else
+        throw CodecError(child(path, "kind"), "unknown constraint kind");
     require(value.contains("source") && value["source"].is_string(), child(path, "source"), "expected source string");
     return Chorus::OutputConstraint{format, value["source"].get<std::string>()};
 }
@@ -167,12 +183,14 @@ struct FloatingTokenCheck : nlohmann::json_sax<Json> {
     std::string error;
 
     std::string location() const {
-        if (frames.empty()) return "/";
+        if (frames.empty())
+            return "/";
         const auto& parent = frames.back();
         return child(parent.path, parent.array ? std::to_string(parent.index) : parent.key);
     }
     bool scalar() {
-        if (!frames.empty() && frames.back().array) ++frames.back().index;
+        if (!frames.empty() && frames.back().array)
+            ++frames.back().index;
         return true;
     }
     bool null() override { return scalar(); }
@@ -195,9 +213,18 @@ struct FloatingTokenCheck : nlohmann::json_sax<Json> {
     }
     bool string(string_t&) override { return scalar(); }
     bool binary(binary_t&) override { return scalar(); }
-    bool start_object(size_t) override { frames.push_back({location(), {}, 0, false}); return true; }
-    bool start_array(size_t) override { frames.push_back({location(), {}, 0, true}); return true; }
-    bool key(string_t& key) override { frames.back().key = key; return true; }
+    bool start_object(size_t) override {
+        frames.push_back({location(), {}, 0, false});
+        return true;
+    }
+    bool start_array(size_t) override {
+        frames.push_back({location(), {}, 0, true});
+        return true;
+    }
+    bool key(string_t& key) override {
+        frames.back().key = key;
+        return true;
+    }
     bool end_object() override { return finish(); }
     bool end_array() override { return finish(); }
     bool finish() {
@@ -213,10 +240,14 @@ struct FloatingTokenCheck : nlohmann::json_sax<Json> {
 
 const char* kind(Chorus::ConstraintFormat format) {
     switch (format) {
-    case Chorus::ConstraintFormat::Gbnf: return "gbnf";
-    case Chorus::ConstraintFormat::JsonSchema: return "json_schema";
-    case Chorus::ConstraintFormat::Regex: return "regex";
-    case Chorus::ConstraintFormat::Lark: return "lark";
+    case Chorus::ConstraintFormat::Gbnf:
+        return "gbnf";
+    case Chorus::ConstraintFormat::JsonSchema:
+        return "json_schema";
+    case Chorus::ConstraintFormat::Regex:
+        return "regex";
+    case Chorus::ConstraintFormat::Lark:
+        return "lark";
     }
     throw CodecError("/generation/constraint/kind", "unknown constraint kind");
 }
@@ -256,7 +287,8 @@ ParseResult parse_generation_defaults(std::string_view bytes) {
                 parent.current_key = key;
             } else if (event == Event::object_end || event == Event::array_end) {
                 frames.pop_back();
-                if (!frames.empty() && frames.back().array) ++frames.back().index;
+                if (!frames.empty() && frames.back().array)
+                    ++frames.back().index;
             } else if (event == Event::value && !frames.empty() && frames.back().array) {
                 ++frames.back().index;
             }
@@ -264,23 +296,46 @@ ParseResult parse_generation_defaults(std::string_view bytes) {
         };
         const Json document = Json::parse(bytes.begin(), bytes.end(), callback);
         keys(document, "", {"version", "generation"});
-        require(document.contains("version") && document["version"].is_number_integer() &&
-                    unsigned_integer(document["version"], "/version") == 1,
-                "/version", "unsupported version");
+        require(
+            document.contains("version") && document["version"].is_number_integer() &&
+                unsigned_integer(document["version"], "/version") == 1,
+            "/version",
+            "unsupported version"
+        );
         require(document.contains("generation"), "/generation", "missing generation");
         const Json& g = document["generation"];
-        keys(g, "/generation", {"max_tokens", "temperature", "top_k", "top_p", "seed",
-                               "frequency_penalty", "presence_penalty", "stop", "show_thinking",
-                               "constraint", "provider_options", "chat_template"});
+        keys(
+            g,
+            "/generation",
+            {"max_tokens",
+             "temperature",
+             "top_k",
+             "top_p",
+             "seed",
+             "frequency_penalty",
+             "presence_penalty",
+             "stop",
+             "show_thinking",
+             "constraint",
+             "provider_options",
+             "chat_template"}
+        );
         Chorus::GenerationDefaults result;
         auto& options = result.options;
-        if (g.contains("max_tokens")) options.max_tokens = int32(g["max_tokens"], "/generation/max_tokens");
-        if (g.contains("temperature")) options.temperature = float32(g["temperature"], "/generation/temperature");
-        if (g.contains("top_k")) options.top_k = int32(g["top_k"], "/generation/top_k");
-        if (g.contains("top_p")) options.top_p = float32(g["top_p"], "/generation/top_p");
-        if (g.contains("seed")) options.seed = unsigned_integer(g["seed"], "/generation/seed");
-        if (g.contains("frequency_penalty")) options.frequency_penalty = float32(g["frequency_penalty"], "/generation/frequency_penalty");
-        if (g.contains("presence_penalty")) options.presence_penalty = float32(g["presence_penalty"], "/generation/presence_penalty");
+        if (g.contains("max_tokens"))
+            options.max_tokens = int32(g["max_tokens"], "/generation/max_tokens");
+        if (g.contains("temperature"))
+            options.temperature = float32(g["temperature"], "/generation/temperature");
+        if (g.contains("top_k"))
+            options.top_k = int32(g["top_k"], "/generation/top_k");
+        if (g.contains("top_p"))
+            options.top_p = float32(g["top_p"], "/generation/top_p");
+        if (g.contains("seed"))
+            options.seed = unsigned_integer(g["seed"], "/generation/seed");
+        if (g.contains("frequency_penalty"))
+            options.frequency_penalty = float32(g["frequency_penalty"], "/generation/frequency_penalty");
+        if (g.contains("presence_penalty"))
+            options.presence_penalty = float32(g["presence_penalty"], "/generation/presence_penalty");
         if (g.contains("show_thinking")) {
             require(g["show_thinking"].is_boolean(), "/generation/show_thinking", "expected boolean");
             options.show_thinking = g["show_thinking"].get<bool>();
@@ -295,7 +350,8 @@ ParseResult parse_generation_defaults(std::string_view bytes) {
             }
             options.stop = std::move(stop);
         }
-        if (g.contains("constraint")) options.constraint = constraint(g["constraint"], "/generation/constraint");
+        if (g.contains("constraint"))
+            options.constraint = constraint(g["constraint"], "/generation/constraint");
         if (g.contains("chat_template")) {
             require(g["chat_template"].is_string(), "/generation/chat_template", "expected string");
             result.chat_template = g["chat_template"].get<std::string>();
@@ -309,7 +365,8 @@ ParseResult parse_generation_defaults(std::string_view bytes) {
                 Chorus::ProviderOptionMap choices;
                 for (auto entry = it.value().begin(); entry != it.value().end(); ++entry)
                     choices.emplace(entry.key(), option(entry.value(), child(path, entry.key()), 0));
-                if (!choices.empty()) options.provider_options.emplace(it.key(), Chorus::ProviderOptionValue{std::move(choices)});
+                if (!choices.empty())
+                    options.provider_options.emplace(it.key(), Chorus::ProviderOptionValue{std::move(choices)});
             }
         }
         return {std::move(result), {}, {}};
@@ -327,19 +384,39 @@ SerializeResult serialize_generation_defaults(const Chorus::GenerationDefaults& 
     try {
         const auto& o = defaults.options;
         Json g = Json::object();
-        if (o.max_tokens) g["max_tokens"] = *o.max_tokens;
-        if (o.temperature) { path = "/generation/temperature"; require(std::isfinite(*o.temperature), path, "nonfinite number"); g["temperature"] = *o.temperature; }
-        if (o.top_k) g["top_k"] = *o.top_k;
-        if (o.top_p) { path = "/generation/top_p"; require(std::isfinite(*o.top_p), path, "nonfinite number"); g["top_p"] = *o.top_p; }
-        if (o.seed) g["seed"] = *o.seed;
-        if (o.frequency_penalty) { path = "/generation/frequency_penalty"; require(std::isfinite(*o.frequency_penalty), path, "nonfinite number"); g["frequency_penalty"] = *o.frequency_penalty; }
-        if (o.presence_penalty) { path = "/generation/presence_penalty"; require(std::isfinite(*o.presence_penalty), path, "nonfinite number"); g["presence_penalty"] = *o.presence_penalty; }
+        if (o.max_tokens)
+            g["max_tokens"] = *o.max_tokens;
+        if (o.temperature) {
+            path = "/generation/temperature";
+            require(std::isfinite(*o.temperature), path, "nonfinite number");
+            g["temperature"] = *o.temperature;
+        }
+        if (o.top_k)
+            g["top_k"] = *o.top_k;
+        if (o.top_p) {
+            path = "/generation/top_p";
+            require(std::isfinite(*o.top_p), path, "nonfinite number");
+            g["top_p"] = *o.top_p;
+        }
+        if (o.seed)
+            g["seed"] = *o.seed;
+        if (o.frequency_penalty) {
+            path = "/generation/frequency_penalty";
+            require(std::isfinite(*o.frequency_penalty), path, "nonfinite number");
+            g["frequency_penalty"] = *o.frequency_penalty;
+        }
+        if (o.presence_penalty) {
+            path = "/generation/presence_penalty";
+            require(std::isfinite(*o.presence_penalty), path, "nonfinite number");
+            g["presence_penalty"] = *o.presence_penalty;
+        }
         if (o.stop) {
             for (size_t i = 0; i < o.stop->size(); ++i)
                 valid_text((*o.stop)[i], child("/generation/stop", std::to_string(i)));
             g["stop"] = *o.stop;
         }
-        if (o.show_thinking) g["show_thinking"] = *o.show_thinking;
+        if (o.show_thinking)
+            g["show_thinking"] = *o.show_thinking;
         if (o.constraint) {
             if (std::holds_alternative<Chorus::UnconstrainedOutput>(*o.constraint))
                 g["constraint"] = {{"kind", "unconstrained"}};
@@ -360,7 +437,8 @@ SerializeResult serialize_generation_defaults(const Chorus::GenerationDefaults& 
                 valid_text(name, path);
                 const auto* map = std::get_if<Chorus::ProviderOptionMap>(&value);
                 require(map != nullptr, path, "expected namespace object");
-                if (map->empty()) continue;
+                if (map->empty())
+                    continue;
                 Json choices = Json::object();
                 for (const auto& [key, item] : *map) {
                     valid_text(key, child(path, key));
@@ -368,7 +446,8 @@ SerializeResult serialize_generation_defaults(const Chorus::GenerationDefaults& 
                 }
                 providers[name] = std::move(choices);
             }
-            if (!providers.empty()) g["provider_options"] = std::move(providers);
+            if (!providers.empty())
+                g["provider_options"] = std::move(providers);
         }
         path = "/generation";
         return {"{\"version\":1,\"generation\":" + g.dump(-1, ' ', false, Json::error_handler_t::strict) + "}", {}, {}};

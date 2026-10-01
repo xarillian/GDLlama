@@ -20,8 +20,8 @@ struct LlamaLoadConfig {
     int32_t gpu_layers = -1;          // Model layers assigned to the GPU. Zero means none; a negative value means all.
     bool gpu_layers_explicit = false; // Whether gpu_layers is a requested value rather than a default.
     uint32_t max_concurrent_requests = 1;
-    uint32_t n_batch = 2048;  // Maximum total tokens combined into one inference batch.
-    uint32_t n_ubatch = 512;  // Maximum physical sub-batch size. Must not exceed n_batch.
+    uint32_t n_batch = 2048;        // Maximum total tokens combined into one inference batch.
+    uint32_t n_ubatch = 512;        // Maximum physical sub-batch size. Must not exceed n_batch.
     int32_t main_gpu = 0;           // Requested zero-based primary GPU index.
     bool main_gpu_explicit = false; // Whether main_gpu is a requested value rather than a default.
     enum llama_pooling_type pooling = LLAMA_POOLING_TYPE_UNSPECIFIED;

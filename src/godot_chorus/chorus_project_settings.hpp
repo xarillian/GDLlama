@@ -6,14 +6,14 @@
 class ChorusProjectSettings : public godot::RefCounted {
     GDCLASS(ChorusProjectSettings, godot::RefCounted)
 
-public:
+  public:
     enum Status { OK = 0, INVALID = 1, SOURCE_FAILED = 2, CONFLICT = 3, IO_ERROR = 4 };
 
     godot::Dictionary sync_generation_defaults();
     godot::Dictionary reload_generation_defaults();
     godot::Dictionary save_generation_defaults();
 
-protected:
+  protected:
     static void _bind_methods();
 };
 

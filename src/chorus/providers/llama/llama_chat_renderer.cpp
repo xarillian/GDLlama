@@ -23,7 +23,8 @@ LlamaChatRenderer::LlamaChatRenderer(const llama_model* model, common_chat_templ
 }
 
 std::variant<LlamaPreparedChat, RequestRejection> LlamaChatRenderer::render(
-    const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override,
+    const std::vector<ChatMessage>& messages,
+    const std::optional<std::string>& template_override,
     std::optional<bool> enable_thinking
 ) const {
     auto rendered = render_borrowed(messages, template_override, enable_thinking);
@@ -37,7 +38,8 @@ std::variant<LlamaPreparedChat, RequestRejection> LlamaChatRenderer::render(
 }
 
 std::variant<LlamaPreparedChat, RequestRejection> LlamaChatRenderer::take(
-    const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override,
+    const std::vector<ChatMessage>& messages,
+    const std::optional<std::string>& template_override,
     std::optional<bool> enable_thinking
 ) const {
     {
@@ -57,7 +59,8 @@ std::variant<LlamaPreparedChat, RequestRejection> LlamaChatRenderer::take(
 }
 
 std::variant<LlamaPreparedChat, RequestRejection> LlamaChatRenderer::render_borrowed(
-    const std::vector<ChatMessage>& messages, const std::optional<std::string>& template_override,
+    const std::vector<ChatMessage>& messages,
+    const std::optional<std::string>& template_override,
     std::optional<bool> enable_thinking
 ) const {
     std::unique_ptr<TemplateSet> templates;
@@ -79,14 +82,17 @@ std::variant<LlamaPreparedChat, RequestRejection> LlamaChatRenderer::render_borr
 }
 
 std::variant<LlamaPreparedChat, RequestRejection> LlamaChatRenderer::render_with(
-    TemplateSet& templates, const std::vector<ChatMessage>& messages,
-    const std::optional<std::string>& template_override, std::optional<bool> enable_thinking
+    TemplateSet& templates,
+    const std::vector<ChatMessage>& messages,
+    const std::optional<std::string>& template_override,
+    std::optional<bool> enable_thinking
 ) const {
     auto selected = templates_for(templates, template_override);
     if (auto* rejection = std::get_if<RequestRejection>(&selected))
         return *rejection;
-    auto rendered = render_llama_chat(_model, std::get<const common_chat_templates*>(selected), std::nullopt, messages,
-                                      enable_thinking);
+    auto rendered = render_llama_chat(
+        _model, std::get<const common_chat_templates*>(selected), std::nullopt, messages, enable_thinking
+    );
     if (auto* rejection = std::get_if<RequestRejection>(&rendered))
         return *rejection;
     auto& render = std::get<LlamaChatRender>(rendered);

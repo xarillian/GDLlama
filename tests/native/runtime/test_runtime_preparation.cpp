@@ -46,15 +46,22 @@ class GatedPreparation : public RequestPreparation {
         threads.insert(std::this_thread::get_id());
         ++calls;
         cv.notify_all();
-        if (kind == Hook::Count) { ++count_calls; count_bytes += text.size(); counted.push_back(text); }
-        if (kind == Hook::Render) ++renders;
+        if (kind == Hook::Count) {
+            ++count_calls;
+            count_bytes += text.size();
+            counted.push_back(text);
+        }
+        if (kind == Hook::Render)
+            ++renders;
         if (calls == gate_at) {
             entered = true;
             cv.notify_all();
             cv.wait(lock, [&] { return released; });
             gate_exited = true;
-            if (throw_kind == 1) throw std::runtime_error("preparation test failure");
-            if (throw_kind == 2) throw 42;
+            if (throw_kind == 1)
+                throw std::runtime_error("preparation test failure");
+            if (throw_kind == 2)
+                throw 42;
         }
     }
     bool wait_entered() {
@@ -68,22 +75,27 @@ class GatedPreparation : public RequestPreparation {
     }
     std::optional<RequestRejection> validate_request(const ChorusRequest& request) const override {
         hook(Hook::Validate);
-        if (closed) return RequestRejection{ChorusError::EngineNotReady, "closed"};
+        if (closed)
+            return RequestRejection{ChorusError::EngineNotReady, "closed"};
         std::lock_guard<std::mutex> lock(mutex);
         validated_configs.push_back(request.gen_config);
         validated_templates.push_back(request.chat_template);
         return std::nullopt;
     }
     std::variant<RenderedPrompt, RequestRejection> render_chat_prompt(
-        const std::vector<ChatMessage>& messages, const std::optional<std::string>& chat_template, std::optional<bool> show_thinking
+        const std::vector<ChatMessage>& messages,
+        const std::optional<std::string>& chat_template,
+        std::optional<bool> show_thinking
     ) const override {
         hook(Hook::Render);
-        if (closed) return RequestRejection{ChorusError::EngineNotReady, "closed"};
+        if (closed)
+            return RequestRejection{ChorusError::EngineNotReady, "closed"};
         {
             std::lock_guard<std::mutex> lock(mutex);
             render_probes.push_back({chat_template, show_thinking});
         }
-        if (render) return render(messages);
+        if (render)
+            return render(messages);
         RenderedPrompt value;
         for (const auto& message : messages) {
             value.text += *joined_text(message.content) + "|";
@@ -93,8 +105,10 @@ class GatedPreparation : public RequestPreparation {
     }
     std::variant<int64_t, RequestRejection> count_message_tokens(const std::string& text) const override {
         hook(Hook::Count, text);
-        if (closed) return RequestRejection{ChorusError::EngineNotReady, "closed"};
-        if (count_rejection) return *count_rejection;
+        if (closed)
+            return RequestRejection{ChorusError::EngineNotReady, "closed"};
+        if (count_rejection)
+            return *count_rejection;
         return count_override.value_or(static_cast<int64_t>(text.size()));
     }
 };
@@ -106,20 +120,29 @@ class PreparationEngine : public SyncMockEngine {
     std::function<void()> on_shutdown;
     std::function<void()> on_destroy;
     std::function<void()> on_initialize;
-    PreparationEngine() { supports_render = true; mock_per_request_context = 64; }
-    ~PreparationEngine() override { if (on_destroy) on_destroy(); }
+    PreparationEngine() {
+        supports_render = true;
+        mock_per_request_context = 64;
+    }
+    ~PreparationEngine() override {
+        if (on_destroy)
+            on_destroy();
+    }
     EngineCapabilities capabilities() const override {
         auto value = SyncMockEngine::capabilities();
         value.message_token_counting = counting;
         return value;
     }
-    std::optional<InitializationFailure> initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) override {
-        if (on_initialize) on_initialize();
+    std::optional<InitializationFailure>
+    initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) override {
+        if (on_initialize)
+            on_initialize();
         return SyncMockEngine::initialize(config, std::move(logger), control);
     }
     std::shared_ptr<RequestPreparation> request_preparation() const override { return service; }
     void shutdown() override {
-        if (on_shutdown) on_shutdown();
+        if (on_shutdown)
+            on_shutdown();
         service->closed = true;
         SyncMockEngine::shutdown();
     }
@@ -184,10 +207,13 @@ TEST(RuntimePreparation, Gated_hook_leaves_every_admission_poll_and_cancel_respo
     service->gate_at = 1;
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
-    ASSERT_FALSE(runtime.import_conversation_history("reroll", {
-        {10, {MessageRole::User, MessageContent::text("question")}},
-        {11, {MessageRole::Assistant, MessageContent::text("reply")}}
-    }).has_value());
+    ASSERT_FALSE(runtime
+                     .import_conversation_history(
+                         "reroll",
+                         {{10, {MessageRole::User, MessageContent::text("question")}},
+                          {11, {MessageRole::Assistant, MessageContent::text("reply")}}}
+                     )
+                     .has_value());
     auto first = runtime.submit(raw("blocked validation"));
     ASSERT_TRUE(first.ok());
     ASSERT_TRUE(service->wait_entered());
@@ -266,7 +292,9 @@ TEST(RuntimePreparation, Preview_freezes_history_defaults_and_source_without_occ
     service->gate_at = 1;
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
     ReleaseGate release{service};
-    ASSERT_FALSE(runtime.import_conversation_history("npc", {{0, {MessageRole::System, MessageContent::text("old")}}}).has_value());
+    ASSERT_FALSE(runtime.import_conversation_history(
+                            "npc", {{0, {MessageRole::System, MessageContent::text("old")}}}
+    ).has_value());
     auto request = chat();
     auto preview = runtime.render_prompt(request);
     ASSERT_TRUE(service->wait_entered());
@@ -354,10 +382,13 @@ TEST(RuntimePreparation, Nonmonotonic_fallback_recovers_a_larger_candidate_when_
         return RenderedPrompt{std::to_string(messages.size()), messages.size() == 3 ? 4 : 99};
     };
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
-    ASSERT_FALSE(runtime.import_conversation_history("npc", {
-        {0, {MessageRole::User, MessageContent::text("oversized-old-content")}},
-        {1, {MessageRole::Assistant, MessageContent::text("reply")}}
-    }).has_value());
+    ASSERT_FALSE(runtime
+                     .import_conversation_history(
+                         "npc",
+                         {{0, {MessageRole::User, MessageContent::text("oversized-old-content")}},
+                          {1, {MessageRole::Assistant, MessageContent::text("reply")}}}
+                     )
+                     .has_value());
     ASSERT_TRUE(runtime.render_prompt(chat()).ok());
     auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events[0].kind, RuntimeEvent::Kind::PromptRendered);
@@ -371,10 +402,10 @@ TEST(RuntimePreparation, Mandatory_estimate_overflow_does_not_reject_a_fitting_n
     auto engine = std::make_unique<PreparationEngine>();
     engine->service->count_override = INT64_MAX;
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
-    ASSERT_FALSE(runtime.import_conversation_history("npc", {
-        {0, {MessageRole::System, MessageContent::text("S")}},
-        {1, {MessageRole::System, MessageContent::text("T")}}
-    }));
+    ASSERT_FALSE(runtime.import_conversation_history(
+        "npc",
+        {{0, {MessageRole::System, MessageContent::text("S")}}, {1, {MessageRole::System, MessageContent::text("T")}}}
+    ));
     ASSERT_TRUE(runtime.render_prompt(chat()).ok());
     const auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events[0].kind, RuntimeEvent::Kind::PromptRendered);
@@ -434,7 +465,9 @@ TEST(RuntimePreparation, Counts_join_parts_and_bound_arbitrary_content_cache_and
     }
     ASSERT_EQ(service->count_calls, before + 3);
     for (char fill : {'a', 'b', 'c'}) {
-        ASSERT_TRUE(runtime.count_message_tokens(MessageContent::text(std::string(kContentCountCacheBytes / 2, fill))).ok());
+        ASSERT_TRUE(
+            runtime.count_message_tokens(MessageContent::text(std::string(kContentCountCacheBytes / 2, fill))).ok()
+        );
         drain_runtime_events(runtime);
     }
     before = service->count_calls;
@@ -473,7 +506,10 @@ TEST_P(PreparationFailure, Unexpected_exception_fails_ready_running_and_queued_o
     std::set<RequestId> ids;
     size_t failures = 0;
     for (const auto& event : events) {
-        if (event.kind == RuntimeEvent::Kind::EngineFailed) { ++failures; continue; }
+        if (event.kind == RuntimeEvent::Kind::EngineFailed) {
+            ++failures;
+            continue;
+        }
         ASSERT_EQ(event.kind, RuntimeEvent::Kind::Error);
         ASSERT_TRUE(ids.insert(event.request_id).second);
     }
@@ -507,7 +543,8 @@ TEST_P(PreparationFailure, Worker_failure_cancels_provider_owned_work_without_lo
     const auto events = drain_runtime_events(runtime, 3);
     std::set<RequestId> ids;
     for (const auto& event : events) {
-        if (event.kind == RuntimeEvent::Kind::EngineFailed) continue;
+        if (event.kind == RuntimeEvent::Kind::EngineFailed)
+            continue;
         ASSERT_EQ(event.kind, RuntimeEvent::Kind::Error);
         ASSERT_TRUE(ids.insert(event.request_id).second);
     }
@@ -576,7 +613,8 @@ TEST(RuntimePreparation, Gated_render_and_count_cancel_without_waiting_and_disca
         service->gate_at = 1;
         ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
         ReleaseGate release{service};
-        auto accepted = count ? runtime.count_message_tokens(MessageContent::text("draft")) : runtime.render_prompt(chat());
+        auto accepted =
+            count ? runtime.count_message_tokens(MessageContent::text("draft")) : runtime.render_prompt(chat());
         ASSERT_TRUE(accepted.ok());
         ASSERT_TRUE(service->wait_entered());
         ASSERT_TRUE(runtime.poll().empty());
@@ -721,8 +759,8 @@ TEST(RuntimePreparation, Progress_is_coalesced_and_invalid_samples_do_not_publis
     class ProgressEngine : public PreparationEngine {
       public:
         std::shared_ptr<std::atomic<bool>> reported;
-        std::optional<InitializationFailure> initialize(const ChorusConfig& config, Logger logger,
-                                                        const InitializationControl& control) override {
+        std::optional<InitializationFailure>
+        initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) override {
             for (int i = 0; i < 5000; ++i)
                 control.on_progress({LoadPhase::LoadingModel, 0.5f});
             control.on_progress({LoadPhase::LoadingModel, 0.25f});
@@ -760,8 +798,8 @@ TEST(RuntimePreparation, In_flight_progress_drains_across_polls_without_regressi
       public:
         std::shared_ptr<LoadGate> first;
         std::shared_ptr<LoadGate> second;
-        std::optional<InitializationFailure> initialize(const ChorusConfig& config, Logger logger,
-                                                        const InitializationControl& control) override {
+        std::optional<InitializationFailure>
+        initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) override {
             control.on_progress({LoadPhase::LoadingModel, 0.4f});
             first->hold();
             control.on_progress({LoadPhase::LoadingModel, 0.2f});
@@ -914,8 +952,8 @@ TEST(RuntimePreparation, Partial_initialization_failures_fence_resources_before_
       public:
         explicit Candidate(Failure failure) : failure(failure) {}
         Failure failure;
-        std::optional<InitializationFailure> initialize(const ChorusConfig& config, Logger logger,
-                                                        const InitializationControl& control) override {
+        std::optional<InitializationFailure>
+        initialize(const ChorusConfig& config, Logger logger, const InitializationControl& control) override {
             auto result = PreparationEngine::initialize(config, std::move(logger), control);
             if (failure == Failure::StandardException)
                 throw std::runtime_error("partial initialization failed");
@@ -939,8 +977,12 @@ TEST(RuntimePreparation, Partial_initialization_failures_fence_resources_before_
         std::atomic<bool> closed_before_destruction{false};
     };
     ChorusRuntime runtime;
-    for (auto failure : {Failure::StandardException, Failure::NonstandardException, Failure::FalseReadiness,
-                         Failure::MissingPreparation, Failure::WorkerStart}) {
+    for (auto failure :
+         {Failure::StandardException,
+          Failure::NonstandardException,
+          Failure::FalseReadiness,
+          Failure::MissingPreparation,
+          Failure::WorkerStart}) {
         SCOPED_TRACE(static_cast<int>(failure));
         auto cleanup = std::make_shared<Cleanup>();
         auto candidate = std::make_unique<Candidate>(failure);
@@ -965,12 +1007,23 @@ TEST(RuntimePreparation, Partial_initialization_failures_fence_resources_before_
         ASSERT_TRUE(cleanup->closed_before_destruction.load());
         ASSERT_TRUE(service.expired());
         auto observed = wait_load_terminal(runtime, std::move(admitted));
-        ASSERT_EQ(observed.error, failure == Failure::FalseReadiness || failure == Failure::MissingPreparation
-                                      ? ChorusError::EngineNotReady : ChorusError::Unknown);
+        ASSERT_EQ(
+            observed.error,
+            failure == Failure::FalseReadiness || failure == Failure::MissingPreparation ? ChorusError::EngineNotReady
+                                                                                         : ChorusError::Unknown
+        );
         ASSERT_EQ(observed.events.back().kind, RuntimeEvent::Kind::ModelLoadFailed);
-        ASSERT_EQ(std::count_if(observed.events.begin(), observed.events.end(), [](const auto& event) {
-            return event.kind == RuntimeEvent::Kind::ModelLoadFailed || event.kind == RuntimeEvent::Kind::ModelLoaded;
-        }), 1);
+        ASSERT_EQ(
+            std::count_if(
+                observed.events.begin(),
+                observed.events.end(),
+                [](const auto& event) {
+                    return event.kind == RuntimeEvent::Kind::ModelLoadFailed ||
+                           event.kind == RuntimeEvent::Kind::ModelLoaded;
+                }
+            ),
+            1
+        );
         ASSERT_TRUE(std::none_of(observed.events.begin(), observed.events.end(), [](const auto& event) {
             return event.kind == RuntimeEvent::Kind::EngineFailed;
         }));
@@ -1017,9 +1070,7 @@ TEST(RuntimePreparation, Parked_candidate_that_loses_health_is_cleaned_up_before
     class FailingCandidate : public PreparationEngine {
       public:
         std::shared_ptr<std::atomic<bool>> healthy;
-        bool is_initialized() const override {
-            return PreparationEngine::is_initialized() && healthy->load();
-        }
+        bool is_initialized() const override { return PreparationEngine::is_initialized() && healthy->load(); }
     };
     int shutdowns = 0;
     ChorusRuntime runtime;
@@ -1079,12 +1130,16 @@ TEST(RuntimePreparation, Acceptance_closes_old_preparation_before_worker_retires
     runtime.test_release_retirement();
     auto observed = wait_load_terminal(runtime, std::move(admitted));
     ASSERT_TRUE(observed.ok());
-    std::erase_if(observed.events, [](const auto& event) { return event.kind == RuntimeEvent::Kind::ModelLoadProgress; });
+    std::erase_if(observed.events, [](const auto& event) {
+        return event.kind == RuntimeEvent::Kind::ModelLoadProgress;
+    });
     ASSERT_EQ(observed.events.size(), 3U);
     ASSERT_EQ(observed.events[0].error, ChorusError::Cancelled);
     ASSERT_EQ(observed.events[1].error, ChorusError::Cancelled);
-    ASSERT_EQ(std::set<RequestId>({observed.events[0].request_id, observed.events[1].request_id}),
-              std::set<RequestId>({first.request_id, queued.request_id}));
+    ASSERT_EQ(
+        std::set<RequestId>({observed.events[0].request_id, observed.events[1].request_id}),
+        std::set<RequestId>({first.request_id, queued.request_id})
+    );
     ASSERT_EQ(observed.events[2].kind, RuntimeEvent::Kind::ModelLoaded);
 }
 
@@ -1124,10 +1179,14 @@ TEST(RuntimePreparation, Reload_joins_gated_preparation_before_old_destruction_a
     ASSERT_TRUE(service->wait_entered());
     ASSERT_TRUE(runtime.cancel(old.request_id));
     auto replacement = std::make_unique<PreparationEngine>();
-    replacement->on_initialize = [&] { EXPECT_TRUE(old_destroyed); EXPECT_TRUE(service->closed); };
+    replacement->on_initialize = [&] {
+        EXPECT_TRUE(old_destroyed);
+        EXPECT_TRUE(service->closed);
+    };
     std::atomic<bool> replacing{false};
     std::thread unblock([&] {
-        while (!replacing) std::this_thread::yield();
+        while (!replacing)
+            std::this_thread::yield();
         service->release();
     });
     replacing = true;
@@ -1211,10 +1270,11 @@ TEST(RuntimePreparation, Regeneration_reuses_durable_id_but_not_the_replaced_con
     engine->tokens = {"new reply"};
     auto service = engine->service;
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
-    ASSERT_FALSE(runtime.import_conversation_history("npc", {
-        {4, {MessageRole::User, MessageContent::text("question")}},
-        {5, {MessageRole::Assistant, MessageContent::text("old reply")}}
-    }));
+    ASSERT_FALSE(runtime.import_conversation_history(
+        "npc",
+        {{4, {MessageRole::User, MessageContent::text("question")}},
+         {5, {MessageRole::Assistant, MessageContent::text("old reply")}}}
+    ));
     ASSERT_TRUE(runtime.render_prompt(chat()).ok());
     drain_runtime_events(runtime);
     ASSERT_TRUE(runtime.regenerate(chat("npc", "")).ok());
@@ -1232,14 +1292,16 @@ TEST(RuntimePreparation, Injections_and_systems_survive_worker_fitting_and_zero_
     auto engine = std::make_unique<PreparationEngine>();
     engine->mock_per_request_context = 15;
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), {}).ok());
-    ASSERT_FALSE(runtime.import_conversation_history("npc", {
-        {9, {MessageRole::System, MessageContent::text("S")}},
-        {0, {MessageRole::User, MessageContent::text("old")}},
-        {1, {MessageRole::Assistant, MessageContent::text("reply")}}
-    }));
+    ASSERT_FALSE(runtime.import_conversation_history(
+        "npc",
+        {{9, {MessageRole::System, MessageContent::text("S")}},
+         {0, {MessageRole::User, MessageContent::text("old")}},
+         {1, {MessageRole::Assistant, MessageContent::text("reply")}}}
+    ));
     auto request = chat();
-    request.inject = {{{MessageRole::System, MessageContent::text("I")}, 100},
-                      {{MessageRole::User, MessageContent::text("J")}, 0}};
+    request.inject = {
+        {{MessageRole::System, MessageContent::text("I")}, 100}, {{MessageRole::User, MessageContent::text("J")}, 0}
+    };
     ASSERT_TRUE(runtime.render_prompt(request).ok());
     const auto events = drain_runtime_events(runtime);
     ASSERT_EQ(events[0].kind, RuntimeEvent::Kind::PromptRendered);

@@ -17,7 +17,8 @@ std::optional<int> LlamaSessionCache::park(int slot, SessionId session, std::vec
 }
 
 std::optional<int> LlamaSessionCache::slot_for(const SessionId& session) const {
-    const auto found = std::ranges::find_if(_entries, [&](const auto& entry) { return entry.second.session == session; });
+    const auto found =
+        std::ranges::find_if(_entries, [&](const auto& entry) { return entry.second.session == session; });
     return found == _entries.end() ? std::nullopt : std::optional<int>{found->first};
 }
 

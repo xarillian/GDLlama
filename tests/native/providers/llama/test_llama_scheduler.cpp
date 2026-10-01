@@ -1,6 +1,6 @@
 #include "chorus/core/common.hpp"
-#include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/providers/llama/llama_batch_planner.hpp"
+#include "chorus/providers/llama/llama_engine.hpp"
 #include "chorus/providers/llama/llama_generation.hpp"
 #include "chorus/providers/llama/llama_load_config.hpp"
 #include "chorus/providers/llama/llama_recovery_planner.hpp"
@@ -143,11 +143,13 @@ TEST_F(LlamaSchedulerModelTest, Malformed_sampler_requests_terminate_and_engine_
     ASSERT_TRUE(state.wait_for_terminals({3}));
     engine.shutdown();
     ASSERT_EQ(state.terminals[1].size(), size_t{1});
-    EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[1][0].event).code,
-              Chorus::ChorusError::UnsupportedOption);
+    EXPECT_EQ(
+        std::get<Chorus::ChorusSignal::Error>(state.terminals[1][0].event).code, Chorus::ChorusError::UnsupportedOption
+    );
     ASSERT_EQ(state.terminals[2].size(), size_t{1});
-    EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[2][0].event).code,
-              Chorus::ChorusError::InvalidRequest);
+    EXPECT_EQ(
+        std::get<Chorus::ChorusSignal::Error>(state.terminals[2][0].event).code, Chorus::ChorusError::InvalidRequest
+    );
     ASSERT_EQ(state.terminals[3].size(), size_t{1});
     EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[3][0].event));
 }
@@ -188,8 +190,9 @@ TEST_F(LlamaSchedulerModelTest, Unexpected_batch_exception_fences_admission_and_
     EXPECT_EQ(state.batches.size(), size_t{1});
     for (int id : {1, 2, 3}) {
         ASSERT_EQ(state.terminals[id].size(), size_t{1});
-        EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[id][0].event).code,
-                  Chorus::ChorusError::Unknown);
+        EXPECT_EQ(
+            std::get<Chorus::ChorusSignal::Error>(state.terminals[id][0].event).code, Chorus::ChorusError::Unknown
+        );
     }
 }
 
@@ -231,8 +234,9 @@ TEST_F(LlamaSchedulerModelTest, Unexpected_admission_exception_retains_preparing
     EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[1][0].event));
     for (int id : {2, 3, 4}) {
         ASSERT_EQ(state.terminals[id].size(), size_t{1});
-        EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[id][0].event).code,
-                  Chorus::ChorusError::Unknown);
+        EXPECT_EQ(
+            std::get<Chorus::ChorusSignal::Error>(state.terminals[id][0].event).code, Chorus::ChorusError::Unknown
+        );
     }
 }
 
@@ -278,8 +282,7 @@ TEST_F(LlamaSchedulerModelTest, Preparing_cancellation_is_consumed_and_late_or_u
     ASSERT_TRUE(state.wait_for_terminals({3}));
     scheduler.shutdown();
     ASSERT_EQ(state.terminals[1].size(), size_t{1});
-    EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[1][0].event).code,
-              Chorus::ChorusError::Cancelled);
+    EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[1][0].event).code, Chorus::ChorusError::Cancelled);
     for (int id : {2, 3}) {
         ASSERT_EQ(state.terminals[id].size(), size_t{1});
         EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[id][0].event));
@@ -317,8 +320,12 @@ TEST(LlamaScheduler, pure_generation_planner_reserves_decode_tokens_before_prefi
 }
 
 TEST(LlamaScheduler, pure_generation_planner_prefills_one_micro_batch_per_step_while_a_sequence_streams) {
-    const Chorus::LlamaPlannerSequence streaming{1, Chorus::RequestType::Generate, 4, 10, Chorus::LlamaPlannerPhase::Decode, 0, 0, false};
-    const Chorus::LlamaPlannerSequence arriving{2, Chorus::RequestType::Generate, 4, 20, Chorus::LlamaPlannerPhase::Prefill, 0, 100, false};
+    const Chorus::LlamaPlannerSequence streaming{
+        1, Chorus::RequestType::Generate, 4, 10, Chorus::LlamaPlannerPhase::Decode, 0, 0, false
+    };
+    const Chorus::LlamaPlannerSequence arriving{
+        2, Chorus::RequestType::Generate, 4, 20, Chorus::LlamaPlannerPhase::Prefill, 0, 100, false
+    };
     const auto prefilled = [](const auto& plan) {
         return std::ranges::count_if(plan->entries, [](const auto& entry) { return !entry.decode; });
     };
@@ -464,7 +471,9 @@ TEST_F(LlamaSchedulerModelTest, A_prompt_longer_than_the_attention_window_genera
     Chorus::LlamaUtils::Batch batch;
     batch.initialize(static_cast<int32_t>(tokens.size()), 0, 1);
     for (size_t index = 0; index < tokens.size(); ++index)
-        Chorus::LlamaUtils::batch_add_seq(batch.get(), tokens[index], 0, static_cast<int>(index), index + 1 == tokens.size());
+        Chorus::LlamaUtils::batch_add_seq(
+            batch.get(), tokens[index], 0, static_cast<int>(index), index + 1 == tokens.size()
+        );
     ASSERT_EQ(llama_decode(reference, batch.get()), 0);
     std::string expected;
     const int vocabulary = llama_vocab_n_tokens(llama_model_get_vocab(model));
@@ -615,8 +624,8 @@ TEST_F(LlamaSchedulerModelTest, Embedding_batches_respect_n_ubatch_and_cancellat
     ASSERT_TRUE(state.wait_for_gate());
 
     std::vector<Chorus::ChorusRequest> embeddings;
-    for (const auto [id, prompt] : std::vector<std::pair<Chorus::RequestId, std::string>>{
-             {11, "a"}, {12, "b"}, {13, "c"}}) {
+    for (const auto [id, prompt] :
+         std::vector<std::pair<Chorus::RequestId, std::string>>{{11, "a"}, {12, "b"}, {13, "c"}}) {
         auto request = make_scheduler_embedding(id, prompt, 0);
         request.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };
         embeddings.push_back(std::move(request));
@@ -804,9 +813,8 @@ TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
     bool oversized_finished = false;
     {
         std::unique_lock<std::mutex> lock(state.mutex);
-        oversized_finished = state.cv.wait_for(lock, std::chrono::seconds(15), [&] {
-            return !state.oversized_terminals.empty();
-        });
+        oversized_finished =
+            state.cv.wait_for(lock, std::chrono::seconds(15), [&] { return !state.oversized_terminals.empty(); });
     }
     if (!oversized_finished) {
         engine.shutdown();
@@ -823,8 +831,10 @@ TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
         std::lock_guard<std::mutex> lock(state.mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
             ++state.recovery_tokens;
-        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-                   std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+        } else if (
+            std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
+            std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)
+        ) {
             state.recovery_terminals.push_back(sig);
             state.cv.notify_all();
         }
@@ -834,9 +844,8 @@ TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
     bool recovery_finished = false;
     {
         std::unique_lock<std::mutex> lock(state.mutex);
-        recovery_finished = state.cv.wait_for(lock, std::chrono::seconds(15), [&] {
-            return !state.recovery_terminals.empty();
-        });
+        recovery_finished =
+            state.cv.wait_for(lock, std::chrono::seconds(15), [&] { return !state.recovery_terminals.empty(); });
     }
 
     engine.shutdown();
@@ -860,8 +869,7 @@ TEST_F(LlamaSchedulerModelTest, Higher_priority_request_served_first) {
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
         {"use_gpu", false},
-        {"max_concurrent_requests",
-         int64_t{1}}, // one active request lets the priority queue choose before admission
+        {"max_concurrent_requests", int64_t{1}}, // one active request lets the priority queue choose before admission
     };
 
     std::mutex order_mutex;
@@ -874,7 +882,8 @@ TEST_F(LlamaSchedulerModelTest, Higher_priority_request_served_first) {
 
     auto make_handler = [&](int64_t id) {
         return [&, id](const Chorus::ChorusSignal& sig) {
-            if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) || std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+            if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
+                std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
                 std::lock_guard<std::mutex> lock(order_mutex);
                 completion_order.push_back(id);
             }
@@ -949,8 +958,10 @@ TEST_F(LlamaSchedulerModelTest, Sequence_id_reusable_after_request_completes) {
             std::lock_guard<std::mutex> lock(result->mutex);
             if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
                 ++result->tokens;
-            } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-                       std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+            } else if (
+                std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
+                std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)
+            ) {
                 result->terminals.push_back(sig);
                 result->cv.notify_all();
             }
@@ -961,9 +972,7 @@ TEST_F(LlamaSchedulerModelTest, Sequence_id_reusable_after_request_completes) {
         bool finished = false;
         {
             std::unique_lock<std::mutex> lock(result->mutex);
-            finished = result->cv.wait_for(lock, std::chrono::seconds(15), [&] {
-                return !result->terminals.empty();
-            });
+            finished = result->cv.wait_for(lock, std::chrono::seconds(15), [&] { return !result->terminals.empty(); });
         }
         return std::pair{result, finished};
     };
@@ -1130,8 +1139,10 @@ TEST_F(LlamaSchedulerModelTest, Batch_demand_beyond_capacity_is_clamped_not_over
         std::lock_guard<std::mutex> lock(state.mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
             ++state.recovery_tokens;
-        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-                   std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+        } else if (
+            std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
+            std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)
+        ) {
             state.terminals[sig.request_id].push_back(sig);
             state.cv.notify_all();
         }
@@ -1141,9 +1152,8 @@ TEST_F(LlamaSchedulerModelTest, Batch_demand_beyond_capacity_is_clamped_not_over
     bool recovery_finished = false;
     {
         std::unique_lock<std::mutex> lock(state.mutex);
-        recovery_finished = state.cv.wait_for(lock, std::chrono::seconds(15), [&] {
-            return !state.terminals[small.id].empty();
-        });
+        recovery_finished =
+            state.cv.wait_for(lock, std::chrono::seconds(15), [&] { return !state.terminals[small.id].empty(); });
     }
 
     engine.shutdown();

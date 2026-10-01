@@ -2,9 +2,9 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <string_view>
-#include <stop_token>
 #include <utility>
 #include <variant>
 #include <vector>
