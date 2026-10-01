@@ -27,6 +27,7 @@ def synchronize_publication(vendor, output, barrier):
 
 class MaterializeLlamaTest(unittest.TestCase):
     def setUp(self):
+        (llama.ROOT / "bin").mkdir(exist_ok=True)
         self.scratch = tempfile.TemporaryDirectory(dir=llama.ROOT / "bin")
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name)
