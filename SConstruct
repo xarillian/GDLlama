@@ -80,26 +80,32 @@ env["use_vulkan"] = use_vulkan
 env["use_metal"] = use_metal
 env["llama_build_dir"] = llama_build_dir
 
-# Platform toolchain
-if env["platform"] == "windows":
-    lib_paths = [
-        os.path.join(llama_build_dir, "src", "Release"),
-        os.path.join(llama_build_dir, "ggml", "src", "Release"),
-        os.path.join(llama_build_dir, "common", "Release"),
-    ]
-    if use_vulkan:
-        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-vulkan", "Release"))
-else:
-    lib_paths = [
-        os.path.join(llama_build_dir, "src"),
-        os.path.join(llama_build_dir, "ggml", "src"),
-        os.path.join(llama_build_dir, "common"),
-    ]
-    if use_vulkan:
-        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-vulkan"))
-    if use_metal and env["platform"] == "macos":
-        lib_paths.append(os.path.join(llama_build_dir, "ggml", "src", "ggml-metal"))
+# Static link order: llama-common pulls from llama-common-base and llama, so it comes first.
+llama_archives = ["llama-common", "llama-common-base", "llama", "ggml", "ggml-cpu", "ggml-base"]
+if use_metal and env["platform"] == "macos":
+    llama_archives.append("ggml-metal")
+if use_vulkan:
+    llama_archives.append("ggml-vulkan")
+LLAMA_ARCHIVE_DIRS = {
+    "llama": "src",
+    "llama-common": "common",
+    "llama-common-base": "common",
+    "ggml": "ggml/src",
+    "ggml-base": "ggml/src",
+    "ggml-cpu": "ggml/src",
+    "ggml-metal": "ggml/src/ggml-metal",
+    "ggml-vulkan": "ggml/src/ggml-vulkan",
+}
 
+def llama_archive_path(name):
+    if env["platform"] == "windows":
+        return os.path.join(llama_build_dir, LLAMA_ARCHIVE_DIRS[name], "Release", f"{name}.lib")
+    return os.path.join(llama_build_dir, LLAMA_ARCHIVE_DIRS[name], f"lib{name}.a")
+
+llama_archive_paths = [llama_archive_path(name) for name in llama_archives]
+lib_paths = list(dict.fromkeys(os.path.dirname(path) for path in llama_archive_paths))
+
+# Platform toolchain
 if env["platform"] == "windows":
     # llama.cpp's Release archive uses `/MD`, so every linked object must use the same CRT.
     for flag in ["/MT", "/MTd", "/MDd"]:
@@ -334,35 +340,24 @@ def build_llama_with_cmake(target, source, env):
 
     return 0
 
-# Static link order: llama-common pulls from llama-common-base and llama, so it comes first.
-llama_libs = ["llama-common", "llama-common-base", "llama", "ggml", "ggml-cpu", "ggml-base"]
-
-if env["platform"] == "windows":
-    llama_libs = [lib + ".lib" for lib in llama_libs]
-    llama_lib_trigger = os.path.join(llama_build_dir, "src", "Release", "llama.lib")
-else:
-    llama_lib_trigger = os.path.join(llama_build_dir, "src", "libllama.a")
-
-if use_metal and env["platform"] == "macos":
-    llama_libs.append("ggml-metal")
-
-if use_vulkan:
-    llama_libs.append("ggml-vulkan")
-    if sys.platform.startswith("linux"):
-        # GNU ld with --as-needed drops a shared library that nothing has referenced yet, so the
-        # loader must follow the ggml archive that calls into it.
-        llama_libs.append("vulkan")
+llama_libs = [f"{name}.lib" for name in llama_archives] if env["platform"] == "windows" else list(llama_archives)
+if use_vulkan and sys.platform.startswith("linux"):
+    # GNU ld with --as-needed drops a shared library that nothing has referenced yet, so the
+    # loader must follow the ggml archive that calls into it.
+    llama_libs.append("vulkan")
 
 llama_build_signature = Value(
     f"revision={llama_revision};patch={llama_patch_identity};variant={llama_variant};platform={env['platform']};arch={env.get('arch', '')}"
 )
+# Every archive is a declared output, so a rebuilt ggml-cpu changes the signature of whatever links it
+# and SCons cannot hand back a cached binary linked against the previous build.
 cmake_target = env.Command(
-    target=llama_lib_trigger,
+    target=llama_archive_paths,
     source=[llama_build_signature, "patches/llama-resource-cleanup.patch", "tools/materialize_llama.py"],
     action=build_llama_with_cmake
 )
-# The CMake build writes more libraries than its one declared target, so it stays out of the
-# SCons cache; CI caches its build directory instead.
+# The CMake build directory holds more than these archives, so it stays out of the SCons cache;
+# CI caches the directory instead.
 env.NoCache(cmake_target)
 
 # Tooling target
