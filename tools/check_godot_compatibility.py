@@ -18,11 +18,13 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 ADDON = ROOT / "plugin/addons/chorus"
 
-# Stock 4.4.0 emits these even when importing an empty project without Chorus.
+# Stock 4.4.0 emits these even when importing an empty project without Chorus. The .NET editor
+# sometimes also reads an editor setting after EditorSettings has shut down.
 GODOT_44_HEADLESS_ERRORS = {
     "ERROR: Do not use progress dialog (task) while flushing the message queue or using call_deferred()!",
     'ERROR: Condition "!tasks.has(p_task)" is true. Returning: canceled',
     'ERROR: Condition "!tasks.has(p_task)" is true.',
+    'ERROR: Condition "!EditorSettings::get_singleton() || !EditorSettings::get_singleton()->has_setting(p_setting)" is true. Returning: Variant()',
 }
 
 
