@@ -31,6 +31,20 @@ struct EngineUnderTest {
     std::function<void(Chorus::ChorusRequest&)> shape_short_request;
 };
 
+/*
+ * Waits until `engine` turns submissions away, proving that its shutdown has begun.
+ *
+ * A thread that announces it is about to call `Chorus::InferenceEngine::shutdown` has not stopped
+ * anything yet, so a callback released on that announcement can keep streaming. Copies of `probe`
+ * that the engine still accepts are queued and terminated by the same shutdown; their signals go to
+ * the probe's own callback, never to the test's.
+ *
+ * Returns:
+ *  - `true`: a probe ended with `Chorus::ChorusError::EngineNotReady` before `submit_request` returned.
+ *  - `false`: no probe was refused within the suite's patience.
+ */
+bool wait_until_submissions_rejected(Chorus::InferenceEngine& engine, Chorus::ChorusRequest probe);
+
 class EngineContractTest : public ChorusModelTest, public ::testing::WithParamInterface<EngineUnderTest> {
   protected:
     void SetUp() override {

@@ -318,6 +318,7 @@ void case_shutdown_terminates_in_flight_work_and_fences_callbacks(const EngineUn
         std::unique_lock<std::mutex> lock(stopper_mutex);
         stopper_is_waiting = stopper_cv.wait_for(lock, PATIENCE, [&] { return stopper_entered; });
     }
+    const bool stop_began = wait_until_submissions_rejected(*engine, short_request(subject, 7));
     // The gate must open from outside: stop is entitled to wait on the
     // callback it is fencing, so releasing it after the join would deadlock.
     gate.open();
@@ -326,6 +327,7 @@ void case_shutdown_terminates_in_flight_work_and_fences_callbacks(const EngineUn
     const size_t settled = log.size();
 
     ASSERT_TRUE(stopper_is_waiting);
+    ASSERT_TRUE(stop_began);
     ASSERT_TRUE(stop_returned.load());
     ASSERT_EQ(signals_after_stop.load(), 0);
     ASSERT_EQ(log.size(), settled); // the door stayed shut
@@ -366,6 +368,25 @@ void case_shutdown_is_idempotent(const EngineUnderTest& subject) {
 }
 
 } // namespace
+
+bool wait_until_submissions_rejected(Chorus::InferenceEngine& engine, Chorus::ChorusRequest probe) {
+    static std::atomic<Chorus::RequestId> next_probe_id{1'000'000};
+    const auto rejected = std::make_shared<std::atomic<bool>>(false);
+    probe.on_event = [rejected](Chorus::ChorusSignal& signal) {
+        const auto* error = std::get_if<Chorus::ChorusSignal::Error>(&signal.event);
+        if (error && error->code == Chorus::ChorusError::EngineNotReady)
+            rejected->store(true);
+    };
+    const auto deadline = std::chrono::steady_clock::now() + PATIENCE;
+    while (std::chrono::steady_clock::now() < deadline) {
+        probe.id = next_probe_id++;
+        engine.submit_request(probe);
+        if (rejected->load())
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+}
 
 TEST_P(EngineContractTest, contract_pre_cancelled_initialization_can_recover) {
     case_pre_cancelled_initialization_can_recover(GetParam());

@@ -590,6 +590,12 @@ TEST(EchoEngine, Echo_shutdown_drains_active_and_queued_requests_before_returnin
     {
         std::unique_lock<std::mutex> lock(mutex);
         stopper_started = cv.wait_for(lock, std::chrono::seconds(2), [&] { return shutdown_started; });
+    }
+    Chorus::ChorusRequest probe = active;
+    probe.prompt = "probe";
+    const bool stop_began = wait_until_submissions_rejected(engine, probe);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
         release_active = true;
         cv.notify_all();
     }
@@ -622,6 +628,7 @@ TEST(EchoEngine, Echo_shutdown_drains_active_and_queued_requests_before_returnin
     ASSERT_EQ(active_cancelled, size_t{1});
     ASSERT_EQ(queued_cancelled, size_t{1});
     ASSERT_TRUE(stopper_started);
+    ASSERT_TRUE(stop_began);
     ASSERT_TRUE(shutdown_returned);
 }
 
