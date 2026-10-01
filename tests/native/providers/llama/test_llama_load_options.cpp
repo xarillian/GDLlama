@@ -166,7 +166,10 @@ TEST(LlamaLoadOptions, Llama_pooling_descriptor_lists_only_embedding_modes) {
     const auto* descriptor = Chorus::find_option_descriptor(Chorus::llama_load_option_descriptors(), "pooling");
     ASSERT_TRUE(descriptor != nullptr);
     ASSERT_EQ(descriptor->choices, std::vector<std::string>({"model", "none", "mean", "cls", "last"}));
-    for (const auto& [value, expected] : std::vector<std::pair<std::string, enum llama_pooling_type>>{
+    // llama.h's llama_pooling_type() function hides the enum's name, and MSVC rejects the
+    // elaborated `enum llama_pooling_type` inside template arguments.
+    using PoolingType = enum llama_pooling_type;
+    for (const auto& [value, expected] : std::vector<std::pair<std::string, PoolingType>>{
              {"model", LLAMA_POOLING_TYPE_UNSPECIFIED},
              {"none", LLAMA_POOLING_TYPE_NONE},
              {"mean", LLAMA_POOLING_TYPE_MEAN},
