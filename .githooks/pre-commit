@@ -7,7 +7,7 @@ PASS=0
 FAIL=1
 
 staged_cpp() {
-    git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|hpp)$' || true
+    git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|hpp|h)$' | grep -v '^third-party/' || true
 }
 
 require() {
@@ -20,14 +20,14 @@ require() {
 
 # Checks ####
 check_clang_format() {
-    require clang-format || return $PASS  # skip gracefully if not installed
+    require uvx || return $PASS  # skip gracefully if not installed
 
     local files changed=()
     files=$(staged_cpp)
     [ -z "$files" ] && return $PASS
 
     for f in $files; do
-        clang-format -i "$f"
+        tools/clang-format -i "$f"
         if ! git diff --quiet "$f"; then
             changed+=("$f")
             git add "$f"

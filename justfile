@@ -73,3 +73,11 @@ check quick='false' filter='': build-tests
 
 compiledb:
     scons compiledb
+
+# Format every first-party C++ file in place.
+format:
+    git ls-files -- '*.cpp' '*.hpp' '*.h' ':!:third-party' | xargs tools/clang-format -i
+
+# Fail if any first-party C++ file is unformatted, without changing it.
+style:
+    git ls-files -- '*.cpp' '*.hpp' '*.h' ':!:third-party' | xargs tools/clang-format --dry-run --Werror

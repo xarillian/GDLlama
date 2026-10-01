@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Pinned so local formatting and CI agree byte for byte; clang-format versions format differently.
+exec uvx --quiet clang-format==23.1.1 "$@"

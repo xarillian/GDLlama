@@ -38,4 +38,7 @@ AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
 AlignTrailingComments: true
 
-Standard: c++17
+Standard: c++20
+
+# Macros used as whole statements, without a trailing semicolon
+StatementMacros: [BIND_NAMESPACE, IMPLEMENT_FIELD, PRESENT, GET, INT32, FLOAT32]
