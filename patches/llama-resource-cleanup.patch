@@ -154,3 +154,24 @@ index 43c396f15..c7c427ed7 100644
  
      // check validation results
      bool validation_failed = false;
+diff --git a/common/jinja/runtime.cpp b/common/jinja/runtime.cpp
+index e2cab8a..a20865f 100644
+--- a/common/jinja/runtime.cpp
++++ b/common/jinja/runtime.cpp
+@@ -537,8 +537,6 @@ value for_statement::execute_impl(context & ctx) const {
+ 
+     std::vector<value> filtered_items;
+     for (size_t i = 0; i < items.size(); ++i) {
+-        context loop_scope(scope);
+-
+         value current = items[i];
+ 
+         std::function<void(context&)> scope_update_fn = [](context &) { /* no-op */};
+@@ -584,6 +582,7 @@ value for_statement::execute_impl(context & ctx) const {
+         }
+ 
+         if (select_expr && test_expr) {
++            context loop_scope(scope);
+             scope_update_fn(loop_scope);
+             value test_val = test_expr->execute(loop_scope);
+             if (!test_val->as_bool()) {

@@ -46,9 +46,11 @@ def materialize():
         raise RuntimeError("llama.cpp submodule has tracked edits; restore them before building")
     paths = run("git", "apply", "--numstat", str(PATCH), cwd=VENDOR).splitlines()
     if {line.split("\t")[-1] for line in paths} != {
-        "src/llama-model-loader.cpp", "src/llama-batch.cpp", "ggml/CMakeLists.txt"
-    } or len(paths) != 3:
-        raise RuntimeError("llama patch must touch only upload cleanup, batch conversion and GGML revision guard")
+        "src/llama-model-loader.cpp", "src/llama-batch.cpp", "ggml/CMakeLists.txt", "common/jinja/runtime.cpp"
+    } or len(paths) != 4:
+        raise RuntimeError(
+            "llama patch must touch only upload cleanup, batch conversion, GGML revision guard and Jinja loop scopes"
+        )
     # Check against HEAD even when a previously materialized tree exists.
     run("git", "apply", "--check", str(PATCH), cwd=VENDOR)
     identity = hashlib.sha256(PATCH.read_bytes() + Path(__file__).read_bytes()).hexdigest()[:20]
