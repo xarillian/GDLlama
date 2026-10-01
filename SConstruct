@@ -36,6 +36,9 @@ SANITIZERS = {"thread": "thread", "address": "address,undefined"}
 sanitize = ARGUMENTS.pop("sanitize", "")
 if sanitize and sanitize not in SANITIZERS:
     raise SystemExit(f">>> [SCons] sanitize must be one of: {', '.join(SANITIZERS)}")
+# Chorus reports failures with exceptions. godot-cpp disables them by default, which MSVC applies
+# through _HAS_EXCEPTIONS=0: its standard library then defines exceptions that lose their messages.
+ARGUMENTS["disable_exceptions"] = "no"
 if not ARGUMENTS.get("custom_api_file"):
     try:
         ARGUMENTS["custom_api_file"] = str(materialize_godot_api())
@@ -100,7 +103,7 @@ if env["platform"] == "windows":
     env.Append(CCFLAGS=["/MD"])
 
     # Template-heavy llama.cpp headers can exceed COFF's default section limit.
-    env.Append(CXXFLAGS=["/std:c++20", "/EHsc", "/bigobj"])
+    env.Append(CXXFLAGS=["/std:c++20", "/bigobj"])
     env["LIBPATH"] = lib_paths
     env.Append(LIBS=["advapi32", "user32", "kernel32"])
 
@@ -113,7 +116,7 @@ if env["platform"] == "windows":
         else:
             print(">>> [SCons] WARNING: VULKAN_SDK env var not found. Linking might fail.")
 else:
-    env.Append(CXXFLAGS=["-std=c++20", "-fexceptions"])
+    env.Append(CXXFLAGS=["-std=c++20"])
 
     if sys.platform.startswith("linux"):
         env.Append(CXXFLAGS=["-fopenmp"])
