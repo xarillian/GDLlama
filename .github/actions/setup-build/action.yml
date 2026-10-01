@@ -73,7 +73,9 @@ runs:
     - id: llama
       if: inputs.llama-cache == 'true'
       shell: bash
-      run: echo "revision=$(git rev-parse HEAD:third-party/llama.cpp)" >> "$GITHUB_OUTPUT"
+      run: |
+        echo "revision=$(git rev-parse HEAD:third-party/llama.cpp)" >> "$GITHUB_OUTPUT"
+        echo "image=$ImageOS" >> "$GITHUB_OUTPUT"
 
     # The materialized source travels with its build: make compares file times, so fresh
     # sources beside a restored build would rebuild everything.
@@ -84,8 +86,8 @@ runs:
         path: |
           bin/vendor/llama.cpp
           bin/llama-build
-        # The build records its absolute paths, which change when the repository is renamed.
-        key: llama-${{ github.repository }}-${{ runner.os }}-${{ inputs.backend }}-${{ steps.llama.outputs.revision }}-${{ hashFiles('patches/llama-resource-cleanup.patch', 'tools/materialize_llama.py') }}
+        # The build records absolute paths, which differ between repository names and runner images.
+        key: llama-${{ github.repository }}-${{ steps.llama.outputs.image }}-${{ inputs.backend }}-${{ steps.llama.outputs.revision }}-${{ hashFiles('patches/llama-resource-cleanup.patch', 'tools/materialize_llama.py') }}
 
     - name: Point SCons at its cache
       shell: bash
