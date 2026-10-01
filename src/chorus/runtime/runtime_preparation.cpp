@@ -189,7 +189,7 @@ void ChorusRuntime::fit_turn_messages(PreparationState& state, PreparationJob& j
         if (pin < nodes.size()) {
             check_cancelled(job.control->cancelled);
             if (job.pending)
-                add(state.count_text(*joined_text(job.pending->value.message.content)));
+                add(state.count_text(joined_text(job.pending->value.message.content).value()));
             else
                 add(state.count_node(nodes.back()));
         }
@@ -265,7 +265,7 @@ void ChorusRuntime::prepare(PreparationState& state, PreparationJob& job) {
     check_cancelled(job.control->cancelled);
 }
 
-void ChorusRuntime::preparation_loop(std::shared_ptr<PreparationState> owned_state) {
+void ChorusRuntime::preparation_loop(const std::shared_ptr<PreparationState>& owned_state) {
     auto& state = *owned_state;
     std::unique_ptr<PreparationJob> job;
     uint64_t ticket = 0;

@@ -14,7 +14,7 @@ namespace Chorus {
 inline constexpr size_t kPreparationCapacity = 256;
 inline constexpr size_t kMessageCountCacheEntries = 4096;
 inline constexpr size_t kContentCountCacheEntries = 4096;
-inline constexpr size_t kContentCountCacheBytes = 4 * 1024 * 1024;
+inline constexpr size_t kContentCountCacheBytes = size_t{4} * 1024 * 1024;
 
 /*
  * How many threads prepare requests for one loaded runtime.

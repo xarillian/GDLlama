@@ -112,8 +112,8 @@ generation_config_from_request(const ChorusRequest& request, std::string& error)
         const auto stop = request.get_stop();
         std::vector<std::string> values;
         values.reserve(stop.size());
-        for (int i = 0; i < stop.size(); ++i)
-            values.emplace_back(stop[i].utf8().get_data());
+        for (const godot::String& item : stop)
+            values.emplace_back(item.utf8().get_data());
         options.stop = std::move(values);
     }
     if (request.has_show_thinking())
@@ -162,8 +162,8 @@ generation_request_from_resource(const godot::Ref<ChorusRequest>& request) {
     }
     const auto inject = request->get_inject();
     out.inject.reserve(inject.size());
-    for (int i = 0; i < inject.size(); ++i) {
-        const godot::Ref<ChorusInjectedMessage> item = inject[i];
+    for (const godot::Variant& entry : inject) {
+        const godot::Ref<ChorusInjectedMessage> item = entry;
         if (item.is_null())
             return std::string("inject contains a null ChorusInjectedMessage.");
         const auto role = message_role(item->get_role());

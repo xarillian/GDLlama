@@ -195,10 +195,10 @@ apply_load_option(LlamaLoadConfig& config, const std::string& key, const Provide
     if (auto rejection = check_against_schema(key, option))
         return rejection;
 
-    const auto binding = std::ranges::find(load_option_bindings, key, &LoadOptionBinding::key);
-    if (binding == load_option_bindings.end())
-        return unsupported("Llama load option '" + key + "' is declared but not applied; this is a bug.");
-    return binding->apply(config, option);
+    for (const auto& binding : load_option_bindings)
+        if (binding.key == key)
+            return binding.apply(config, option);
+    return unsupported("Llama load option '" + key + "' is declared but not applied; this is a bug.");
 }
 
 } // namespace

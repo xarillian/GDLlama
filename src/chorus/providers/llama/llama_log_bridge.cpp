@@ -64,8 +64,7 @@ void deliver(ggml_log_level level, const char* text, void* /*user_data*/) noexce
             for (const auto& entry : reg.loggers)
                 entry.second.log(record.level, record.message, record.fields);
         }
-    } catch (...) {
-        // Exceptions cannot cross the vendor's C callback boundary.
+    } catch (...) { // NOLINT(bugprone-empty-catch): exceptions cannot cross the vendor's C callback boundary
     }
 }
 

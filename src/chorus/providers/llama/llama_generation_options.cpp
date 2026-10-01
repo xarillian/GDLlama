@@ -491,7 +491,7 @@ apply_llama_generation_options(common_params_sampling& sampling, const ProviderO
                 );
             }
             if (auto rejection = apply_provider_option(sampling, *descriptor, value))
-                return *rejection;
+                return rejection;
             if (std::holds_alternative<SamplerOrderOption>(descriptor->rule) &&
                 !std::get<ProviderOptionList>(value).empty())
                 has_custom_sampler_order = true;

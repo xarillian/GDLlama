@@ -205,7 +205,7 @@ Ref<ChorusRequest> ChorusRequest::regeneration(const StringName& session) {
 }
 #define IMPLEMENT_FIELD(NAME, TYPE)                                                                                    \
     void ChorusRequest::set_##NAME(TYPE value) {                                                                       \
-        _##NAME = value;                                                                                               \
+        _##NAME = std::move(value);                                                                                    \
         _has_##NAME = true;                                                                                            \
     }                                                                                                                  \
     TYPE ChorusRequest::get_##NAME() const {                                                                           \

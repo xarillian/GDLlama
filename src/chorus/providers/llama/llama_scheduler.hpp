@@ -52,7 +52,7 @@ struct LlamaBatchRecord;
 
 class LlamaScheduler : public Chorus::RequestPreparation {
   public:
-    ~LlamaScheduler();
+    ~LlamaScheduler() override;
 
     std::optional<Chorus::InitializationFailure>
     initialize(const Chorus::ChorusConfig& config, Chorus::Logger logger, const Chorus::InitializationControl& control);
@@ -75,7 +75,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
         const std::vector<Chorus::ChatMessage>& messages,
         const std::optional<std::string>& template_override,
         std::optional<bool> enable_thinking
-    ) const;
+    ) const override;
 
   private:
     enum class GenerationPhase { Prefill, Decode };

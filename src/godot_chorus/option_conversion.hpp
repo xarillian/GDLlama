@@ -94,7 +94,7 @@ class OptionValueConversion {
         const Dictionary dict = value;
         const Array keys = dict.keys();
         for (int64_t i = 0; i < keys.size(); ++i) {
-            const Variant key = keys[i];
+            const Variant& key = keys[i];
             if (key.get_type() != Variant::STRING) {
                 _error = "contains a non-string dictionary key.";
                 return std::nullopt;

@@ -676,7 +676,22 @@ void free_string_list(char** strings, size_t count) noexcept {
         return;
     for (size_t i = 0; i < count; ++i)
         std::free(strings[i]);
-    std::free(strings);
+    std::free(static_cast<void*>(strings));
+}
+
+std::optional<Chorus::EmbeddingRequest> to_cpp_embedding_request(const chorus_embedding_request& request) {
+    if (!request.content)
+        return std::nullopt;
+    Chorus::ExecutionMode mode;
+    if (!to_cpp_execution_mode(request.execution, mode))
+        return std::nullopt;
+    Chorus::EmbeddingRequest output;
+    output.prompt = request.content;
+    output.priority = request.priority;
+    output.execution = mode;
+    if (request.session)
+        output.session_id = request.session;
+    return output;
 }
 
 } // namespace
@@ -1213,21 +1228,6 @@ chorus_error chorus_request_clear_chat_template(chorus_request* req) {
     return CHORUS_OK;
 }
 
-std::optional<Chorus::EmbeddingRequest> to_cpp_embedding_request(const chorus_embedding_request& request) {
-    if (!request.content)
-        return std::nullopt;
-    Chorus::ExecutionMode mode;
-    if (!to_cpp_execution_mode(request.execution, mode))
-        return std::nullopt;
-    Chorus::EmbeddingRequest output;
-    output.prompt = request.content;
-    output.priority = request.priority;
-    output.execution = mode;
-    if (request.session)
-        output.session_id = request.session;
-    return output;
-}
-
 chorus_error chorus_generate(chorus_runtime* rt, const chorus_request* req, chorus_submit_result* out_result) {
     initialize_submit_result(out_result);
     if (!rt)
@@ -1449,8 +1449,9 @@ const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count) {
             event.model_id = source.load_id ? source.model_id.c_str() : nullptr;
             event.load_phase =
                 source.load_progress ? to_c_load_phase(source.load_progress->phase) : CHORUS_LOAD_RELEASING_ENGINE;
-            event.has_load_fraction = source.load_progress && source.load_progress->fraction.has_value();
-            event.load_fraction = event.has_load_fraction ? *source.load_progress->fraction : 0.0f;
+            const auto fraction = source.load_progress ? source.load_progress->fraction : std::nullopt;
+            event.has_load_fraction = fraction.has_value();
+            event.load_fraction = fraction.value_or(0.0f);
         }
         *out_count = rt->events.size();
         clear_last_error(rt);

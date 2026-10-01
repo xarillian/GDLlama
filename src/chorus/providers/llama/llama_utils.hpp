@@ -76,7 +76,7 @@ inline void batch_add_seq(llama_batch& batch, llama_token token, int seq_id, int
     batch.pos[batch.n_tokens] = pos;
     batch.n_seq_id[batch.n_tokens] = 1;
     batch.seq_id[batch.n_tokens][0] = seq_id;
-    batch.logits[batch.n_tokens] = logits;
+    batch.logits[batch.n_tokens] = static_cast<int8_t>(logits);
     batch.n_tokens++;
 }
 

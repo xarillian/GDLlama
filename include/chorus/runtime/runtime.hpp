@@ -408,7 +408,7 @@ class ChorusRuntime {
     void append_load_events(std::vector<RuntimeEvent>& events, const std::function<void()>& drain_retiring);
     static void
     enqueue_signal(PreparationState& state, const ChorusSignal& signal, const std::shared_ptr<Control>& control);
-    static void preparation_loop(std::shared_ptr<PreparationState> state);
+    static void preparation_loop(const std::shared_ptr<PreparationState>& state);
     static void prepare(PreparationState& state, PreparationJob& job);
     static void publish_error(
         PreparationState& state,

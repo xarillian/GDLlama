@@ -126,7 +126,7 @@ std::optional<Chorus::InitializationFailure> LlamaScheduler::initialize(
         }
         if (control.stop_token.stop_requested())
             return fail(cancelled());
-        batch.initialize(_batch_capacity, 0, _max_concurrent_requests);
+        batch.initialize(_batch_capacity, 0, static_cast<int32_t>(_max_concurrent_requests));
         _batch_sampler.emplace(
             static_cast<size_t>(load_config.thread_count), llama_vocab_n_tokens(llama_model_get_vocab(model))
         );
@@ -203,7 +203,7 @@ std::variant<Chorus::RenderedPrompt, Chorus::RequestRejection> LlamaScheduler::r
     std::optional<bool> enable_thinking
 ) const {
     std::shared_lock<std::shared_mutex> resource_lock(_preparation_fence);
-    if (!is_healthy())
+    if (!is_healthy() || !_chat_renderer)
         return Chorus::RequestRejection{Chorus::ChorusError::EngineNotReady, "Llama preparation is closed."};
     auto rendered = _chat_renderer->render(messages, template_override, enable_thinking);
     if (auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered))
@@ -391,13 +391,14 @@ LlamaScheduler::PreparedRequestResult LlamaScheduler::prepare_request(PendingReq
             };
         return prepared;
     }
-    prepared.max_tokens = pending.resolved->max_tokens;
-    prepared.stop_sequences = std::move(pending.resolved->stop).value_or(std::vector<std::string>{});
-    const bool context_free_sampling = Chorus::llama_sampling_is_context_free(pending.resolved->sampling);
-    auto sampler = Chorus::make_llama_sampler(model, std::move(*pending.resolved));
+    auto& resolved = pending.resolved.value();
+    prepared.max_tokens = resolved.max_tokens;
+    prepared.stop_sequences = std::move(resolved.stop).value_or(std::vector<std::string>{});
+    const bool context_free_sampling = Chorus::llama_sampling_is_context_free(resolved.sampling);
+    auto sampler = Chorus::make_llama_sampler(model, std::move(resolved));
     std::optional<Chorus::RequestRejection> render_rejection;
     if (!pending.request.messages.empty()) {
-        auto rendered = _chat_renderer->take(
+        auto rendered = _chat_renderer.value().take(
             pending.request.messages, pending.request.chat_template, pending.request.gen_config.show_thinking
         );
         if (auto* rejection = std::get_if<Chorus::RequestRejection>(&rendered))
@@ -660,7 +661,7 @@ bool LlamaScheduler::make_room(int id) {
 // With every idle slot holding a long session, the one parked longest leaves; the session in
 // `id` takes its place when that is a different slot.
 void LlamaScheduler::evict_for(int id) {
-    const int oldest = *_session_cache.least_recent();
+    const int oldest = _session_cache.least_recent().value();
     drop_parked(oldest);
     if (oldest == id)
         return;
@@ -832,7 +833,7 @@ void LlamaScheduler::process_generation_plan(const BatchPlan& plan) {
         sampled_ids.push_back(sequence.id);
         slots.push_back({sequence.sampler.get(), static_cast<int32_t>(index), sequence.sampling_path});
     }
-    const auto tokens = _batch_sampler->sample(context, slots);
+    const auto tokens = _batch_sampler.value().sample(context, slots);
     for (size_t index = 0; index < tokens.size(); ++index) {
         auto found = _active_sequences.find(sampled_ids[index]);
         if (found != _active_sequences.end())
@@ -1076,7 +1077,7 @@ void LlamaScheduler::retire_sequence(
     found->second.content_chunker.reset();
     if (parks) {
         if (const auto stale =
-                _session_cache.park(sequence_id, *request.session_id, std::move(found->second.cached_tokens)))
+                _session_cache.park(sequence_id, request.session_id.value(), std::move(found->second.cached_tokens)))
             llama_memory_seq_rm(llama_get_memory(context), *stale, -1, -1);
     } else if (context) {
         llama_memory_seq_rm(llama_get_memory(context), sequence_id, 0, -1);
@@ -1148,8 +1149,7 @@ void LlamaScheduler::fail_all(Chorus::ChorusError code) {
         try {
             if (delivery.mapped().on_event)
                 delivery.mapped().on_event(delivery.mapped().failure);
-        } catch (...) {
-            // A contract-violating sink must not suppress other requests' terminal callbacks.
+        } catch (...) { // NOLINT(bugprone-empty-catch): one faulty sink must not suppress other terminals
         }
     }
 }

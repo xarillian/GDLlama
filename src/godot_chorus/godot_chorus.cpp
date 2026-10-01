@@ -245,7 +245,7 @@ void GodotChorus::drain_logs() {
             to_godot_string(record.message),
             fields,
             record.request_id.value_or(-1),
-            record.session_id ? StringName(to_godot_string(*record.session_id)) : StringName(),
+            record.session_id ? StringName(to_godot_string(record.session_id.value())) : StringName(),
             produced_at
         );
     }
@@ -254,7 +254,8 @@ void GodotChorus::drain_logs() {
 void GodotChorus::_process(double /*delta*/) {
     drain_logs();
     for (const auto& event : _runtime.poll()) {
-        const StringName session = event.session_id ? StringName(to_godot_string(*event.session_id)) : StringName();
+        const StringName session =
+            event.session_id ? StringName(to_godot_string(event.session_id.value())) : StringName();
         switch (event.kind) {
         case Chorus::RuntimeEvent::Kind::StreamedToken:
             emit_signal("token_generated", event.request_id, session, to_godot_string(event.text));
@@ -306,16 +307,18 @@ void GodotChorus::_process(double /*delta*/) {
         case Chorus::RuntimeEvent::Kind::EngineFailed:
             emit_signal("engine_failed", to_godot(event.error), to_godot_string(event.text));
             break;
-        case Chorus::RuntimeEvent::Kind::ModelLoadProgress:
+        case Chorus::RuntimeEvent::Kind::ModelLoadProgress: {
+            const auto& progress = event.load_progress.value();
             emit_signal(
                 "model_load_progress",
                 event.load_id.value(),
                 to_godot_string(event.model_id),
-                to_godot_load_phase(event.load_progress->phase),
-                event.load_progress->fraction.has_value(),
-                event.load_progress->fraction.value_or(0.0f)
+                to_godot_load_phase(progress.phase),
+                progress.fraction.has_value(),
+                progress.fraction.value_or(0.0f)
             );
             break;
+        }
         case Chorus::RuntimeEvent::Kind::ModelLoaded:
             emit_signal("model_loaded", event.load_id.value(), to_godot_string(event.model_id));
             break;
@@ -442,8 +445,8 @@ TypedArray<ChorusSubmitResult> GodotChorus::generate_batch(const TypedArray<Chor
     std::string error;
     if (!push_host_defaults(error)) {
         const String message = to_godot_string(error);
-        for (int i = 0; i < requests.size(); ++i) {
-            Ref<ChorusRequest> request = requests[i];
+        for (const Variant& item : requests) {
+            Ref<ChorusRequest> request = item;
             Ref<ChorusInferenceRequest> source = request;
             out.push_back(rejected_submit(source, message));
         }
@@ -474,8 +477,8 @@ TypedArray<ChorusSubmitResult> GodotChorus::generate_batch(const TypedArray<Chor
 
 TypedArray<ChorusSubmitResult> GodotChorus::embed_batch(const TypedArray<ChorusEmbeddingRequest>& requests) {
     TypedArray<ChorusSubmitResult> out;
-    for (int i = 0; i < requests.size(); ++i) {
-        Ref<ChorusEmbeddingRequest> request = requests[i];
+    for (const Variant& item : requests) {
+        Ref<ChorusEmbeddingRequest> request = item;
         out.push_back(embed(request));
     }
     return out;
@@ -502,8 +505,8 @@ Ref<ChorusResult>
 GodotChorus::import_conversation_history(const StringName& session, const TypedArray<ChorusMessage>& history) {
     std::vector<Chorus::ConversationMessage> messages;
     messages.reserve(history.size());
-    for (int i = 0; i < history.size(); ++i) {
-        Ref<ChorusMessage> item = history[i];
+    for (const Variant& entry : history) {
+        Ref<ChorusMessage> item = entry;
         if (item.is_null())
             return Ref<ChorusResult>(
                 memnew(ChorusResult(ERR_INVALID_REQUEST, "history contains a null ChorusMessage."))

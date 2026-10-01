@@ -624,7 +624,7 @@ TEST_F(LlamaSchedulerModelTest, Embedding_batches_respect_n_ubatch_and_cancellat
     ASSERT_TRUE(state.wait_for_gate());
 
     std::vector<Chorus::ChorusRequest> embeddings;
-    for (const auto [id, prompt] :
+    for (const auto& [id, prompt] :
          std::vector<std::pair<Chorus::RequestId, std::string>>{{11, "a"}, {12, "b"}, {13, "c"}}) {
         auto request = make_scheduler_embedding(id, prompt, 0);
         request.on_event = [&](const Chorus::ChorusSignal& signal) { state.handle(signal); };

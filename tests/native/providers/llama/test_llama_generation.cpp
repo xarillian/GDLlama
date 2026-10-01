@@ -345,7 +345,7 @@ TEST_F(LlamaGenerationModelTest, Llama_sampler_constructs_for_vocabulary_and_rej
     ASSERT_TRUE(valid_generation != nullptr);
     if (!valid_generation)
         return;
-    auto valid_sampler = Chorus::make_llama_sampler(fixture.model, std::move(*valid_generation));
+    auto valid_sampler = Chorus::make_llama_sampler(fixture.model, *valid_generation);
     const auto* sampler = std::get_if<common_sampler_ptr>(&valid_sampler);
     ASSERT_TRUE(sampler != nullptr);
     if (sampler)
@@ -362,7 +362,7 @@ TEST_F(LlamaGenerationModelTest, Llama_sampler_constructs_for_vocabulary_and_rej
     ASSERT_TRUE(invalid_generation != nullptr);
     if (!invalid_generation)
         return;
-    auto invalid_sampler = Chorus::make_llama_sampler(fixture.model, std::move(*invalid_generation));
+    auto invalid_sampler = Chorus::make_llama_sampler(fixture.model, *invalid_generation);
     const auto* rejection = std::get_if<Chorus::RequestRejection>(&invalid_sampler);
     ASSERT_TRUE(rejection != nullptr);
     if (rejection) {

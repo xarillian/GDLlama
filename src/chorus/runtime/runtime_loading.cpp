@@ -255,7 +255,7 @@ void ChorusRuntime::lifecycle_loop() {
                         }
                         if (invalid)
                             Logger(_log_channel, level).warn("Invalid load progress was discarded.");
-                    } catch (...) {
+                    } catch (...) { // NOLINT(bugprone-empty-catch): llama.cpp calls this and must not see an exception
                     }
                 };
                 InitializationControl control{attempt->stop.get_token(), progress};
@@ -286,7 +286,7 @@ void ChorusRuntime::lifecycle_loop() {
             failure.error = ChorusError::Unknown;
             try {
                 failure.message = error.what();
-            } catch (...) {
+            } catch (...) { // NOLINT(bugprone-empty-catch): the failure stands without its message
             }
         } catch (...) {
             failure.error = ChorusError::Unknown;

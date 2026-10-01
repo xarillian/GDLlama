@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <ranges>
 #include <string_view>
 #include <vector>
 
@@ -44,6 +45,9 @@ uint32_t murmur3_32(std::string_view value, uint32_t seed = 0x9747b28cU) {
         tail = (tail << 15) | (tail >> 17);
         tail *= 0x1b873593U;
         hash ^= tail;
+        break;
+    default:
+        break;
     }
     hash ^= static_cast<uint32_t>(value.size());
     hash ^= hash >> 16;
@@ -234,29 +238,23 @@ std::optional<RequestRejection> EchoEngine::Preparation::validate_request(const 
 }
 
 void EchoEngine::submit_request(ChorusRequest chorus_request) {
-    bool accepted = false;
-    {
-        std::lock_guard<std::mutex> lock(_queue_mutex);
-        if (_initialized && _running) {
-            _queue.push_back(std::move(chorus_request));
-            accepted = true;
-        }
-    }
-
-    if (!accepted) {
-        _log.for_request(chorus_request.id, chorus_request.session_id).error("Request submitted to a stopped engine");
-
-        if (chorus_request.on_event) {
-            ChorusSignal error_sig{
-                chorus_request.id,
-                ChorusSignal::Error{ChorusError::EngineNotReady, "Engine not initialized"},
-            };
-            chorus_request.on_event(error_sig);
-        }
+    std::unique_lock<std::mutex> lock(_queue_mutex);
+    if (_initialized && _running) {
+        _queue.push_back(std::move(chorus_request));
+        lock.unlock();
+        _queue_cv.notify_one();
         return;
     }
+    lock.unlock();
 
-    _queue_cv.notify_one();
+    _log.for_request(chorus_request.id, chorus_request.session_id).error("Request submitted to a stopped engine");
+    if (chorus_request.on_event) {
+        ChorusSignal error_sig{
+            chorus_request.id,
+            ChorusSignal::Error{ChorusError::EngineNotReady, "Engine not initialized"},
+        };
+        chorus_request.on_event(error_sig);
+    }
 }
 
 void EchoEngine::cancel_request(RequestId id) {
@@ -407,11 +405,11 @@ void EchoEngine::worker_loop() {
 std::string EchoEngine::select_echo_text(const ChorusRequest& request) {
     if (request.messages.empty())
         return request.prompt;
-    for (auto it = request.messages.rbegin(); it != request.messages.rend(); ++it) {
-        if (it->role == MessageRole::User)
-            return *joined_text(it->content);
+    for (const auto& message : std::views::reverse(request.messages)) {
+        if (message.role == MessageRole::User)
+            return joined_text(message.content).value();
     }
-    return *joined_text(request.messages.back().content);
+    return joined_text(request.messages.back().content).value();
 }
 
 void EchoEngine::emit_echo_tokens(const ChorusRequest& request, const std::string& text) {

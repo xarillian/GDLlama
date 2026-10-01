@@ -245,7 +245,7 @@ SubmitResult ChorusRuntime::admit(std::unique_ptr<PreparationJob> job, MessageNo
         } else {
             if (!_next_message_id || *_next_message_id > INT64_MAX - 1)
                 return rejection(ChorusError::InvalidRequest, "Message identity capacity is exhausted.");
-            result.request_message_id = *_next_message_id;
+            result.request_message_id = _next_message_id;
             result.response_message_id = *_next_message_id + 1;
         }
     }
@@ -289,7 +289,7 @@ SubmitResult ChorusRuntime::admit(std::unique_ptr<PreparationJob> job, MessageNo
         if (session && occupies)
             _request_by_session.emplace(*session, result.request_id);
         if (changed_history)
-            history_created = _histories.try_emplace(*session).second;
+            history_created = _histories.try_emplace(session.value()).second;
         state.jobs.push_back(std::move(job));
     } catch (...) {
         _live_requests.erase(result.request_id);
@@ -297,12 +297,12 @@ SubmitResult ChorusRuntime::admit(std::unique_ptr<PreparationJob> job, MessageNo
         if (session && occupies)
             _request_by_session.erase(*session);
         if (history_created)
-            _histories.erase(*session);
+            _histories.erase(session.value());
         throw;
     }
     if (changed_history)
-        _histories.at(*session).messages = std::move(changed_history);
-    if (result.request_message_id)
+        _histories.at(session.value()).messages = std::move(changed_history);
+    if (result.response_message_id)
         _next_message_id = *result.response_message_id == INT64_MAX
                                ? std::nullopt
                                : std::optional<MessageId>{*result.response_message_id + 1};

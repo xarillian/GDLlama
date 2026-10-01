@@ -17,7 +17,7 @@ using Json = nlohmann::json;
 
 struct CodecError : std::runtime_error {
     std::string path;
-    CodecError(std::string at, std::string why) : std::runtime_error(std::move(why)), path(std::move(at)) {}
+    CodecError(std::string at, const std::string& why) : std::runtime_error(why), path(std::move(at)) {}
 };
 
 std::string child(const std::string& path, const std::string& key) {
@@ -51,7 +51,7 @@ void keys(const Json& object, const std::string& path, std::initializer_list<con
     require(object.is_object(), path, "expected object");
     for (auto it = object.begin(); it != object.end(); ++it) {
         bool known = false;
-        for (auto key : allowed)
+        for (const auto* key : allowed)
             known |= it.key() == key;
         require(known, child(path, it.key()), "unknown field");
     }

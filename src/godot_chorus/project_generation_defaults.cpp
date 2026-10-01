@@ -127,7 +127,7 @@ bool read_document(const String& path, std::string& bytes, std::string& error) {
         error = "Cannot read " + text(path) + " (Godot error " + std::to_string(FileAccess::get_open_error()) + ").";
         return false;
     }
-    const PackedByteArray data = file->get_buffer(file->get_length());
+    const PackedByteArray data = file->get_buffer(static_cast<int64_t>(file->get_length()));
     if (file->get_error() != OK && file->get_error() != ERR_FILE_EOF) {
         error = "Cannot finish reading " + text(path) + ".";
         return false;
@@ -237,15 +237,15 @@ bool can_display(const Chorus::GenerationDefaults& value) {
 }
 
 Variant option_variant(const Chorus::ProviderOptionValue& value) {
-    if (auto p = std::get_if<bool>(&value))
+    if (const auto* p = std::get_if<bool>(&value))
         return *p;
-    if (auto p = std::get_if<int64_t>(&value))
+    if (const auto* p = std::get_if<int64_t>(&value))
         return *p;
-    if (auto p = std::get_if<double>(&value))
+    if (const auto* p = std::get_if<double>(&value))
         return *p;
-    if (auto p = std::get_if<std::string>(&value))
+    if (const auto* p = std::get_if<std::string>(&value))
         return to_godot_string(*p);
-    if (auto p = std::get_if<Chorus::ProviderOptionList>(&value)) {
+    if (const auto* p = std::get_if<Chorus::ProviderOptionList>(&value)) {
         Array list;
         for (const auto& item : *p)
             list.push_back(option_variant(item));
@@ -427,8 +427,8 @@ bool convert_surface(Chorus::GenerationDefaults& result, std::string& error) {
         std::vector<std::string> stops;
         if (v.get_type() == Variant::PACKED_STRING_ARRAY) {
             PackedStringArray array = v;
-            for (int i = 0; i < array.size(); ++i)
-                stops.push_back(text(array[i]));
+            for (const String& item : array)
+                stops.push_back(text(item));
         } else if (v.get_type() == Variant::ARRAY) {
             Array array = v;
             for (int i = 0; i < array.size(); ++i) {
@@ -500,7 +500,7 @@ bool convert_surface(Chorus::GenerationDefaults& result, std::string& error) {
             return false;
         }
         const std::string name = text(provider_key);
-        const Variant namespace_value = providers[provider_key];
+        const Variant& namespace_value = providers[provider_key];
         if (namespace_value.get_type() != Variant::DICTIONARY) {
             error = "provider_options." + name + " must be a Dictionary.";
             return false;
@@ -566,10 +566,11 @@ bool import_selected(const String& path, std::string& error) {
         return false;
     }
     publish(parsed.defaults);
-    state->value = std::move(parsed.defaults);
-    state->path = path;
-    state->failed = false;
-    state->imported_bytes = std::move(bytes);
+    auto& current = state.value();
+    current.value = std::move(parsed.defaults);
+    current.path = path;
+    current.failed = false;
+    current.imported_bytes = std::move(bytes);
     return true;
 }
 
