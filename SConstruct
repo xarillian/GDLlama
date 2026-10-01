@@ -40,6 +40,10 @@ if sanitize and sanitize not in SANITIZERS:
 # Chorus reports failures with exceptions. godot-cpp disables them by default, which MSVC applies
 # through _HAS_EXCEPTIONS=0: its standard library then defines exceptions that lose their messages.
 ARGUMENTS["disable_exceptions"] = "no"
+# ggml picks CPU kernels for one architecture, so a universal build falls back to scalar code.
+# Intel Macs are too slow for local models to be worth a second slice.
+if sys.platform == "darwin" and ARGUMENTS.setdefault("arch", "arm64") != "arm64":
+    raise SystemExit(">>> [SCons] macOS builds target Apple silicon only: arch=arm64")
 if not ARGUMENTS.get("custom_api_file"):
     try:
         ARGUMENTS["custom_api_file"] = str(materialize_godot_api())
@@ -305,7 +309,7 @@ def build_llama_with_cmake(target, source, env):
         cmake_config.append("-DCMAKE_BUILD_TYPE=Release")
 
     if sys.platform == "darwin":
-        cmake_config.append("-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64")
+        cmake_config.append(f"-DCMAKE_OSX_ARCHITECTURES={llama_arch}")
 
     cmake_build = [
             "cmake", 

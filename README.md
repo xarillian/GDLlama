@@ -74,7 +74,7 @@ just build
 just check --quick
 ```
 
-On macOS, install Xcode and use the Metal build in place of `just build`:
+On macOS with Apple silicon, install Xcode and use the Metal build in place of `just build`:
 
 ```sh
 scons use_metal=yes

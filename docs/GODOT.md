@@ -34,7 +34,7 @@ Choose a build:
 | Build | Command | Additional requirement |
 | --- | --- | --- |
 | Vulkan, Linux or Windows | `scons use_vulkan=yes` | Vulkan SDK and a compatible GPU driver |
-| Metal, macOS | `scons use_metal=yes` | Xcode |
+| Metal, macOS on Apple silicon | `scons use_metal=yes` | Xcode |
 
 Then prepare the addon for copying into your project:
 

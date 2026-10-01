@@ -6,7 +6,7 @@ compatibility_minimum = "4.4"
 [libraries]
 linux.x86_64 = "res://addons/chorus/bin/libgodot_chorus.so"
 windows.x86_64 = "res://addons/chorus/bin/libgodot_chorus.dll"
-macos = "res://addons/chorus/bin/libgodot_chorus.dylib"
+macos.arm64 = "res://addons/chorus/bin/libgodot_chorus.dylib"
 
 [icons]
 GodotChorus = "res://addons/chorus/icon.png"
