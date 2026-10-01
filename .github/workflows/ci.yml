@@ -100,10 +100,10 @@ jobs:
           cache-tag: test-debug
           fixtures: 'true'
       - name: Install lavapipe, Mesa's software Vulkan driver
-        run: sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+        run: |
+          sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+          echo "VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json)" >> "$GITHUB_ENV"
       - name: Show what lavapipe offers
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: vulkaninfo --summary
       - name: Build the Vulkan test binary
         run: scons test use_vulkan=yes
@@ -112,7 +112,6 @@ jobs:
       # ggml skips CPU-type Vulkan devices unless one is selected by index.
       - name: GPU model tests on lavapipe
         env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           GGML_VK_VISIBLE_DEVICES: '0'
         run: just test-gpu
 
