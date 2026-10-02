@@ -59,28 +59,94 @@ These figures will be updated occasionally and will always use a SOTA local mode
 
 ## Setup
 
+Chorus builds from source with SCons, which also configures and compiles its pinned `llama.cpp` through CMake. There are three applicable build targets:
+- Vulkan on Linux/Windows
+- Metal on Apple Silicon
+- CPU anywhere
+
 ### Requirements
 
 - Git
 - Python 3 with SCons
 - CMake 3.24 or newer
-- A C++20 compiler toolchain
-- The Vulkan SDK, including `glslc` and SPIR-V headers, for the default Linux and Windows build
-- [Just](https://github.com/casey/just) (optional)
+- A C++20 toolchain: GCC or Clang on Linux, MSVC on Windows, or Xcode on macOS
+- [Just](https://github.com/casey/just), for the test and Godot commands below
 
-### Building
+| Target | Platforms | Also requires |
+| --- | --- | --- |
+| Vulkan | Linux, Windows | The Vulkan SDK, including `glslc` and SPIR-V headers, and a Vulkan GPU driver |
+| Metal | macOS on Apple silicon | Xcode |
+| CPU | Linux, Windows, macOS | Nothing further |
 
-From a fresh clone, run:
+On Ubuntu 24.04, `sudo apt install libvulkan-dev spirv-headers glslc` provides what Vulkan needs. Ubuntu 22.04 does not package `glslc`, so install the [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home) there.
+
+On Windows, install the LunarG SDK and make sure `VULKAN_SDK` points at it; the build links `vulkan-1.lib` from that directory.
+
+Chorus does not build for Intel Macs.
+
+### Clone
 
 ```sh
-git submodule update --init --recursive
-just build  # on macOS with Apple Silicon, instead use `scons use_metal=yes`
+git clone --recursive https://github.com/xarillian/chorus-llm.git
+cd chorus-llm
+```
+
+If you cloned without `--recursive`, fetch the dependencies with `git submodule update --init --recursive`.
+
+### Building with Vulkan
+
+For Linux and Windows:
+
+```sh
+just build
+```
+
+This is the default `just` build and runs `scons use_vulkan=yes`.
+
+### Building with Metal
+
+For macOS on Apple silicon:
+
+```sh
+scons use_metal=yes
+```
+
+### Building for CPU
+
+```sh
+just build --cpu
+```
+
+### Build output
+
+Builds are written to `bin/`:
+
+- `libgodot_chorus` is the Godot extension.
+- `libchorus_c` is the C ABI for native applications. Its header is `include/chorus_c/chorus_c.h`.
+
+The default target is a debug build. For release, run 
+- `just release` for Vulkan,
+- `just release --cpu` for CPU, or
+- `scons target=template_release use_metal=yes` for Metal.
+
+### Testing
+
+Run the native suite without models:
+
+```sh
 just check --quick
 ```
 
-Build artifacts are written to `bin/`. They run on any x86-64 CPU with AVX2. For local benchmarks, add `native=yes` to tune llama.cpp for the building machine; that build may crash on other CPUs.
+This builds a CPU test binary whatever your backend, so the first run compiles a CPU llama.cpp build.
 
-For model tests, review the [fixture manifest and model terms](tests/model-fixtures.json), then run `just download-fixtures` and `just check-model`.
+Model tests use about 1.5 GB of small GGUF fixtures. Review the [fixture manifest and model terms](tests/model-fixtures.json), then run:
+
+```sh
+just download-fixtures
+just check-model
+```
+
+On a Vulkan machine, `just check-gpu` builds a Vulkan test binary and runs the GPU model tests. Metal has no separate test build; on macOS, the CPU suite covers the runtime. I currently do not recommend running the full test suite on macOS.
 
 ### Godot
 
@@ -90,19 +156,19 @@ Chorus is compatible with all stable Godot 4.4+ releases. To build and stage the
 just godot
 ```
 
-For macOS, after a Metal build, stage the addon without rebuilding:
+For Metal or CPU, build first as above, then stage the addon without rebuilding:
 
 ```sh
 python tools/stage_godot.py
 ```
 
-The staged addon is written to `plugin/addons/chorus`.
+The staged addon is written to `plugin/addons/chorus`. Copy it into your project's `addons` directory, then enable **Chorus LLM** under _Project > Project Settings > Plugins_.
 
 You can then get generation running quickly with:
 
-```
+```gdscript
 func _ready() -> void:
-    chorus.model_loaded.connect(func(_id, _model): 
+    chorus.model_loaded.connect(func(_id, _model):
         chorus.generate(ChorusRequest.chat(&"guard", "Greet a traveler.")))
 
     chorus.generation_complete.connect(func(_id, _session, _message, content, _reasoning):
