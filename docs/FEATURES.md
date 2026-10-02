@@ -178,6 +178,7 @@
 
 ### Generation Control
 - Report effective provider generation defaults to hosts.
+- Report each generated token's log probability and its top alternatives on request, for confidence scoring and classification.
 - Define named reusable generation-default profiles that hosts can persist and select for different agents or workloads.
 
 ### Models & Hardware
