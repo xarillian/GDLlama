@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 
 struct ObservedLoad {
@@ -72,7 +73,9 @@ inline std::vector<Chorus::RuntimeEvent> drain_runtime_events(Chorus::ChorusRunt
             break;
         std::this_thread::yield();
     } while (std::chrono::steady_clock::now() < deadline);
-    EXPECT_GE(count, terminals) << "Runtime terminal delivery timed out";
+    // Callers index the terminals they waited for, so a timeout must end the test, not return short.
+    if (count < terminals)
+        throw std::runtime_error("Runtime terminal delivery timed out");
     return events;
 }
 
