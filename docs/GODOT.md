@@ -36,6 +36,8 @@ Choose a build:
 | Vulkan, Linux or Windows | `scons use_vulkan=yes` | Vulkan SDK and a compatible GPU driver |
 | Metal, macOS on Apple silicon | `scons use_metal=yes` | Xcode |
 
+Chorus does not load on Intel Macs. A universal macOS export still runs there, but scripts that use Chorus fail, so handle its absence if you ship to Intel Macs.
+
 Then prepare the addon for copying into your project:
 
 ```sh
