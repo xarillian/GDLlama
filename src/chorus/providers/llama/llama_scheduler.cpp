@@ -833,6 +833,21 @@ void LlamaScheduler::process_generation_plan(const BatchPlan& plan) {
         sampled_ids.push_back(sequence.id);
         slots.push_back({sequence.sampler.get(), static_cast<int32_t>(index), sequence.sampling_path});
     }
+#ifdef TEST_BUILD
+    std::function<void(Chorus::RequestId, std::span<const float>)> observer;
+    {
+        std::lock_guard<std::mutex> lock(_batch_observer_mutex);
+        observer = _logits_observer;
+    }
+    if (observer) {
+        const auto vocabulary = static_cast<size_t>(llama_vocab_n_tokens(llama_model_get_vocab(model)));
+        for (size_t index = 0; index < slots.size(); ++index)
+            observer(
+                _active_sequences.at(sampled_ids[index]).request.id,
+                {llama_get_logits_ith(context, slots[index].output_index), vocabulary}
+            );
+    }
+#endif
     const auto tokens = _batch_sampler.value().sample(context, slots);
     for (size_t index = 0; index < tokens.size(); ++index) {
         auto found = _active_sequences.find(sampled_ids[index]);
@@ -1185,5 +1200,9 @@ void LlamaScheduler::set_batch_observer(std::function<void(const Chorus::LlamaBa
 void LlamaScheduler::set_admission_observer(std::function<void(Chorus::RequestId)> observer) {
     std::lock_guard<std::mutex> lock(_batch_observer_mutex);
     _admission_observer = std::move(observer);
+}
+void LlamaScheduler::set_logits_observer(std::function<void(Chorus::RequestId, std::span<const float>)> observer) {
+    std::lock_guard<std::mutex> lock(_batch_observer_mutex);
+    _logits_observer = std::move(observer);
 }
 #endif

@@ -158,6 +158,10 @@ void LlamaEngine::set_batch_observer(std::function<void(const LlamaBatchRecord&)
     if (auto current_scheduler = scheduler_snapshot())
         current_scheduler->set_batch_observer(std::move(observer));
 }
+void LlamaEngine::set_logits_observer(std::function<void(RequestId, std::span<const float>)> observer) {
+    if (auto current_scheduler = scheduler_snapshot())
+        current_scheduler->set_logits_observer(std::move(observer));
+}
 #endif
 
 void LlamaEngine::shutdown() {

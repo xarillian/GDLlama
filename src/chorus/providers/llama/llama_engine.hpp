@@ -9,6 +9,7 @@
 
 #ifdef TEST_BUILD
 #include <functional>
+#include <span>
 #include <vector>
 #endif
 
@@ -59,6 +60,8 @@ class LlamaEngine : public InferenceEngine {
 
 #ifdef TEST_BUILD
     void set_batch_observer(std::function<void(const LlamaBatchRecord&)> observer);
+    /// Sees each sampled row's raw logits, before any sampler adjusts them.
+    void set_logits_observer(std::function<void(RequestId, std::span<const float>)> observer);
 #endif
 
   private:

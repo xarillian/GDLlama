@@ -4,7 +4,9 @@
 
 class LlamaSessionCacheModelTest : public ChorusModelTest {};
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <map>
 #include <mutex>
@@ -34,6 +36,7 @@ class Conversations {
         std::string text;
         int32_t processed = 0;
         bool completed = false;
+        std::vector<float> first_logits;
     };
 
     explicit Conversations(int64_t slots) {
@@ -49,6 +52,11 @@ class Conversations {
             std::lock_guard<std::mutex> lock(_mutex);
             for (const auto id : record.request_ids)
                 _processed[id] += record.token_count;
+        });
+        _engine.set_logits_observer([this](Chorus::RequestId id, std::span<const float> logits) {
+            std::lock_guard<std::mutex> lock(_mutex);
+            if (_turns[id].first_logits.empty())
+                _turns[id].first_logits.assign(logits.begin(), logits.end());
         });
     }
 
@@ -119,6 +127,47 @@ Conversations::Turn fresh(const std::string& prompt, int max_tokens = 8) {
     return engine.say(std::nullopt, prompt, max_tokens);
 }
 
+std::vector<double> log_probabilities(const std::vector<float>& logits) {
+    const double peak = *std::ranges::max_element(logits);
+    double total = 0.0;
+    for (const float logit : logits)
+        total += std::exp(logit - peak);
+    const double normalizer = peak + std::log(total);
+    std::vector<double> result;
+    result.reserve(logits.size());
+    for (const float logit : logits)
+        result.push_back(logit - normalizer);
+    return result;
+}
+
+/*
+ * Checks that a turn served from the cache predicts its first token as reprocessing does.
+ *
+ * Text comparison is too strict: a different batch shape rounds differently, and that flips the
+ * choice between near-tied tokens. On x86 that rounding moved these log probabilities by up to
+ * 0.04, while changing one early word of the history moved them by 0.1.
+ */
+testing::AssertionResult predicts_alike(const Conversations::Turn& cached, const Conversations::Turn& reprocessed) {
+    constexpr size_t kLikelyTokens = 10;
+    constexpr double kTolerance = 0.07;
+    if (cached.first_logits.size() != reprocessed.first_logits.size() || cached.first_logits.empty())
+        return testing::AssertionFailure() << "first-token logits missing";
+    const auto expected = log_probabilities(reprocessed.first_logits);
+    const auto actual = log_probabilities(cached.first_logits);
+    std::vector<size_t> likely(expected.size());
+    for (size_t token = 0; token < likely.size(); ++token)
+        likely[token] = token;
+    std::ranges::partial_sort(likely, likely.begin() + kLikelyTokens, [&](size_t a, size_t b) {
+        return expected[a] > expected[b];
+    });
+    double divergence = 0.0;
+    for (size_t rank = 0; rank < kLikelyTokens; ++rank)
+        divergence = std::max(divergence, std::abs(actual[likely[rank]] - expected[likely[rank]]));
+    if (divergence < kTolerance)
+        return testing::AssertionSuccess();
+    return testing::AssertionFailure() << "log probabilities of likely first tokens differ by " << divergence;
+}
+
 } // namespace
 
 TEST(LlamaSessionCache, A_session_parks_in_one_slot_and_its_older_copy_is_handed_back) {
@@ -148,7 +197,7 @@ TEST_F(LlamaSessionCacheModelTest, A_conversations_next_turn_processes_only_its_
 
     ASSERT_TRUE(reply.completed && continued.completed);
     ASSERT_LT(continued.processed * 3, reprocessed.processed);
-    ASSERT_EQ(continued.text, reprocessed.text);
+    ASSERT_TRUE(predicts_alike(continued, reprocessed));
 }
 
 TEST_F(LlamaSessionCacheModelTest, An_edit_early_in_the_history_reprocesses_from_the_edit) {
@@ -165,7 +214,7 @@ TEST_F(LlamaSessionCacheModelTest, An_edit_early_in_the_history_reprocesses_from
     ASSERT_TRUE(continued.completed);
     ASSERT_LT(continued.processed, reprocessed.processed);
     ASSERT_GT(continued.processed * 3, reprocessed.processed);
-    ASSERT_EQ(continued.text, reprocessed.text);
+    ASSERT_TRUE(predicts_alike(continued, reprocessed));
 }
 
 TEST_F(LlamaSessionCacheModelTest, A_long_history_past_the_attention_window_still_continues_from_its_cache) {
@@ -180,7 +229,7 @@ TEST_F(LlamaSessionCacheModelTest, A_long_history_past_the_attention_window_stil
 
     ASSERT_GT(reprocessed.processed, 1100); // past Gemma's 512-token window plus one micro-batch
     ASSERT_LT(continued.processed * 10, reprocessed.processed);
-    ASSERT_EQ(continued.text, reprocessed.text);
+    ASSERT_TRUE(predicts_alike(continued, reprocessed));
 }
 
 TEST_F(LlamaSessionCacheModelTest, A_divergence_older_than_the_attention_window_reprocesses_everything) {
@@ -195,7 +244,7 @@ TEST_F(LlamaSessionCacheModelTest, A_divergence_older_than_the_attention_window_
     const auto reprocessed = fresh(edited);
 
     ASSERT_EQ(continued.processed, reprocessed.processed);
-    ASSERT_EQ(continued.text, reprocessed.text);
+    ASSERT_TRUE(predicts_alike(continued, reprocessed));
 }
 
 TEST_F(LlamaSessionCacheModelTest, A_conversation_whose_slot_was_needed_starts_over) {
@@ -210,7 +259,7 @@ TEST_F(LlamaSessionCacheModelTest, A_conversation_whose_slot_was_needed_starts_o
     const auto reprocessed = fresh(follow_up);
 
     ASSERT_EQ(returning.processed, reprocessed.processed);
-    ASSERT_EQ(returning.text, reprocessed.text);
+    ASSERT_TRUE(predicts_alike(returning, reprocessed));
 }
 
 TEST_F(LlamaSessionCacheModelTest, A_new_request_takes_an_empty_slot_and_leaves_parked_conversations_cached) {
@@ -225,7 +274,7 @@ TEST_F(LlamaSessionCacheModelTest, A_new_request_takes_an_empty_slot_and_leaves_
     const auto reprocessed = fresh(follow_up);
 
     ASSERT_LT(returning.processed * 3, reprocessed.processed);
-    ASSERT_EQ(returning.text, reprocessed.text);
+    ASSERT_TRUE(predicts_alike(returning, reprocessed));
 }
 
 TEST_F(LlamaSessionCacheModelTest, With_every_idle_slot_parked_a_short_conversation_gives_way_before_a_long_one) {
@@ -272,7 +321,7 @@ TEST_P(LlamaSessionCacheSlotsTest, Conversations_finishing_out_of_order_all_cont
     for (int index = 0; index < 3; ++index) {
         const auto reprocessed = fresh(follow_ups[index].prompt);
         EXPECT_LT(second[index].processed * 3, reprocessed.processed) << sessions[index];
-        EXPECT_EQ(second[index].text, reprocessed.text) << sessions[index];
+        EXPECT_TRUE(predicts_alike(second[index], reprocessed)) << sessions[index];
     }
 }
 

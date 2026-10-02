@@ -36,6 +36,7 @@
 
 #ifdef TEST_BUILD
 #include <functional>
+#include <span>
 #endif
 
 struct llama_model;
@@ -67,6 +68,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
 #ifdef TEST_BUILD
     void set_batch_observer(std::function<void(const Chorus::LlamaBatchRecord&)> observer);
     void set_admission_observer(std::function<void(Chorus::RequestId)> observer);
+    void set_logits_observer(std::function<void(Chorus::RequestId, std::span<const float>)> observer);
     uint64_t worker_iterations() const { return _worker_iterations.load(); }
 #endif
     std::optional<Chorus::RequestRejection> validate_request(const Chorus::ChorusRequest& request) const override;
@@ -243,6 +245,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
     std::mutex _batch_observer_mutex;
     std::function<void(const Chorus::LlamaBatchRecord&)> _batch_observer;
     std::function<void(Chorus::RequestId)> _admission_observer;
+    std::function<void(Chorus::RequestId, std::span<const float>)> _logits_observer;
     std::atomic<uint64_t> _worker_iterations{0};
 #endif
     std::optional<Chorus::LlamaChatRenderer> _chat_renderer;
