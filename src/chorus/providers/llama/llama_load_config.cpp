@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 #include <string_view>
+#include <thread>
 #include <utility>
 
 namespace Chorus {
@@ -202,6 +203,11 @@ apply_load_option(LlamaLoadConfig& config, const std::string& key, const Provide
 }
 
 } // namespace
+
+int32_t llama_default_thread_count() {
+    const auto cores = static_cast<int32_t>(std::thread::hardware_concurrency());
+    return cores > 0 ? std::min(4, cores) : 4;
+}
 
 const ProviderOptionDescriptors& llama_load_option_descriptors() {
     static const ProviderOptionDescriptors descriptors = [] {

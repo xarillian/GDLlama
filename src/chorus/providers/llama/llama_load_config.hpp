@@ -12,10 +12,19 @@
 
 namespace Chorus {
 
+/*
+ * Returns the default CPU thread count: four, or fewer on machines with fewer cores.
+ *
+ * ggml waits for every thread at each step of a decode, and without OpenMP the waiting threads
+ * spin. A thread without a core of its own then stalls every step; one extra thread made
+ * generation roughly 90 times slower.
+ */
+int32_t llama_default_thread_count();
+
 struct LlamaLoadConfig {
-    std::string weights_path;         // Path to the GGUF model file.
-    uint32_t context_size = 2048;     // Total context window in tokens, divided among active sequences.
-    int32_t thread_count = 4;         // Number of CPU threads available to inference.
+    std::string weights_path;     // Path to the GGUF model file.
+    uint32_t context_size = 2048; // Total context window in tokens, divided among active sequences.
+    int32_t thread_count = llama_default_thread_count(); // Number of CPU threads available to inference.
     bool use_gpu = true;              // Whether GPU acceleration is allowed. False guarantees CPU-only execution.
     int32_t gpu_layers = -1;          // Model layers assigned to the GPU. Zero means none; a negative value means all.
     bool gpu_layers_explicit = false; // Whether gpu_layers is a requested value rather than a default.
