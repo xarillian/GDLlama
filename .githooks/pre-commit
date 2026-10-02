@@ -56,8 +56,6 @@ main() {
     }
 
     run_check "clang-format" check_clang_format
-    # run_check "clang-tidy"   check_clang_tidy    # uncomment when CI is set up
-    # run_check "tests"        check_tests
 
     exit $exit_code
 }
