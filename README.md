@@ -74,14 +74,8 @@ From a fresh clone, run:
 
 ```sh
 git submodule update --init --recursive
-just build
+just build  # on macOS with Apple Silicon, instead use `scons use_metal=yes`
 just check --quick
-```
-
-On macOS with Apple Silicon, install Xcode and use the Metal build in place of `just build`:
-
-```sh
-scons use_metal=yes
 ```
 
 Build artifacts are written to `bin/`. They run on any x86-64 CPU with AVX2. For local benchmarks, add `native=yes` to tune llama.cpp for the building machine; that build may crash on other CPUs.
