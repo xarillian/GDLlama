@@ -1,0 +1,6 @@
+---
+InheritParentConfig: true
+
+# No exception may cross the C ABI, so entry points swallow them on purpose.
+Checks: >
+  -bugprone-empty-catch

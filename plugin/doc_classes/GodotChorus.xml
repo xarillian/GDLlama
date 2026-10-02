@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GodotChorus" inherits="Node" api_type="extension">
+	<brief_description>Local asynchronous LLM inference.</brief_description>
+	<description>Runs local inference through a selected provider. Add this node to the scene tree, connect its signals, set [member GodotChorus.model_path] and call [method GodotChorus.load_model]. Wait for [signal GodotChorus.model_loaded] before submitting requests. The Echo provider can be used without a model file for integration testing.
+Methods must be called from the node's host thread. Background work is delivered as signals during node processing, so keep the node in the tree with processing enabled while awaiting results. Each accepted request receives exactly one terminal success or error signal; immediate rejection emits no request signals. Provider validation and prompt-fitting errors may arrive after admission.
+Request admission freezes input values, history and generation defaults. Later edits do not change accepted work. All nodes share generation choices imported from the selected project JSON; configure these under [code]chorus/generation[/code] in Project Settings. Request choices take precedence. See [ChorusProjectSettings] for persistence.
+Provider load options appear dynamically in the Inspector for the selected provider. Changes to provider, model path, load options or logging affect the next accepted load, not the running engine. Replacing an engine releases the old engine before loading its successor. Explicit stop and node destruction block until cleanup finishes; cancellation admission does not wait for cleanup.
+[codeblock]
+func _ready():
+    $GodotChorus.model_loaded.connect(_on_model_loaded)
+    $GodotChorus.model_load_failed.connect(_on_model_load_failed)
+    $GodotChorus.generation_complete.connect(_on_generation_complete)
+    $GodotChorus.generation_error.connect(_on_generation_error)
+    $GodotChorus.model_path = "res://models/model.gguf"
+    var load_result = $GodotChorus.load_model()
+    if not load_result.accepted:
+        push_error(load_result.message)
+
+func _on_model_loaded(_load_id, _model_id):
+    var request = ChorusRequest.chat(&amp;"guide", "Where should I go?")
+    request.max_tokens = 128
+    var result = $GodotChorus.generate(request)
+    if not result.accepted:
+        push_error(result.message)
+
+func _on_model_load_failed(_load_id, _model_id, _error, message):
+    push_error(message)
+
+func _on_generation_complete(_request_id, _session, _message_id, content, _reasoning):
+    print(content)
+
+func _on_generation_error(_request_id, _session, _error, message):
+    push_error(message)
+[/codeblock]</description>
+	<methods>
+		<method name="load_model">
+			<return type="ChorusLoadResult" />
+			<description>Admits an asynchronous load using the current configuration. Check [member ChorusLoadResult.accepted] and correlate its load ID with [signal GodotChorus.model_loaded] or [signal GodotChorus.model_load_failed]. Acceptance immediately closes inference admission until readiness is published. Only one load can be outstanding. Rejection leaves the existing engine intact and emits no load signals; accepted replacement does not restore the old engine on failure.</description>
+		</method>
+		<method name="cancel_load">
+			<return type="bool" />
+			<param index="0" name="load_id" type="int" />
+			<description>Requests cooperative cancellation of the identified load without waiting for cleanup. Returns true when cancellation is accepted, or false for an unknown, drained or already-failed load. Accepted cancellation produces [signal GodotChorus.model_load_failed] with [constant GodotChorus.ERR_CANCELLED] after cleanup. An indivisible provider operation may delay that signal.</description>
+		</method>
+		<method name="stop_all">
+			<return type="void" />
+			<description>Stops work and unloads the engine. This call blocks until engine and load cleanup finish. Accepted requests and an outstanding load receive their terminal signals during later node processing; keep processing enabled to receive them.</description>
+		</method>
+		<method name="is_loaded" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether an initialized engine is currently ready to accept work. False while loading, after stopping, or after an engine-wide failure. A progress fraction is not a readiness check.</description>
+		</method>
+		<method name="supports_embeddings" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether the currently loaded engine supports embeddings. False when no engine is ready. Load an embedding model, or turn on Embeddings for a generation model, before calling [method GodotChorus.embed].</description>
+		</method>
+		<method name="generate">
+			<return type="ChorusSubmitResult" />
+			<param index="0" name="request" type="ChorusRequest" />
+			<description>Submits a frozen generation request and returns its immediate admission result. An empty session uses a raw prompt without history. A nonempty session admits a new chat turn and reserves that session until terminal delivery. Success emits [signal GodotChorus.generation_complete]; failure emits [signal GodotChorus.generation_error]. A failed or cancelled new turn removes its pending user message.</description>
+		</method>
+		<method name="generate_batch">
+			<return type="ChorusSubmitResult[]" />
+			<param index="0" name="requests" type="ChorusRequest[]" />
+			<description>Submits requests in array order and returns one admission result per input at the same index. Admission is not atomic: some requests may be accepted while others are rejected. Requests for the same occupied session are rejected with [constant GodotChorus.ERR_SESSION_BUSY]. Each accepted item has its own terminal signal.</description>
+		</method>
+		<method name="regenerate">
+			<return type="ChorusSubmitResult" />
+			<param index="0" name="request" type="ChorusRequest" />
+			<description>Replaces the latest assistant reply in a session. The request must have a nonempty session, empty content, and history ending in an assistant message. Use [method ChorusRequest.regeneration] to create it. Success preserves the reply identity; cancellation or failure restores the previous reply. Completion and errors use the normal generation signals.</description>
+		</method>
+		<method name="embed">
+			<return type="ChorusSubmitResult" />
+			<param index="0" name="request" type="ChorusEmbeddingRequest" />
+			<description>Submits text for embedding without reading or changing history. A nonempty session acts as a correlation and occupancy key. Success emits [signal GodotChorus.embedding_complete]; failure emits [signal GodotChorus.generation_error]. Check the admission result before waiting.</description>
+		</method>
+		<method name="embed_batch">
+			<return type="ChorusSubmitResult[]" />
+			<param index="0" name="requests" type="ChorusEmbeddingRequest[]" />
+			<description>Submits embedding requests in array order. Returns one independent admission result per input; a rejection does not roll back accepted items. Each accepted item receives its own embedding completion or error signal.</description>
+		</method>
+		<method name="cancel_request">
+			<return type="bool" />
+			<param index="0" name="request_id" type="int" />
+			<description>Requests cancellation of an active request. Returns false if the ID is not active. A successfully cancelled request remains active, and its session remains occupied, until its terminal signal is delivered.</description>
+		</method>
+		<method name="is_request_active" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="request_id" type="int" />
+			<description>Returns whether the request still has an undelivered terminal result. Work may already have finished on a worker thread while this remains true.</description>
+		</method>
+		<method name="active_request_for_session" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="session" type="StringName" />
+			<description>Returns the request ID occupying the session, or [code]-1[/code] if none. Prompt previews and token counts do not occupy sessions.</description>
+		</method>
+		<method name="import_conversation_history">
+			<return type="ChorusResult" />
+			<param index="0" name="session" type="StringName" />
+			<param index="1" name="history" type="ChorusMessage[]" />
+			<description>Replaces stored history for a nonempty session and resets its recorded turn outcome. Message IDs must be nonnegative and unique within the array; messages and roles must be valid. Empty history is allowed. An occupied session returns [constant GodotChorus.ERR_SESSION_BUSY]. Input resources are copied, and invalid input leaves existing history unchanged.</description>
+		</method>
+		<method name="export_conversation_history" qualifiers="const">
+			<return type="ChorusMessage[]" />
+			<param index="0" name="session" type="StringName" />
+			<description>Returns copies of stored messages in conversation order. Unknown sessions return an empty array. Changing the returned resources does not change stored history. Prompt fitting does not remove messages from this export.</description>
+		</method>
+		<method name="clear_conversation_history">
+			<return type="ChorusResult" />
+			<param index="0" name="session" type="StringName" />
+			<description>Removes the session history and recorded turn outcome. Unknown sessions succeed. An occupied session returns [constant GodotChorus.ERR_SESSION_BUSY] without changing history.</description>
+		</method>
+		<method name="edit_message">
+			<return type="ChorusResult" />
+			<param index="0" name="session" type="StringName" />
+			<param index="1" name="message_id" type="int" />
+			<param index="2" name="content" type="String" />
+			<description>Changes the content of an existing message while preserving its identity and role. An unknown session or message returns [constant GodotChorus.ERR_INVALID_REQUEST]; an occupied session returns [constant GodotChorus.ERR_SESSION_BUSY].</description>
+		</method>
+		<method name="list_conversations" qualifiers="const">
+			<return type="StringName[]" />
+			<description>Returns stored session names, including sessions with imported empty history. The order is unspecified.</description>
+		</method>
+		<method name="reset_context">
+			<return type="ChorusResult" />
+			<description>Removes all stored conversations and recorded turn outcomes without unloading the engine. Returns [constant GodotChorus.ERR_SESSION_BUSY] without changing history if any session is occupied.</description>
+		</method>
+		<method name="last_turn_outcome" qualifiers="const">
+			<return type="int" enum="GodotChorus.TurnOutcomeCode" />
+			<param index="0" name="session" type="StringName" />
+			<description>Returns the most recently recorded generation outcome for the session. Unknown sessions and sessions without a recorded turn return [constant GodotChorus.TURN_NONE].</description>
+		</method>
+		<method name="render_prompt">
+			<return type="ChorusSubmitResult" />
+			<param index="0" name="request" type="ChorusRequest" />
+			<description>Submits a read-only preview of a frozen request, history and defaults snapshot. Does not occupy a session, generate tokens, or change history or turn outcomes. Success emits [signal GodotChorus.prompt_rendered]; validation and fitting errors emit [signal GodotChorus.generation_error]. For deterministic templates, the same snapshot produces the same fitted prompt as generation.</description>
+		</method>
+		<method name="count_message_tokens">
+			<return type="ChorusSubmitResult" />
+			<param index="0" name="content" type="String" />
+			<description>Counts literal content asynchronously without occupying a session. No beginning-of-sequence or end-of-sequence tokens are added, and control-token spellings remain literal text. Counts exclude roles, templates and response reservation, so they are not additive formatted prompt costs. Success emits [signal GodotChorus.message_token_counted]; failure emits [signal GodotChorus.generation_error].</description>
+		</method>
+		<method name="supports_message_token_counting" qualifiers="const">
+			<return type="bool" />
+			<description>Returns whether the ready engine supports literal message token counting. False when no engine is ready.</description>
+		</method>
+		<method name="similarity_cos" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="array1" type="PackedFloat32Array" />
+			<param index="1" name="array2" type="PackedFloat32Array" />
+			<description>Returns cosine similarity of two equal-length, nonempty vectors. Zero-length norms return [code]0.0[/code]. Empty arrays or mismatched lengths report a Godot error and return [code]0.0[/code]. No loaded model is required.</description>
+		</method>
+	</methods>
+	<members>
+		<member name="model_path" type="String" setter="set_model_path" getter="get_model_path" default="&quot;&quot;">Path to a loose GGUF file. Accepts absolute filesystem paths and Godot [code]res://[/code] or [code]user://[/code] paths. Models inside a PCK must first be extracted to the filesystem. The Echo provider does not require a path. Changes apply to the next accepted load.</member>
+		<member name="effective_context_size" type="int" setter="" getter="get_effective_context_size">Read-only per-request context capacity of the ready model, in tokens. Returns zero when no engine is ready or the provider does not report a capacity. This is effective metadata, not the requested load setting.</member>
+		<member name="active_load_id" type="int" setter="" getter="get_active_load_id">Read-only outstanding load identity until its terminal is delivered, or [code]-1[/code] when no load is outstanding.</member>
+		<member name="provider" type="int" setter="set_provider" getter="get_provider" enum="GodotChorus.ProviderChoice" default="0">Provider used by the next accepted model load. Selecting a provider updates its dynamic load options in the Inspector but does not replace a running engine.</member>
+		<member name="override_log_level" type="bool" setter="set_override_log_level" getter="get_override_log_level" default="false">Whether the next load uses this node's [member GodotChorus.log_level] instead of the project setting [code]chorus/logging/min_level[/code].</member>
+		<member name="log_level" type="int" setter="set_log_level" getter="get_log_level" default="2">Minimum diagnostic severity for the next load when [member GodotChorus.override_log_level] is enabled. Uses [enum GodotChorus.LogLevelCode]; [constant GodotChorus.LOG_OFF] disables records. Without an override, the project setting supplies the threshold.</member>
+	</members>
+	<signals>
+		<signal name="model_load_progress">
+			<param index="0" name="load_id" type="int" />
+			<param index="1" name="model_id" type="String" />
+			<param index="2" name="phase" type="ChorusLoadPhase.Value" />
+			<param index="3" name="has_fraction" type="bool" />
+			<param index="4" name="fraction" type="float" />
+			<description>Reports progress for an accepted load. The model ID is the admission-time logical model label, not a request ID. The fraction is meaningful only when [param has_fraction] is true, and describes the reported phase, not overall progress. Even a completed weight fraction is not readiness.</description>
+		</signal>
+		<signal name="model_loaded">
+			<param index="0" name="load_id" type="int" />
+			<param index="1" name="model_id" type="String" />
+			<description>Terminal success for an accepted load. The engine is published as ready before delivery. Correlate [param load_id] with the admission result. Earlier callbacks in the same event batch can stop or replace the engine, so check [method GodotChorus.is_loaded] before submitting new work.</description>
+		</signal>
+		<signal name="model_load_failed">
+			<param index="0" name="load_id" type="int" />
+			<param index="1" name="model_id" type="String" />
+			<param index="2" name="error_code" type="int" />
+			<param index="3" name="message" type="String" />
+			<description>Terminal failure for an accepted load, including cancellation after cleanup. The error code uses [enum GodotChorus.ErrorCode]. A failed replacement does not restore the previous engine.</description>
+		</signal>
+		<signal name="prompt_rendered">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="StringName" />
+			<param index="2" name="text" type="String" />
+			<param index="3" name="omitted_message_ids" type="PackedInt64Array" />
+			<description>Terminal success for a prompt preview. The text is the fitted prompt; omitted IDs identify stored messages excluded from this prompt only. Stored history remains unchanged.</description>
+		</signal>
+		<signal name="message_token_counted">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="token_count" type="int" />
+			<description>Terminal success for literal-content token counting. Correlate the request ID with the result from [method GodotChorus.count_message_tokens].</description>
+		</signal>
+		<signal name="token_generated">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="StringName" />
+			<param index="2" name="token" type="String" />
+			<description>Incremental visible text for a streaming generation request. A chunk need not correspond to one model token. The session is empty for stateless work. The final completion includes the full visible text.</description>
+		</signal>
+		<signal name="reasoning_token_generated">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="StringName" />
+			<param index="2" name="token" type="String" />
+			<description>Incremental reasoning text, separate from visible content, for a streaming request with reasoning exposure enabled. The final completion includes the full exposed reasoning.</description>
+		</signal>
+		<signal name="generation_complete">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="StringName" />
+			<param index="2" name="message_id" type="int" />
+			<param index="3" name="content" type="String" />
+			<param index="4" name="reasoning" type="String" />
+			<description>Terminal generation success with full visible content and exposed reasoning. The message ID is the durable assistant reply ID for a sessioned request, or [code]-1[/code] for stateless work. Stored history contains visible content, not reasoning.</description>
+		</signal>
+		<signal name="embedding_complete">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="StringName" />
+			<param index="2" name="embedding" type="PackedFloat32Array" />
+			<description>Terminal embedding success carrying a normalized vector. The session is empty for stateless requests. Embedding completion does not add conversation messages.</description>
+		</signal>
+		<signal name="history_truncated">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="StringName" />
+			<param index="2" name="omitted_message_ids" type="PackedInt64Array" />
+			<description>Reports stored message IDs omitted while fitting a generation prompt. This is not a terminal signal and does not delete stored history. A later generation error can still occur.</description>
+		</signal>
+		<signal name="generation_error">
+			<param index="0" name="request_id" type="int" />
+			<param index="1" name="session" type="StringName" />
+			<param index="2" name="error_code" type="int" />
+			<param index="3" name="message" type="String" />
+			<description>Terminal failure of an accepted generation, embedding, preview or token-count request. The error code uses [enum GodotChorus.ErrorCode], including cancellation. Immediate admission rejections do not emit this signal.</description>
+		</signal>
+		<signal name="engine_failed">
+			<param index="0" name="error_code" type="int" />
+			<param index="1" name="message" type="String" />
+			<description>Reports an engine-wide readiness failure with [constant GodotChorus.ERR_ENGINE_NOT_READY]. This is not a request terminal; each accepted request still receives its own terminal signal.</description>
+		</signal>
+		<signal name="log_record">
+			<param index="0" name="level" type="int" />
+			<param index="1" name="message" type="String" />
+			<param index="2" name="fields" type="Dictionary" />
+			<param index="3" name="request_id" type="int" />
+			<param index="4" name="session" type="StringName" />
+			<param index="5" name="produced_at" type="float" />
+			<description>Delivers one structured diagnostic on the host thread. The level uses [enum GodotChorus.LogLevelCode]; fields contain provider-supplied typed values. The request ID is [code]-1[/code] and the session is empty for unowned records. The timestamp is production time in Unix seconds, not delivery time. Logs and inference events use separate queues and have no cross-queue ordering guarantee.</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="ERR_NONE" value="0" enum="ErrorCode">No error. For admission results, work was accepted but has not necessarily completed.</constant>
+		<constant name="ERR_MODEL_LOAD" value="1" enum="ErrorCode">The provider could not load model assets.</constant>
+		<constant name="ERR_CONTEXT_INIT" value="2" enum="ErrorCode">The provider could not initialize its inference context.</constant>
+		<constant name="ERR_DECODE" value="3" enum="ErrorCode">Inference decoding failed.</constant>
+		<constant name="ERR_TOKENIZE" value="4" enum="ErrorCode">Input tokenization failed.</constant>
+		<constant name="ERR_INVALID_REQUEST" value="5" enum="ErrorCode">The request or operation has invalid input, or admission capacity is exhausted.</constant>
+		<constant name="ERR_ENGINE_NOT_READY" value="6" enum="ErrorCode">No initialized engine is ready to accept the operation.</constant>
+		<constant name="ERR_CANCELLED" value="7" enum="ErrorCode">The accepted operation was cancelled.</constant>
+		<constant name="ERR_UNSUPPORTED_MODEL_FORMAT" value="8" enum="ErrorCode">The provider does not support this model format.</constant>
+		<constant name="ERR_UNSUPPORTED_FEATURE" value="9" enum="ErrorCode">The provider or loaded model does not support the requested feature.</constant>
+		<constant name="ERR_UNSUPPORTED_OPTION" value="10" enum="ErrorCode">A selected provider option is unknown, unsupported or invalid.</constant>
+		<constant name="ERR_SESSION_BUSY" value="11" enum="ErrorCode">The session already has an active request. Wait for its terminal signal before changing history or submitting another request to it.</constant>
+		<constant name="ERR_UNKNOWN" value="12" enum="ErrorCode">An error without a more specific classification.</constant>
+		<constant name="PROVIDER_LLAMA" value="0" enum="ProviderChoice">Uses llama.cpp for local model inference.</constant>
+		<constant name="PROVIDER_ECHO" value="1" enum="ProviderChoice">Uses the dependency-free Echo reference provider for testing integrations without a model file.</constant>
+		<constant name="TURN_NONE" value="0" enum="TurnOutcomeCode">No generation outcome has been recorded for this session.</constant>
+		<constant name="TURN_COMPLETED" value="1" enum="TurnOutcomeCode">The latest recorded generation completed successfully.</constant>
+		<constant name="TURN_CANCELLED" value="2" enum="TurnOutcomeCode">The latest recorded generation was cancelled.</constant>
+		<constant name="TURN_ERRORED" value="3" enum="TurnOutcomeCode">The latest recorded generation failed.</constant>
+		<constant name="LOG_DEBUG" value="0" enum="LogLevelCode">Detailed debugging diagnostics.</constant>
+		<constant name="LOG_INFO" value="1" enum="LogLevelCode">Informational diagnostics.</constant>
+		<constant name="LOG_WARN" value="2" enum="LogLevelCode">Warnings about conditions that may need attention.</constant>
+		<constant name="LOG_ERROR" value="3" enum="LogLevelCode">Errors affecting an operation.</constant>
+		<constant name="LOG_FATAL" value="4" enum="LogLevelCode">Fatal diagnostics.</constant>
+		<constant name="LOG_OFF" value="5" enum="LogLevelCode">Disables diagnostic records.</constant>
+	</constants>
+</class>

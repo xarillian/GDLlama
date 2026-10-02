@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusRole" inherits="RefCounted" api_type="extension">
+	<brief_description>Typed message roles.</brief_description>
+	<description>Identifies the speaker of a stored [ChorusMessage] or an ephemeral [ChorusInjectedMessage]. The chat template determines how each role is presented to the model.</description>
+	<constants>
+		<constant name="SYSTEM" value="0" enum="Value">Instructions or context for the conversation. Leading system messages are retained when fitting history into the context window.</constant>
+		<constant name="USER" value="1" enum="Value">Input from the player or another caller.</constant>
+		<constant name="ASSISTANT" value="2" enum="Value">A reply from the model.</constant>
+	</constants>
+</class>

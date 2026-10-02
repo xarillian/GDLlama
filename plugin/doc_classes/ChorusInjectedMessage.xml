@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusInjectedMessage" inherits="Resource" api_type="extension">
+	<brief_description>Ephemeral request message without a durable identity.</brief_description>
+	<description>Extra context for one sessioned generation or prompt preview. Add these resources to [member ChorusRequest.inject]. Injections have no durable IDs, never enter stored history, and are not valid on stateless generation.</description>
+	<methods>
+		<method name="create" qualifiers="static">
+			<return type="ChorusInjectedMessage" />
+			<param index="0" name="role" type="int" enum="ChorusRole.Value" />
+			<param index="1" name="content" type="String" />
+			<param index="2" name="depth" type="int" default="0" />
+			<description>Creates an ephemeral message with the supplied role, text and insertion depth. Add it to [member ChorusRequest.inject] before submission.</description>
+		</method>
+	</methods>
+	<members>
+		<member name="role" type="int" setter="set_role" getter="get_role" enum="ChorusRole.Value" default="1">Speaker of the injected message. See [enum ChorusRole.Value].</member>
+		<member name="content" type="String" setter="set_content" getter="get_content" default="&quot;&quot;">Text inserted into this request only.</member>
+		<member name="depth" type="int" setter="set_depth" getter="get_depth" default="0">Distance in messages from the end of the prompt. Zero appends after the last message, including the new user message. Negative values act as zero. Large depths clamp after the leading system messages. Injections are placed in array order, so later depths count earlier insertions. Must fit a signed 32-bit integer.</member>
+	</members>
+</class>

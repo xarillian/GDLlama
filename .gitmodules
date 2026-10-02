@@ -1,8 +1,14 @@
-[submodule "godot-cpp"]
-	path = godot-cpp
+[submodule "third-party/godot-cpp"]
+	path = third-party/godot-cpp
 	url = https://github.com/godotengine/godot-cpp
 	branch = 4.4
-[submodule "llama.cpp"]
-	path = llama.cpp
+[submodule "third-party/llama.cpp"]
+	path = third-party/llama.cpp
 	url = https://github.com/ggerganov/llama.cpp.git
 	branch = master
+[submodule "third-party/googletest"]
+	path = third-party/googletest
+	url = https://github.com/google/googletest.git
+[submodule "third-party/nlohmann-json"]
+	path = third-party/nlohmann-json
+	url = https://github.com/nlohmann/json.git

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusProjectSettings" inherits="RefCounted" api_type="extension">
+	<brief_description>Project-wide generation settings synchronization.</brief_description>
+	<description>The selected [code]res://chorus/settings.json[/code] document is authoritative. [code]chorus/generation/settings_path[/code] can select another project-contained file. Common Project Settings choices use an empty Dictionary to mean absent and a Dictionary with a typed [code]value[/code] entry to select a value; seed uses decimal text. These methods return a Dictionary with integer [code]status[/code] and string [code]message[/code]. The installed EditorPlugin automatically saves valid edits only in the editor process and prompts for reload on external changes. Gameplay edits are memory-only unless explicitly saved.</description>
+	<methods>
+		<method name="sync_generation_defaults">
+			<return type="Dictionary" />
+			<description>Validates Project Settings choices and applies them to later generation admissions in memory. Invalid input keeps the previous valid choices.</description>
+		</method>
+		<method name="reload_generation_defaults">
+			<return type="Dictionary" />
+			<description>Imports the selected JSON again, replacing cached Project Settings choices. A failed reload leaves the last valid snapshot and source selected.</description>
+		</method>
+		<method name="save_generation_defaults">
+			<return type="Dictionary" />
+			<description>Explicitly persists current choices, including from gameplay, after checking the source and detecting external changes. A failed source, malformed destination or external change is never overwritten.</description>
+		</method>
+	</methods>
+	<constants>
+		<constant name="OK" value="0" enum="Status">The operation succeeded.</constant>
+		<constant name="INVALID" value="1" enum="Status">A generation choice has an invalid type or value. The previous valid choices remain active.</constant>
+		<constant name="SOURCE_FAILED" value="2" enum="Status">The selected settings source could not be loaded or accepted. Inspect the returned message.</constant>
+		<constant name="CONFLICT" value="3" enum="Status">The settings file changed externally. Reload before saving; the external file is not overwritten.</constant>
+		<constant name="IO_ERROR" value="4" enum="Status">The settings document could not be written. Inspect the returned message.</constant>
+	</constants>
+</class>

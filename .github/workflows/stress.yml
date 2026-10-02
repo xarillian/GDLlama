@@ -1,0 +1,41 @@
+name: Stress
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  SCONSFLAGS: -j4
+
+jobs:
+  stress:
+    name: stress (${{ matrix.kind }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each build shifts thread timing differently, and timing decides which interleavings occur.
+        include:
+          - { kind: plain, cache-tag: test-debug, flags: '' }
+          - { kind: thread, cache-tag: test-thread, flags: sanitize=thread }
+          - { kind: address, cache-tag: test-address, flags: sanitize=address }
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-tag: ${{ matrix.cache-tag }}
+      # ThreadSanitizer's shadow memory layout cannot fit the runner kernel's default address randomization.
+      - name: Narrow address randomization for ThreadSanitizer
+        if: matrix.kind == 'thread'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Build the test binary
+        run: scons test ${{ matrix.flags }}
+      - name: Concurrency suites, repeated 100 times and shuffled
+        run: just stress 100

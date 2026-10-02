@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusInferenceRequest" inherits="Resource" api_type="extension">
+	<brief_description>Base resource for generation and embedding input.</brief_description>
+	<description>Shared input and scheduling fields for [ChorusRequest] and [ChorusEmbeddingRequest]. Submit a concrete subclass through [GodotChorus]. Admission copies these values; later changes to the resource do not alter accepted work.</description>
+	<members>
+		<member name="content" type="String" setter="set_content" getter="get_content" default="&quot;&quot;">Text to generate from or embed. For sessioned generation, this becomes the new user message. Regeneration requires empty content.</member>
+		<member name="session" type="StringName" setter="set_session" getter="get_session" default="&amp;&quot;&quot;">Conversation identity for generation, or a correlation and occupancy key for embeddings. An empty name selects stateless work, which does not read or write conversation history.</member>
+		<member name="priority" type="int" setter="set_priority" getter="get_priority" default="0">Scheduling priority. Higher values take precedence when the provider chooses queued work; this does not preempt a running request. Must fit a signed 32-bit integer.</member>
+		<member name="execution" type="int" setter="set_execution" getter="get_execution" enum="ChorusExecution.Value" default="0">Scheduling mode for this request. See [enum ChorusExecution.Value].</member>
+	</members>
+</class>

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Helpers ####
+PASS=0
+FAIL=1
+
+staged_cpp() {
+    git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|hpp|h)$' | grep -v '^third-party/' || true
+}
+
+require() {
+    local cmd="$1"
+    if ! command -v "$cmd" &> /dev/null; then
+        echo "  [skip] $cmd not found"
+        return 1
+    fi
+}
+
+# Checks ####
+check_clang_format() {
+    require uvx || return $PASS  # skip gracefully if not installed
+
+    local files changed=()
+    files=$(staged_cpp)
+    [ -z "$files" ] && return $PASS
+
+    for f in $files; do
+        tools/clang-format -i "$f"
+        if ! git diff --quiet "$f"; then
+            changed+=("$f")
+            git add "$f"
+        fi
+    done
+
+    if [ ${#changed[@]} -gt 0 ]; then
+        echo "  reformatted and re-staged:"
+        for f in "${changed[@]}"; do echo "    $f"; done
+    fi
+
+    return $PASS
+}
+
+# Main ####
+main() {
+    local exit_code=0
+
+    run_check() {
+        local name="$1" fn="$2"
+        echo "› $name"
+        if ! $fn; then
+            echo "  FAILED"
+            exit_code=1
+        fi
+    }
+
+    run_check "clang-format" check_clang_format
+
+    exit $exit_code
+}
+
+main

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusMessage" inherits="Resource" api_type="extension">
+	<brief_description>Durable conversation history message.</brief_description>
+	<description>A text message with a durable identity in conversation history. Use [method create] to prepare history for [method GodotChorus.import_conversation_history]. Exported resources are copies: editing them does not change stored history; use [method GodotChorus.edit_message] or import the changed history.</description>
+	<methods>
+		<method name="create" qualifiers="static">
+			<return type="ChorusMessage" />
+			<param index="0" name="id" type="int" />
+			<param index="1" name="role" type="int" enum="ChorusRole.Value" />
+			<param index="2" name="content" type="String" />
+			<description>Creates a history message with the supplied identity, role and text. Creation does not validate or import the message. History import requires nonnegative IDs that are unique within the supplied history.</description>
+		</method>
+	</methods>
+	<members>
+		<member name="id" type="int" setter="set_id" getter="get_id" default="-1">Durable message identity, not an array index. Import requires a nonnegative value unique within the history. The default value of [code]-1[/code] is not a valid imported identity.</member>
+		<member name="role" type="int" setter="set_role" getter="get_role" enum="ChorusRole.Value" default="1">Speaker of this message. See [enum ChorusRole.Value].</member>
+		<member name="content" type="String" setter="set_content" getter="get_content" default="&quot;&quot;">Literal message text. The provider applies the chat template when preparing a sessioned request.</member>
+	</members>
+</class>

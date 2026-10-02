@@ -1,0 +1,123 @@
+name: Set up a Chorus build
+description: Installs the toolchain for one backend and restores the llama.cpp, SCons and model caches.
+
+inputs:
+  backend:
+    description: cpu, vulkan or metal
+    default: cpu
+  cache-tag:
+    description: Separates SCons caches whose flags differ, such as debug, release or a sanitizer
+    required: true
+  fixtures:
+    description: Restore and verify the model fixtures
+    default: 'false'
+  llama-cache:
+    description: Restore the llama.cpp build; a job that builds a moving revision cannot reuse one
+    default: 'true'
+  vulkan-sdk:
+    description: LunarG Vulkan SDK release, used where the platform does not package what the build needs
+    default: 1.4.363.0
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: '3.12'
+    - shell: bash
+      run: python -m pip install scons==4.11.1
+
+    - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      with:
+        just-version: 1.58.0
+
+    - name: Install MSVC (Windows)
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+
+    - name: Install LLVM (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: brew install llvm
+
+    - name: Install Vulkan headers and shader compiler (Linux)
+      if: runner.os == 'Linux' && inputs.backend == 'vulkan'
+      shell: bash
+      env:
+        VULKAN_SDK_VERSION: ${{ inputs.vulkan-sdk }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libvulkan-dev spirv-headers
+        # Ubuntu 22.04 does not package glslc, so the release build takes LunarG's SDK instead.
+        if ! sudo apt-get install -y glslc; then
+          curl -sSfL -o "$RUNNER_TEMP/vulkansdk.tar.xz" \
+            "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/linux/vulkansdk-linux-x86_64-$VULKAN_SDK_VERSION.tar.xz"
+          tar -xJf "$RUNNER_TEMP/vulkansdk.tar.xz" -C "$RUNNER_TEMP"
+          echo "VULKAN_SDK=$RUNNER_TEMP/$VULKAN_SDK_VERSION/x86_64" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/$VULKAN_SDK_VERSION/x86_64/bin" >> "$GITHUB_PATH"
+        fi
+
+    - name: Install the Vulkan SDK (Windows)
+      if: runner.os == 'Windows' && inputs.backend == 'vulkan'
+      shell: pwsh
+      env:
+        VULKAN_SDK_VERSION: ${{ inputs.vulkan-sdk }}
+      run: |
+        $root = "C:\VulkanSDK\$env:VULKAN_SDK_VERSION"
+        curl.exe -sSfL -o $env:RUNNER_TEMP/VulkanSDK-Installer.exe "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_SDK_VERSION.exe"
+        & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --root $root --accept-licenses --default-answer --confirm-command install
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Add-Content $env:GITHUB_ENV "VULKAN_SDK=$root"
+        Add-Content $env:GITHUB_PATH "$root\bin"
+
+    - id: llama
+      if: inputs.llama-cache == 'true'
+      shell: bash
+      run: |
+        echo "revision=$(git rev-parse HEAD:third-party/llama.cpp)" >> "$GITHUB_OUTPUT"
+        echo "image=$ImageOS" >> "$GITHUB_OUTPUT"
+
+    # The materialized source travels with its build: make compares file times, so fresh
+    # sources beside a restored build would rebuild everything.
+    - name: Restore the llama.cpp build
+      if: inputs.llama-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          bin/vendor/llama.cpp
+          bin/llama-build
+        # The build records absolute paths, which differ between repository names and runner images.
+        key: llama-${{ github.repository }}-${{ steps.llama.outputs.image }}-${{ inputs.backend }}-${{ steps.llama.outputs.revision }}-${{ hashFiles('patches/llama-resource-cleanup.patch', 'tools/materialize_llama.py') }}
+
+    - name: Point SCons at its cache
+      shell: bash
+      run: echo "SCONS_CACHE=${{ github.workspace }}/bin/scons-cache" >> "$GITHUB_ENV"
+
+    - name: Restore the SCons cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: bin/scons-cache
+        key: scons-${{ runner.os }}-${{ inputs.backend }}-${{ inputs.cache-tag }}-${{ github.sha }}
+        restore-keys: scons-${{ runner.os }}-${{ inputs.backend }}-${{ inputs.cache-tag }}-
+
+    - name: Restore model fixtures
+      if: inputs.fixtures == 'true'
+      id: fixtures
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: tests/models/*.gguf
+        key: model-fixtures-v1-${{ hashFiles('tests/model-fixtures.json') }}
+        enableCrossOsArchive: true
+
+    - name: Download missing fixtures and verify all of them
+      if: inputs.fixtures == 'true'
+      shell: bash
+      run: python tools/model_fixtures.py
+
+    - name: Save verified model fixtures
+      if: inputs.fixtures == 'true' && steps.fixtures.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: tests/models/*.gguf
+        key: ${{ steps.fixtures.outputs.cache-primary-key }}
+        enableCrossOsArchive: true

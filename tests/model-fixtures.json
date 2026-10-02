@@ -1,0 +1,31 @@
+{
+  "models": [
+    {
+      "filename": "gemma-3-270m-it-F16.gguf",
+      "url": "https://huggingface.co/unsloth/gemma-3-270m-it-GGUF/resolve/c90975dbd40c0c7b275fefaae758c3415c906238/gemma-3-270m-it-F16.gguf",
+      "sha256": "140cb395a3a3dcdb3de66e44c60d7265286c9d49f951c1899ec0d8c1f16b2feb",
+      "size_bytes": 542835488,
+      "license": "Gemma Terms of Use",
+      "license_url": "https://ai.google.dev/gemma/terms",
+      "access": "Public GGUF mirror; no authentication required. Gemma terms and use restrictions apply."
+    },
+    {
+      "filename": "Qwen3-0.6B-Q8_0.gguf",
+      "url": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/23749fefcc72300e3a2ad315e1317431b06b590a/Qwen3-0.6B-Q8_0.gguf",
+      "sha256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+      "size_bytes": 639446688,
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/blob/23749fefcc72300e3a2ad315e1317431b06b590a/LICENSE",
+      "access": "Public repository; no authentication required."
+    },
+    {
+      "filename": "embeddinggemma-300M-Q8_0.gguf",
+      "url": "https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/resolve/0f741b5a6585bd53aeb15cd1372c56f2a0f65e12/embeddinggemma-300M-Q8_0.gguf",
+      "sha256": "b5ce9d77a3fc4b3b39ccb5643c36777911cc4eb46a66962eadfa3f5f60490d63",
+      "size_bytes": 333590944,
+      "license": "Gemma Terms of Use",
+      "license_url": "https://ai.google.dev/gemma/terms",
+      "access": "Public GGUF mirror; no authentication required. Gemma terms and use restrictions apply."
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+CompileFlags:
+  Remove:
+    - -fno-gnu-unique
+  Add:
+    # Project headers
+    - -Iinclude
+    - -Isrc
+
+    # godot-cpp
+    - -Ithird-party/godot-cpp/include
+    - -Ithird-party/godot-cpp/gen/include
+
+    # llama.cpp
+    - -Ithird-party/llama.cpp/include
+    - -Ithird-party/llama.cpp/common
+    - -Ithird-party/llama.cpp/src
+    - -Ithird-party/llama.cpp/ggml/include
+    - -Ithird-party/llama.cpp/ggml/src
+    - -Ithird-party/llama.cpp/vendor
+
+    # Required by godot-cpp headers
+    - -DGDEXTENSION
+
+    - -std=c++17

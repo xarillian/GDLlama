@@ -1,157 +1,131 @@
-# Architecture Patterns
-There are two primary architecture patterns I'll identify for use with `GDLlama`: the Worker Node and the Singleton pattern. The best choice depends on your specific needs, expected user resources, and your model choice. A hybrid architecture is also possible. 
+# Architecture
 
-## Worker Node Pattern
-This is the simplest and most direct way to use `GDLlama`. In this pattern, a specific node that requires generative capabilities (an NPC, maybe) has its own `GDLlama` node as a direct child. This forms a self-contained unit.
+Chorus is a local LLM inference runtime built around a host- and provider-independent domain core. This document describes its architecture and the dependency rules, service contracts, and invariants contributors must preserve.
 
-Your scene tree may look like:
-```
-- NPC
-  - GDLlama
-  - CharacterBody2D
-  - ...
-```
+## The dependency model
 
-You would then attach the script to the `NPC` node. It manages its own child `GDLlama` instance.
+Dependencies point inward toward the core. The runtime consumes core contracts; providers implement them. Neither depends on the other. Host adapters connect them through the provider factory.
 
-```GDScript
-extends CharacterBody2D
+```mermaid
+graph TB
+    host["Host adapters<br/><i>host integration and composition roots</i>"]
+    comp["Provider factory<br/><i>catalog and construction</i>"]
+    app["Runtime<br/><i>application orchestration</i>"]
+    infra["Providers<br/><i>infrastructure implementations</i>"]
+    core["Core<br/><i>domain types and service contracts</i>"]
+    util["Generic utilities<br/><i>standard library only</i>"]
 
-# A direct reference to the `GDLlama` instance.
-@onready var llm: GDLlama = $GDLlama
-
-func _ready():
-    # This NPC manages its own model loading and signals.
-    llm.model_path = "res://models/your_model.gguf"
-    llm.generate_text_finished.connect(_on_finished)
-    
-    var error = await llm.load_model()
-    if error != OK:
-        printerr("NPC failed to load its model!")
-
-func talk_about(topic: String):
-    if not llm.is_model_loaded() or llm.is_running():
-        return # Not ready or already telling a story.
-
-    var prompt = "Talk about %s." % topic
-    llm.generate_chat_async(prompt) # Use chat for conversational memory in this node.
-
-func _on_finished(full_text: String):
-    print("NPC: '", full_text.strip_edges(), "'")
-    # Here you would display the text in a dialogue bubble, play audio, etc.
-
-func _exit_tree():
-    # Clean up when the NPC is removed from the scene.
-    llm.unload_model()
+    host --> app
+    host --> comp
+    comp --> infra
+    app --> core
+    infra --> core
+    core --> util
 ```
 
-## Singleton (Global Service) Pattern
-A more memory-efficient pattern for model usage. You have a single, globally accessible `GDLlama` instance that manages a single loaded model. Any node in the game can send requests to this service, which processes them one-by-one in a queue. This pattern requires significantly more diligent context management than the Worker Node Pattern. If there is any point you would take from these docs, and you intend to use this pattern, let it be the need for context management.
+- **Core** defines requests, events, errors, and service interfaces. It has no knowledge of hosts, vendor libraries, or concrete implementations.
+- **Runtime** is the application layer. It owns validation, work identity, ordering, delivery, and lifecycle, using providers only through contracts.
+- **Providers** implement those contracts. Each owns its vendor dependency; vendor types and headers stay inside the provider.
+- **Provider factory** is the sole catalog and construction boundary. It turns a provider selection into a concrete instance and depends on providers, not the runtime or hosts.
+- **Host adapters** translate host idioms into the runtime's typed API. All host-specific code lives here. Each adapter has a **composition root**: the initialization path that selects a provider, obtains it from the factory, and injects it into the runtime.
+- **Generic utilities** depend only on the standard library and are available to every layer.
 
-**Example**
-```GDScript
-extends Node
+A **provider** implements a service contract. An **engine** is a live service instance created from a provider selection.
 
-@onready var llm: GDLlama = $GDLlama
+### Why dependencies point inward
 
-var is_busy: bool = false
-var request_queue: Array = []
+Host APIs and vendor libraries change more often than domain concepts. Keeping those dependencies outside the core makes providers and hosts replaceable without changing the runtime. Core and runtime behavior can also be tested without a model, vendor library, or running host.
 
-# A struct-like class to hold request data.
-class LlamaRequest:
-    var prompt: String
-    var caller: Callable # The function to call with the result.
+Do not move host behavior into the runtime or provider behavior into the core to avoid an adapter. Shared boundary types belong in a layer both sides may depend on; otherwise, convert at the boundary. A leaked type couples layers just as an include does.
 
-    func _init(p_prompt: String, p_caller: Callable):
-        self.prompt = p_prompt
-        self.caller = p_caller
+## Service contracts
 
-func _ready():
-    # The service connects to its own worker's signals.
-    llm.generate_text_finished.connect(_on_generation_finished)
-    llm.model_path = "res://models/your_model.gguf"
-    
-    var error = await llm.load_model()
-    if error != OK:
-        printerr("CRITICAL: LlamaService failed to load model!")
-        get_tree().quit()
+A service contract consists of an abstract interface, its value types, and its obligations: threading, callbacks, and error behavior. Contracts live in the core, and their headers are authoritative. Compiling against an interface is not enough to satisfy it.
 
-# A public function that any node in the game can call.
-func request_generation(prompt: String, caller_callback: Callable):
-    var new_request = LlamaRequest.new(prompt, caller_callback)
-    
-    if not is_busy:
-        _process_request(new_request)
-    else:
-        print("LLM is busy. Adding request to queue.")
-        request_queue.push_back(new_request)
+Providers must reject work they cannot support before executing it, not silently degrade behavior. Unknown or unsupported options are errors, not no-ops. Runtime admission and provider validation are separate stages; validation failures after admission arrive as terminal events.
 
-func _process_request(request: LlamaRequest):
-    is_busy = true
-    # This example uses generate_text for simplicity, which always uses a fresh context.
-    # It's likely the bulk of your work would be done in this method or one like it!
-    llm.generate_text_async(request.prompt)
+Consumers use contract types only. Naming a concrete provider, branching on its identity, or calling its provider-specific API violates the boundary. Consumers adapt to **declared capabilities**, not provider identity.
 
-func _on_generation_finished(full_text: String):
-    # Here, you would identify where the original request came from and call their callback function with the result.
-    # This example isn't great. It skips all that logic and goes to `process_request`.
+The catalog must always include a trivial, dependency-free reference provider. It keeps contracts compiler-enforced, exposes the impact of contract changes, and supports end-to-end tests without vendor libraries or model artifacts.
 
-    ...
+## Dependency inversion and composition
 
-    if not request_queue.is_empty():
-        var next_request = request_queue.pop_front()
-        _process_request(next_request)
-```
+The factory constructs engines; composition roots wire them to consumers. Below a composition root, consumers receive providers through **dependency injection** and never select or construct them.
 
-When you actually would like to use your service, you would do something like:
-```GDScript
-extends CharacterBody2D
+Vendor link dependencies follow the factory boundary. Inner layers and their tests must build without vendor libraries; only targets crossing that boundary need them.
 
-func generate_quest_dialogue():
-    var prompt = "Create a short, urgent quest objective for the player."
-    
-    LlamaService.request_generation(prompt, Callable(self, "on_dialogue_received"))
-    print("QuestGiver sent a request to the LlamaService.")
+## Boundaries and enforcement
 
-func on_dialogue_received(text: String):
-    print("QuestGiver received dialogue: ", text)
-```
+| Boundary | Rule |
+|---|---|
+| Core | Includes only itself and generic utilities; never depends on the runtime, providers, host APIs, or vendor libraries. |
+| Provider | Keeps vendor types, headers, and globals private; never depends on other providers, the runtime, or hosts. |
+| Host adapter | Keeps host types and headers out of every other layer. |
+| Provider factory | Owns the sole provider catalog and constructs engines from provider selections. Provider implementations and provider-specific tests may name concrete types. The runtime uses contracts; host adapters obtain engines through the factory. |
 
-### Event Bus
-You may want to decouple your service, also. A global event bus can solve this problem. You'd instead call a general-purpose signal, which is picked up on by the service. Your game nodes don't need to know anything about the LLM service in this case, which may be quite handy. I haven't prototyped this at all, so I am not entirely sure of its utility.
+Convention and review enforce these rules; there is no automated layering check. Review must check:
 
-### Other Upgrades?
-There are many upgraded forms of the Singleton Service. Utilizing a priority queue, creating some kind of context pool manager, etc. etc. If you have a usage that isn't supported, post [an issue to the GitHub](https://github.com/xarillian/GDLlama/issues) or create a PR.
+- **Includes:** each file's includes declare its dependencies. A forbidden include is a defect regardless of how it is used.
+- **Link dependencies:** a target that should be vendor-independent must build without vendor libraries.
+- **Tests:** suites mirror the layers and follow their dependency limits. A core test requiring a model or a runtime test requiring a vendor library indicates a boundary violation in the code under test.
 
-# Databases and Vector Storage
-`GDLlama` provides the core tools to create vector embeddings and calculate similarity between them, but it does not include a built-in vector database for storage or advanced querying. You are responsible for managing how and where you store your generated embeddings. This may be a point of future development, but for now remains true.
+## Public API ownership
 
-The ideal storage solution depends entirely on the scale and requirements of your project.
+The public API is `Chorus::ChorusRuntime` (`include/chorus/runtime/runtime.hpp`) plus the provider factory. C++ consumers use it directly. Other consumers use host adapters: 
+- Godot exposes
+signals and properties, 
+- the C ABI exposes handles and functions, 
+- and language bindings wrap the C ABI. 
 
-## In-Memory Storage
-For many games, especially those with a limited amount of searchable data, or in contexts where long-term storage doesn't matter as much, a simple in-memory approach is perfectly fine. You can simply store embeddings as a `PackedFloat32Array` array, which is simple and fast. An example is provided in [EXAMPLES.md](EXAMPLES.md#Using_Embeddings)
+A new environment gets an adapter over this API, not another layer above it.
 
-## File-Based Storage
-If you need to persist your embeddings or prompts between game sessions but don't require a full database server, saving them to a file is a great option.
+Headers under `include/chorus` are intentional downstream API commitments, not a way to share declarations internally. Private headers, including those shared within a layer, belong beside their implementations in `src/`.
 
-### Using Godot's `FileAccess` Object
-### Using JSON Files
+- Public headers must not include private headers. Required types must be public or hidden behind opaque declarations.
+- Moving a header into `include/` requires API review and a downstream consumer's need. Headers remain private by default.
 
-## External Database
-The best approach is to use a dedicated vector database that runs as an external service. Your Godot application could communicate with this database over the network using the `HTTPRequest` node.
+## Threading and lifetime invariants
 
-A database can also be added to Godot through the GDExtensions feature.
+### Host thread and event delivery
 
-# Agentic Tool Use (MCP-Inspired Architecture)
-A powerful architecture you can build with `GDLlama` is a tool-use pattern. This turns your LLM from a simple text generator into an active agent that can interact with your game world. The core loop is simple: the LLM generates a structured function call, your code executes that function, and the result is fed back to the LLM to inform its next action.
-`GDLlama` is well suited for this pattern, as it provides the two most critical components:
-1. Conversational Context: The `generate_chat_async` method remembers the history of the conversation, which is essential for stateful, multi-step actions.
-2. Structured Output: The `json` parameter in the generation methods allows you to force the model's output to conform to a specific JSON schema, guaranteeing a predictable, machine-readable tool call.
+- **Host-facing calls are thread-confined.** All host adapter calls into the runtime occur on one thread.
+- **Provider callbacks may be asynchronous.** Providers may invoke callbacks from worker threads, so callback sinks must be thread-safe.
+- **Events use a synchronized channel.** Provider signals never call host code directly. The runtime delivers them on the host thread when the host polls, and the host may block until the channel has work. Handlers must preserve published event identity even if an earlier handler stops or replaces the engine.
+- **Accepted work terminates exactly once.** Every accepted request has one host-visible terminal event, including on cancellation, error, replacement, or shutdown. Work is never silently dropped.
 
-Future updates to `GDLlama` will further support the pattern. 
+### Engine handoff and shutdown
 
-## MCP Architecture
-It's important to distinguish this internal pattern from the formal Model Context Protocol (MCP) specification. The pattern described here is a self-contained loop inside your Godot application. The formal MCP specification is a standardized protocol for communication between separate services (e.g., an LLM service, a game client, and a tool server communicating over a network).
-For a self-contained or monolithic system, implementing the full, formal protocol is likely unnecessary. However, the specification provides a valuable philosophical pattern and an excellent reference for how to think about structuring tool definitions and handling agent-based logic. 
-For a project that relies on external communication, the formal MCP specification becomes a highly practical guide. Adhering to its standards will ensure your system is robust, scalable, and interoperable with other tools that speak the same protocol.
-For more information on the MCP pattern, see: https://modelcontextprotocol.io/docs/learn/architecture
+- **Handoff is exclusive.** A host may admit one identified load without waiting for the old engine to retire or the candidate to initialize. Acceptance immediately closes old preparation admission. The lifecycle worker fences old callbacks and resources before initializing the candidate.
+- **Polling publishes readiness.** Between load acceptance and publication, no new inference or preparation work is accepted. Only polling the identified load success makes the engine ready; progress does not. Ordinary provider methods are host-thread confined after publication.
+- **Load cancellation is cooperative.** An indivisible vendor operation may delay cleanup, but not load or cancellation admission. The cancellation terminal follows completed cleanup, with no fixed deadline.
+- **Shutdown fences callbacks.** Once provider shutdown completes, no previously supplied callback may run again. Explicit stop and destruction remain blocking lifetime fences.
+- **Release precedes acquisition.** The old provider is fully torn down before its successor initializes, preventing double residency of scarce resources such as GPU memory and loaded models.
+
+### Request preparation
+
+Each loaded runtime owns a small pool of preparation workers fed by one bounded FIFO queue. They consume immutable history snapshots through `Chorus::RequestPreparation`, not host-confined engine methods, and publish outcomes in admission order, so equal-priority requests reach the engine as submitted. Cached literal-content counts guide lazy selection; exact rendered checks determine fit. Validation and fitting failures after admission arrive as polled terminal events. Preview and count operations do not occupy inference sessions.
+
+Replacement transfers the old lifetime to the exclusive lifecycle worker, which joins its preparation workers and releases provider resources before initializing the successor. Provider shutdown also revokes independently retained preparation handles before releasing their resources.
+
+## Extensibility
+
+**New provider:** implement the service contract and its threading and callback obligations, declare capabilities honestly, and register in the factory. Registration affects the catalog, display names, configuration metadata, build targets, tests, and documentation, but must not introduce provider-specific logic in the runtime or hosts. If that logic seems necessary, extend the contract deliberately instead.
+
+Provider configuration schemas belong to the provider. Declare option names, types, defaults, and editor hints once through the contract's self-description mechanism, alongside capabilities. Every host reads that schema; none maintains its own copy.
+
+**New host:** write an adapter over the runtime's typed API and preserve host-thread confinement. Nothing below the adapter changes. A language binding, C ABI, Node addon, or WebAssembly wrapper is also a host adapter.
+
+**New domain concept:** extend the core vocabulary first, then update the outer layers. Core changes have the widest impact and require contract review.
+
+## Source tree map
+
+| Layer | Location |
+|---|---|
+| Core | `include/chorus/core/`, `src/chorus/core/` |
+| Runtime | `include/chorus/runtime/`, `src/chorus/runtime/` |
+| Providers | `src/chorus/providers/<provider>/` |
+| Provider factory | `include/chorus/engine_factory.hpp`, `src/chorus/engine_factory.cpp` |
+| Host adapters | `src/godot_chorus/` (Godot), `plugin/` (editor shell); `include/chorus_c/`, `src/chorus_c/` (C ABI) |
+| Composition roots | Each host adapter's initialization path |
+| Generic utilities | `src/wlib/` |
+| Tests | `tests/`, mirroring the layers |

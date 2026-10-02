@@ -1,0 +1,10 @@
+---
+InheritParentConfig: true
+
+# GoogleTest's TEST() registers each test through a static object, ASSERT_TRUE(value)
+# guards optional access in a way the dataflow check cannot follow, and tests seed
+# generators with constants to stay reproducible.
+Checks: >
+  -bugprone-throwing-static-initialization,
+  -bugprone-unchecked-optional-access,
+  -bugprone-random-generator-seed

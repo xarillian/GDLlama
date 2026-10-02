@@ -1,44 +1,35 @@
-name: Test with Latest Llama
-description: The "oh my god, it broke again" workflow
+name: Latest llama.cpp build
 
 on:
-  schedule:
-    - cron: '0 0 * * 0' # Weekly on Sundays at midnight to conserve precious github minutes
-  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  SCONSFLAGS: -j4
 
 jobs:
   build_and_test:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        submodules: 'recursive'
-
-    - name: Update llama.cpp to latest
-      run: |
-        cd llama.cpp
-        git fetch
-        git reset --hard origin/master
-
-    - name: Configure and Build
-      run: |
-        cmake -S . -B build -GNinja \
-          -DLLAMA_NATIVE=OFF \
-          -DCMAKE_EXPORT_COMPILE_COMMANDS=1 \
-          -DLLAMA_VULKAN=ON \
-          -DCMAKE_BUILD_TYPE=Debug \
-          -DBUILD_TESTING=ON \
-          -DGDLLAMA_DEBUG_LOGGING=ON
-        cmake --build build -- -j4
-
-    # Disabled test running.
-    # We want this workflow to be a canary for build issues without being overly reactive.
-    # Triggering failures on build failures only is a late-advisor approach. If the build breaks,
-    # we can investigate and upgrade llama.cpp at that time without the pressure of failing tests
-    # (which may fail more frequently due to API changes, etc).
-    # - name: Run Tests
-    #   run: |
-    #     cd build
-    #     ctest --output-on-failure
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Move llama.cpp to its latest master
+        run: |
+          git -C third-party/llama.cpp fetch origin master
+          git -C third-party/llama.cpp checkout --detach FETCH_HEAD
+          echo "Testing llama.cpp $(git -C third-party/llama.cpp rev-parse --short HEAD)"
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-tag: latest-llama
+          fixtures: 'true'
+          llama-cache: 'false'
+      - name: Build, which fails if the maintained patch no longer applies
+        run: scons test
+      - name: Native tests without models
+        run: just test --quick
+      - name: Native tests with models
+        run: just test

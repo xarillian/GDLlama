@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Pinned so local and CI diagnostics agree; checks change between clang-tidy releases.
+exec uvx --quiet clang-tidy==22.1.8 "$@"

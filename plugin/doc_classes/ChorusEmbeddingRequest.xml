@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusEmbeddingRequest" inherits="ChorusInferenceRequest" api_type="extension">
+	<brief_description>Mutable typed embedding resource.</brief_description>
+	<description>Input for [method GodotChorus.embed] or [method GodotChorus.embed_batch]. Embeddings do not read or modify conversation history. A nonempty [member ChorusInferenceRequest.session] reserves that session until the terminal signal is delivered. Check [method GodotChorus.supports_embeddings] after loading the model.</description>
+	<methods>
+		<method name="create" qualifiers="static">
+			<return type="ChorusEmbeddingRequest" />
+			<param index="0" name="content" type="String" />
+			<param index="1" name="session" type="StringName" default="&amp;&quot;&quot;" />
+			<description>Creates an embedding request for [param content]. Leave [param session] empty for stateless work. This only creates the resource; submit it with [method GodotChorus.embed].</description>
+		</method>
+	</methods>
+</class>

@@ -1,38 +1,57 @@
-# Editor & IDE specific files
-.vscode/
+# Local workflow and tooling
+/.cache/
+/.vscode/
+/.agents/
+/.codex/
+/.omp/
+/.docs/
+/_project/
+/tmp/
+/CLAUDE.md
+/compile_commands.json
+/TODO.md
 
-# Build directories
-build/
-bin/
-build_release/
-install/
-out/
+# Build and generated directories
+/bin/
+/build/
+/build_release/
+/install/
+/out/
 
-# Compiled objects and libraries
-*.o
-*.obj
-*.lo
-*.slo
-*.a
-*.lib
-*.la
-*.lai
-*.so
-*.dylib
-*.dll
+# Excluded repository trees
+/demo/
+/old_src/
+/plugin/addons/
+/tests/godot/.godot/
+/tests/godot/addons/
+/tests/godot/chorus/
+/tests/models/
 
-# Executables
-*.exe
-*.out
-*.app
-
-# Intermediate and language-specific files
+# Generated build artifacts
 *.d
 *.gch
-*.pch
 *.mod
+*.pch
 *.smod
 
-# Project-specific ignores
-/tests/models/
-/demo/
+*.lo
+*.o
+*.obj
+*.os
+*.slo
+
+*.a
+*.la
+*.lai
+*.lib
+
+*.dll
+*.dylib
+*.so
+
+*.app/
+*.exe
+*.out
+
+*.dblite
+*.uid

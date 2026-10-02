@@ -1,0 +1,216 @@
+#pragma once
+
+#include <optional>
+
+#include <godot_cpp/classes/global_constants.hpp>
+#include <godot_cpp/classes/node.hpp>
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/templates/list.hpp>
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/variant/string_name.hpp>
+
+#include "chorus/core/capabilities.hpp"
+#include "chorus/core/common.hpp"
+#include "chorus/runtime/runtime.hpp"
+#include "godot_chorus/chorus_types.hpp"
+
+/*
+ * Adapts the host-neutral Chorus runtime to a Godot node.
+ *
+ * `GodotChorus` translates Godot values into the typed runtime API, constructs
+ * the selected provider through the factory, and delivers asynchronous runtime
+ * events as signals on the Godot thread. Provider-declared capabilities drive
+ * the Inspector surface, so this adapter does not duplicate provider schemas.
+ */
+class GodotChorus : public godot::Node {
+    GDCLASS(GodotChorus, godot::Node);
+
+  protected:
+    static void _bind_methods();
+    void _notification(int p_what);
+
+    // The selected provider owns its option names, types, defaults, and bounds.
+    // These hooks expose that declaration as Inspector properties without
+    // hard-coding a provider's configuration surface in `GodotChorus`.
+    bool _set(const godot::StringName& name, const godot::Variant& value);
+    bool _get(const godot::StringName& name, godot::Variant& ret) const;
+    void _get_property_list(godot::List<godot::PropertyInfo>* list) const;
+    bool _property_can_revert(const godot::StringName& name) const;
+    bool _property_get_revert(const godot::StringName& name, godot::Variant& ret) const;
+
+  public:
+    enum ErrorCode {
+        ERR_NONE,
+        ERR_MODEL_LOAD,
+        ERR_CONTEXT_INIT,
+        ERR_DECODE,
+        ERR_TOKENIZE,
+        ERR_INVALID_REQUEST,
+        ERR_ENGINE_NOT_READY,
+        ERR_CANCELLED,
+        ERR_UNSUPPORTED_MODEL_FORMAT,
+        ERR_UNSUPPORTED_FEATURE,
+        ERR_UNSUPPORTED_OPTION,
+        ERR_SESSION_BUSY,
+        ERR_UNKNOWN,
+    };
+
+    enum ProviderChoice {
+        PROVIDER_LLAMA,
+        PROVIDER_ECHO,
+    };
+
+    enum TurnOutcomeCode {
+        TURN_NONE,
+        TURN_COMPLETED,
+        TURN_CANCELLED,
+        TURN_ERRORED,
+    };
+
+    enum LogLevelCode {
+        LOG_DEBUG,
+        LOG_INFO,
+        LOG_WARN,
+        LOG_ERROR,
+        LOG_FATAL,
+        LOG_OFF, // threshold only, never emitted
+    };
+
+    static int to_godot(Chorus::ChorusError e);
+    static int to_godot(Chorus::TurnOutcome outcome);
+    static int to_godot(Chorus::LogLevel level);
+
+    /*
+     * Declares `chorus/logging/min_level` in Godot Project Settings.
+     *
+     * Module initialization calls this once. Editor runs default to
+     * `GodotChorus::LOG_INFO`; exported games use `Chorus::log_level_default`
+     * because a player's console is not a debug channel.
+     */
+    static void register_project_settings();
+
+    /*
+     * Constructs the selected provider and loads it into the runtime.
+     *
+     * Every call replaces the current engine so the complete node
+     * configuration takes effect. Replacement terminates in-flight requests
+     * with `Chorus::ChorusError::Cancelled`.
+     */
+    godot::Ref<ChorusLoadResult> load_model();
+#ifdef CHORUS_HOST_TEST
+    void test_hold_next_retirement();
+    bool test_retirement_held() const;
+    void test_release_retirement();
+#endif
+    bool cancel_load(int64_t load_id);
+    int64_t get_active_load_id() const;
+    void stop_all();
+    bool is_loaded() const;
+    bool supports_embeddings() const;
+    bool supports_message_token_counting() const;
+    int64_t get_effective_context_size() const;
+
+    godot::Ref<ChorusSubmitResult> generate(const godot::Ref<ChorusRequest>& request);
+    godot::TypedArray<ChorusSubmitResult> generate_batch(const godot::TypedArray<ChorusRequest>& requests);
+    godot::Ref<ChorusSubmitResult> regenerate(const godot::Ref<ChorusRequest>& request);
+    godot::Ref<ChorusSubmitResult> embed(const godot::Ref<ChorusEmbeddingRequest>& request);
+    godot::TypedArray<ChorusSubmitResult> embed_batch(const godot::TypedArray<ChorusEmbeddingRequest>& requests);
+
+    /// Requests remain active until `GodotChorus::_process` drains their terminal event.
+    bool cancel_request(int64_t request_id);
+    /// Returns true until `GodotChorus::_process` drains the terminal event.
+    bool is_request_active(int64_t request_id) const;
+
+    /*
+     * Returns:
+     *  - `int64_t`: the non-negative active request ID.
+     *  - `-1`: the session is unknown or has no active request.
+     */
+    int64_t active_request_for_session(const godot::StringName& session) const;
+
+    godot::Ref<ChorusResult>
+    import_conversation_history(const godot::StringName& session, const godot::TypedArray<ChorusMessage>& history);
+    godot::TypedArray<ChorusMessage> export_conversation_history(const godot::StringName& session) const;
+    godot::Ref<ChorusResult> clear_conversation_history(const godot::StringName& session);
+    godot::Ref<ChorusResult>
+    edit_message(const godot::StringName& session, int64_t message_id, const godot::String& content);
+    godot::TypedArray<godot::StringName> list_conversations() const;
+
+    /*
+     * Clears every conversation.
+     *
+     * Returns a `ChorusResult` with the runtime diagnostic, if any.
+     */
+    godot::Ref<ChorusResult> reset_context();
+    TurnOutcomeCode last_turn_outcome(const godot::StringName& session) const;
+    godot::Ref<ChorusSubmitResult> render_prompt(const godot::Ref<ChorusRequest>& request);
+    godot::Ref<ChorusSubmitResult> count_message_tokens(const godot::String& content);
+
+    void _process(double delta) override;
+
+    void set_model_path(const godot::String& path);
+    godot::String get_model_path() const;
+    void set_provider(ProviderChoice provider);
+    ProviderChoice get_provider() const;
+    /*
+     * Selects the least severe `Chorus::LogLevel` for the next engine.
+     *
+     * When the override is disabled, `chorus/logging/min_level` supplies the
+     * value. The setting takes effect on the next `GodotChorus::load_model`
+     * because it belongs to the engine configuration.
+     */
+    void set_override_log_level(bool enabled);
+    bool get_override_log_level() const;
+    void set_log_level(int64_t level);
+    int64_t get_log_level() const;
+
+    /*
+     * Computes cosine similarity between two Godot arrays.
+     *
+     * Inputs must have equal, non-zero lengths. A zero-magnitude vector has no
+     * usable direction and also produces zero.
+     *
+     * Returns:
+     *  - `float`: the cosine similarity for valid vectors.
+     *  - `0.0f`: the inputs are invalid or either vector has zero magnitude.
+     */
+    float similarity_cos(godot::PackedFloat32Array array1, godot::PackedFloat32Array array2) const;
+
+  private:
+    // Copies project choices before admission, so later edits cannot alter accepted work.
+    bool push_host_defaults(std::string& error);
+
+    void drain_logs();
+    Chorus::LogLevel effective_log_level() const;
+
+    // Caches the selected provider's self-description because Godot requests
+    // the Inspector property list frequently.
+    const Chorus::EngineCapabilities& provider_capabilities() const;
+    const Chorus::ProviderOptionDescriptors& load_option_descriptors() const;
+    const Chorus::ProviderOptionDescriptor* find_load_option(const godot::StringName& name) const;
+
+    Chorus::ChorusRuntime _runtime;
+
+    godot::String _model_path;
+
+    ProviderChoice _provider = PROVIDER_LLAMA;
+
+    // Contains only values explicitly set by the user. Other values resolve
+    // from provider defaults at load time. Options for unselected providers
+    // remain inert in memory, preserving them when switching providers during
+    // a session. Only the selected provider's listed properties persist in a
+    // saved scene.
+    Chorus::ProviderOptionMap _load_options;
+    mutable Chorus::EngineCapabilities _cached_capabilities;
+    mutable std::optional<ProviderChoice> _cached_capabilities_provider;
+
+    bool _override_log_level = false;
+    int64_t _log_level = (int64_t)Chorus::log_level_default;
+};
+
+VARIANT_ENUM_CAST(GodotChorus::ErrorCode);
+VARIANT_ENUM_CAST(GodotChorus::ProviderChoice);
+VARIANT_ENUM_CAST(GodotChorus::TurnOutcomeCode);
+VARIANT_ENUM_CAST(GodotChorus::LogLevelCode);

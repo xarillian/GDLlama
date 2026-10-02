@@ -1,0 +1,44 @@
+---
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+
+# Braces
+BreakBeforeBraces: Attach
+InsertBraces: false
+
+# Argument wrapping 
+# indent args one level, closing paren on its own line
+AlignAfterOpenBracket: BlockIndent
+BinPackArguments: false
+BinPackParameters: false
+
+# Spacing
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInParentheses: false
+SpaceBeforeCpp11BracedList: false
+
+# Pointers / references
+# align to type (String &foo, not String& foo)
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Includes
+SortIncludes: true
+IncludeBlocks: Preserve
+
+# Allow short functions on one line (getters/setters)
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# Alignment
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: true
+
+Standard: c++20
+
+# Macros used as whole statements, without a trailing semicolon
+StatementMacros: [BIND_NAMESPACE, IMPLEMENT_FIELD, PRESENT, GET, INT32, FLOAT32]

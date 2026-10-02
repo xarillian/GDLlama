@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusResult" inherits="RefCounted" api_type="extension">
+	<brief_description>Immutable result of a history operation.</brief_description>
+	<description>Immediate, read-only result of a conversation history operation. Check [member ok] before relying on the change. Failure does not emit [signal GodotChorus.generation_error].</description>
+	<members>
+		<member name="error" type="int" setter="" getter="get_error">Result code from [enum GodotChorus.ErrorCode]. Success is [constant GodotChorus.ERR_NONE].</member>
+		<member name="message" type="String" setter="" getter="get_message">Failure diagnostic, or an empty string on success.</member>
+		<member name="ok" type="bool" setter="" getter="get_ok">Whether the operation succeeded. Equivalent to comparing [member error] with [constant GodotChorus.ERR_NONE].</member>
+	</members>
+</class>
