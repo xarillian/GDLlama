@@ -1,42 +1,46 @@
 # Chorus
 
-[![CI](https://img.shields.io/github/actions/workflow/status/xarillian/chorus-llm/ci.yml?branch=master&label=CI)](https://github.com/xarillian/chorus-llm/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Godot 4.4+](https://img.shields.io/badge/Godot-4.4%2B-478CBF?logo=godotengine&logoColor=white)](docs/GODOT.md)
+[![CI](https://img.shields.io/github/actions/workflow/status/xarillian/chorus-llm/ci.yml?branch=master&label=CI)](https://github.com/xarillian/chorus-llm/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Godot 4.4+](https://img.shields.io/badge/Godot-4.4%2B-478CBF?logo=godotengine&logoColor=white)](https://godotengine.org/)
 
-**Chorus** is an LLM inference runtime for simulation and video games.
+**Chorus** is a high-performance embeddable LLM runtime for native applications, simulations, and games.
 
-Current delivery is through a Godot 4.4+ GDExtension backed by `llama.cpp`.
+Chorus is built for interactive workloads where one model serves many independently scheduled agents. On an RTX 4070 Ti, the benchmark configuration below produces 114 tok/s for one active response and 1,421 aggregate tok/s across 40 concurrent responses, using 5.3 GiB of VRAM at 40-way concurrency.
 
-Consumer GPUs should be paramount to AI deployment and development. This project supports real-time, concurrent inference for small models: host many NPCs at once, a quest builder, an events model or anything else. It is integration agnostic by default, though `Godot` and `llama.cpp` were chosen as first targets. Expect future development to add further support.
+It runs local inference directly inside your process with continuous batching, priority scheduling, persistent conversation state, and a native C++ API and stable C ABI. No CUDA, Python runtime, cloud service, or separate inference server is required.
+
+The current local provider is built on `llama.cpp`, with Vulkan on Linux and Windows and Metal on Apple Silicon. Chorus owns the application-level scheduler, request preparation, sampling, conversation lifecycle, and batch layout around that provider. It is embeddable by default, but its C ABI can also be hosted out-of-process when crash isolation or fault containment matters. Godot 4.4+ is the first supported engine integration.
+
+Consumer GPUs are and will always be the first-class target. This is partly a technical choice and partly a philosophical one: a spirit for every machine, and local inference for all.
 
 ## Features
 
-Run text generation and embeddings inside your game or application, using a model you supply. Chorus manages model loading, concurrent requests, and conversation histories.
+Run text generation and embeddings directly inside your application using a model you supply. Chorus manages model loading, concurrent requests, and conversation histories.
 
-- **Local inference.** Run GGUF models on CPU or GPU through `llama.cpp`, without a cloud API, account, or separate inference server.
-- **Concurrent agents.** Serve multiple active requests from one loaded model through shared inference batches.
-- **Priority scheduling.** Start higher-priority requests first, and equal-priority requests in the order you submitted them. Long prompts load in chunks between steps of ongoing generation, so replies already streaming gain a token at every step while new prompts load.
+- **Local inference.** Run GGUF models directly through the local provider, with Vulkan acceleration on Linux and Windows and Metal on Apple Silicon. No cloud API, account, Python runtime, or inference daemon is required.
+- **Concurrent agents.** Serve multiple active requests from one loaded model and one shared multi-sequence context, advancing active agents together in shared GPU steps.
+- **Priority scheduling.** Higher-priority work is admitted first, and each inference step runs the highest runnable priority tier. Submission order is preserved among equal-priority requests.
+- **Continuous batching.** Admit and retire sequences as capacity changes, and batch active work within a shared token budget. Long prompts are processed in bounded chunks alongside generation, so existing replies keep streaming while newly admitted requests continue making progress.
 - **Conversation control.** Keep independent histories for your characters or agents. Import, export, edit, and regenerate messages, or inject context for one turn.
 - **Structured output.** Constrain replies with JSON Schema or a GBNF grammar for results your application can parse.
 - **Per-request generation settings.** Choose response length, sampling settings, and stop sequences for each request, or inherit shared defaults.
 - **Explicit request outcomes.** Cancel queued or active requests and receive one terminal success or error for every accepted request. Failed or cancelled chat turns roll back their pending history changes.
 - **Asynchronous model loading.** Show loading progress and request cancellation while a model loads. Replacing a model releases the old one before loading its successor.
 - **Text embeddings.** Generate normalized vectors for your own similarity search or retrieval logic.
+- **Embeddable by default.** Link Chorus directly into a native application through its C++ API or a stable C ABI, without running a separate inference service. The same ABI can be hosted out-of-process when fault isolation is preferable.
 - **Godot and native integration.** Use typed request resources, signals, and Project Settings in Godot, or integrate through the host-independent C++ runtime and C ABI.
 
 Supported features depend on the model; practical concurrency depends on the model and available hardware. See the [full feature list and planned work](docs/FEATURES.md).
 
 ## Performance
 
-Performance results differ by hardware, model used, and settings.
+These tests were performed using `google/gemma-4-E4B-it-qat-q4_0-gguf` on an RTX 4070 Ti (12 GB) through `llama.cpp`'s Vulkan backend, on a desktop with a browser and chat apps open. Each request is scoped to 64 output tokens (`max_tokens = 64`, `ignore_eos = true`). These are end-to-end Chorus measurements.
 
-These tests are performed using Gemma 4 E4B (Q4_0) on an RTX 4070 Ti (12 GB) through `llama.cpp`'s Vulkan backend, on a desktop with a browser and chat apps open. Each request is scoped to 64 output tokens (`max_tokens = 64`, `ignore_eos = true`).
+Performance results differ by hardware, model used, and settings.
 
 - **First turn:** the whole history is processed, as after importing it or loading the model.
 - **Next turn:** the previous turn's KV cache is reused, so only the new message is processed. This holds while each conversation keeps a slot (up to `max_concurrent_requests` conversations) and its earlier history is unedited.
 
-| Context | Concurrent requests | All replies complete | First token | Reply tokens per second | VRAM |
+| Context | Concurrent requests | All replies complete | First token | Aggregate output (tok/s) | VRAM |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Short prompt | 1 | 0.56 s | 22 ms | 114 | 2.9 GiB |
 | | 4 | 0.70 s | 47 ms | 363 | 3.2 GiB |
@@ -74,7 +78,7 @@ just build
 just check --quick
 ```
 
-On macOS with Apple silicon, install Xcode and use the Metal build in place of `just build`:
+On macOS with Apple Silicon, install Xcode and use the Metal build in place of `just build`:
 
 ```sh
 scons use_metal=yes
@@ -100,7 +104,7 @@ python tools/stage_godot.py
 
 The staged addon is written to `plugin/addons/chorus`.
 
-You can then get generation running quickily with:
+You can then get generation running quickly with:
 
 ```
 func _ready() -> void:
