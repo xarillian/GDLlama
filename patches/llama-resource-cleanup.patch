@@ -1,5 +1,42 @@
+diff --git a/common/chat.cpp b/common/chat.cpp
+index 3502b96..354e804 100644
+--- a/common/chat.cpp
++++ b/common/chat.cpp
+@@ -35,7 +35,12 @@ using json = common_json;
+ 
+ static std::string format_time(const std::chrono::system_clock::time_point & now, const std::string & format) {
+     auto               time       = std::chrono::system_clock::to_time_t(now);
+-    auto               local_time = *std::localtime(&time);
++    std::tm            local_time {};
++#ifdef _WIN32
++    localtime_s(&local_time, &time);
++#else
++    localtime_r(&time, &local_time);
++#endif
+     std::ostringstream ss;
+     ss << std::put_time(&local_time, format.c_str());
+     auto res = ss.str();
+diff --git a/common/jinja/value.cpp b/common/jinja/value.cpp
+index 6edd8b9..cba1933 100644
+--- a/common/jinja/value.cpp
++++ b/common/jinja/value.cpp
+@@ -425,7 +425,13 @@ const func_builtins & global_builtins() {
+             // get current time
+             // TODO: make sure this is the same behavior as Python's strftime
+             char buf[100];
+-            if (std::strftime(buf, sizeof(buf), format.c_str(), std::localtime(&args.ctx.current_time))) {
++            std::tm local_time {};
++#ifdef _WIN32
++            const bool converted = localtime_s(&local_time, &args.ctx.current_time) == 0;
++#else
++            const bool converted = localtime_r(&args.ctx.current_time, &local_time) != nullptr;
++#endif
++            if (converted && std::strftime(buf, sizeof(buf), format.c_str(), &local_time)) {
+                 return mk_val<value_string>(std::string(buf));
+             } else {
+                 throw raised_exception("strftime_now: failed to format time");
 diff --git a/ggml/CMakeLists.txt b/ggml/CMakeLists.txt
-index 752dabbb6..2afe4e367 100644
+index 4af7fc8..b5bb39b 100644
 --- a/ggml/CMakeLists.txt
 +++ b/ggml/CMakeLists.txt
 @@ -10,6 +10,7 @@ set(GGML_VERSION_BASE "${GGML_VERSION_MAJOR}.${GGML_VERSION_MINOR}.${GGML_VERSIO
@@ -20,7 +57,7 @@ index 752dabbb6..2afe4e367 100644
  
  if(NOT GGML_BUILD_COMMIT)
 diff --git a/src/llama-batch.cpp b/src/llama-batch.cpp
-index 89a1f3f37..39c8b501a 100644
+index 7a17b3a..99ea1c1 100644
 --- a/src/llama-batch.cpp
 +++ b/src/llama-batch.cpp
 @@ -9,6 +9,7 @@
@@ -31,7 +68,7 @@ index 89a1f3f37..39c8b501a 100644
  #include <algorithm>
  #include <sstream>
  
-@@ -1315,8 +1316,9 @@ void llama_batch_compat::init(llama_batch_ext & dst, const llama_batch & batch_i
+@@ -1316,8 +1317,9 @@ void llama_batch_compat::init(llama_batch_ext & dst, const llama_batch & batch_i
  }
  
  llama_batch_compat::llama_batch_compat(llama_context * ctx, const llama_batch & batch_inp, size_t n_embd_row) {
@@ -44,12 +81,12 @@ index 89a1f3f37..39c8b501a 100644
  
  llama_batch_compat::~llama_batch_compat() {
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index 43c396f15..c7c427ed7 100644
+index 6cc0b20..cfa4673 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
-@@ -1519,11 +1519,43 @@ bool llama_model_loader::load_all_data(
-     // 64MB works well for NVMe drives
-     const size_t buffer_size = alignment != 1 ? 64 * 1024 * 1024 + 2 * alignment : 1 * 1024 * 1024;
+@@ -1518,11 +1518,43 @@ bool llama_model_loader::load_all_data(
+     // Buffer size: balance between memory usage and I/O efficiency
+     const size_t buffer_size = alignment != 1 ? LLAMA_DIRECT_IO_BUFFER_SIZE + 2 * alignment : 1 * 1024 * 1024;
  
 -    std::vector<ggml_backend_buffer_t> host_buffers;
 -    std::vector<ggml_backend_event_t> events;
@@ -95,7 +132,7 @@ index 43c396f15..c7c427ed7 100644
          if (use_mmap || check_tensors) {
              return nullptr;
          }
-@@ -1566,25 +1598,25 @@ bool llama_model_loader::load_all_data(
+@@ -1565,25 +1597,25 @@ bool llama_model_loader::load_all_data(
  
          // If the backend is supported, create pinned memory buffers and events for synchronisation.
          for (size_t idx = 0; idx < n_buffers; ++idx) {
@@ -128,7 +165,7 @@ index 43c396f15..c7c427ed7 100644
          }
  
          ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
-@@ -1594,6 +1626,7 @@ bool llama_model_loader::load_all_data(
+@@ -1593,6 +1625,7 @@ bool llama_model_loader::load_all_data(
              return nullptr;
          }
  
@@ -136,7 +173,7 @@ index 43c396f15..c7c427ed7 100644
          return backend;
      }(__func__);
  
-@@ -1749,16 +1782,7 @@ bool llama_model_loader::load_all_data(
+@@ -1748,16 +1781,7 @@ bool llama_model_loader::load_all_data(
  
          size_done += n_size;
      }
@@ -154,61 +191,3 @@ index 43c396f15..c7c427ed7 100644
  
      // check validation results
      bool validation_failed = false;
-diff --git a/common/jinja/runtime.cpp b/common/jinja/runtime.cpp
-index e2cab8a..a20865f 100644
---- a/common/jinja/runtime.cpp
-+++ b/common/jinja/runtime.cpp
-@@ -537,8 +537,6 @@ value for_statement::execute_impl(context & ctx) const {
- 
-     std::vector<value> filtered_items;
-     for (size_t i = 0; i < items.size(); ++i) {
--        context loop_scope(scope);
--
-         value current = items[i];
- 
-         std::function<void(context&)> scope_update_fn = [](context &) { /* no-op */};
-@@ -584,6 +582,7 @@ value for_statement::execute_impl(context & ctx) const {
-         }
- 
-         if (select_expr && test_expr) {
-+            context loop_scope(scope);
-             scope_update_fn(loop_scope);
-             value test_val = test_expr->execute(loop_scope);
-             if (!test_val->as_bool()) {
-diff --git a/common/chat.cpp b/common/chat.cpp
-index ed1942e..3ad8d4a 100644
---- a/common/chat.cpp
-+++ b/common/chat.cpp
-@@ -35,7 +35,12 @@ using json = common_json;
- 
- static std::string format_time(const std::chrono::system_clock::time_point & now, const std::string & format) {
-     auto               time       = std::chrono::system_clock::to_time_t(now);
--    auto               local_time = *std::localtime(&time);
-+    std::tm            local_time {};
-+#ifdef _WIN32
-+    localtime_s(&local_time, &time);
-+#else
-+    localtime_r(&time, &local_time);
-+#endif
-     std::ostringstream ss;
-     ss << std::put_time(&local_time, format.c_str());
-     auto res = ss.str();
-diff --git a/common/jinja/value.cpp b/common/jinja/value.cpp
-index 6999ef7..9630889 100644
---- a/common/jinja/value.cpp
-+++ b/common/jinja/value.cpp
-@@ -373,7 +373,13 @@ const func_builtins & global_builtins() {
-             // get current time
-             // TODO: make sure this is the same behavior as Python's strftime
-             char buf[100];
--            if (std::strftime(buf, sizeof(buf), format.c_str(), std::localtime(&args.ctx.current_time))) {
-+            std::tm local_time {};
-+#ifdef _WIN32
-+            const bool converted = localtime_s(&local_time, &args.ctx.current_time) == 0;
-+#else
-+            const bool converted = localtime_r(&args.ctx.current_time, &local_time) != nullptr;
-+#endif
-+            if (converted && std::strftime(buf, sizeof(buf), format.c_str(), &local_time)) {
-                 return mk_val<value_string>(std::string(buf));
-             } else {
-                 throw raised_exception("strftime_now: failed to format time");
