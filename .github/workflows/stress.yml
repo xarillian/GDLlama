@@ -2,6 +2,7 @@ name: Stress
 
 on:
   workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
