@@ -4,7 +4,7 @@
 
 **Chorus** is a high-performance embeddable LLM runtime for native applications, simulations, and games.
 
-Chorus is built for interactive workloads where one model serves many independently scheduled agents. On an RTX 4070 Ti, the benchmark configuration below produces 114 tok/s for one active response and 1,421 aggregate tok/s across 40 concurrent responses, using 5.3 GiB of VRAM at 40-way concurrency.
+Chorus is built for interactive workloads where one model serves many independently scheduled agents. On an RTX 4070, the benchmark configuration below produces 114 tok/s for one active response and 1,421 aggregate tok/s across 40 concurrent responses, using 5.3 GiB of VRAM at 40-way concurrency.
 
 It runs local inference directly inside your process with continuous batching, priority scheduling, persistent conversation state, and a native C++ API and stable C ABI. No CUDA, Python runtime, cloud service, or separate inference server is required.
 
@@ -33,7 +33,7 @@ Supported features depend on the model; practical concurrency depends on the mod
 
 ## Performance
 
-These tests were performed using `google/gemma-4-E4B-it-qat-q4_0-gguf` on an RTX 4070 Ti (12 GB) through `llama.cpp`'s Vulkan backend, on a desktop with a browser and chat apps open. Each request is scoped to 64 output tokens (`max_tokens = 64`, `ignore_eos = true`). These are end-to-end Chorus measurements.
+These tests were performed using `google/gemma-4-E4B-it-qat-q4_0-gguf` on an RTX 4070 (12 GB) through `llama.cpp`'s Vulkan backend, on a desktop with a browser and chat apps open. Each request is scoped to 64 output tokens (`max_tokens = 64`, `ignore_eos = true`). These are end-to-end Chorus measurements.
 
 Performance results differ by hardware, model used, and settings.
 

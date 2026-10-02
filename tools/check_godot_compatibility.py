@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from fnmatch import fnmatchcase
 import hashlib
 import json
 import os
@@ -18,14 +19,21 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 ADDON = ROOT / "plugin/addons/chorus"
 
-# Stock 4.4.0 emits these even when importing an empty project without Chorus. The .NET editor
-# sometimes also reads an editor setting after EditorSettings has shut down.
+# Known Godot errors, as `fnmatch` patterns. Stock 4.4.0 emits these even when importing an empty
+# project without Chorus.
 GODOT_44_HEADLESS_ERRORS = {
     "ERROR: Do not use progress dialog (task) while flushing the message queue or using call_deferred()!",
     'ERROR: Condition "!tasks.has(p_task)" is true. Returning: canceled',
     'ERROR: Condition "!tasks.has(p_task)" is true.',
-    'ERROR: Condition "!EditorSettings::get_singleton() || !EditorSettings::get_singleton()->has_setting(p_setting)" is true. Returning: Variant()',
 }
+# .NET editors of every version sometimes read an editor setting before EditorSettings exists or
+# after it shuts down, in projects without Chorus too.
+GODOT_DOTNET_EDITOR_ERRORS = {
+    'ERROR: Condition "!EditorSettings::get_singleton() || !EditorSettings::get_singleton()->has_setting(p_setting)" is true. Returning: Variant()',
+    'ERROR: EditorSettings not instantiated yet when getting setting "*".',
+}
+# Godot colours its log on macOS, which would hide known errors from these lists.
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def main() -> int:
@@ -115,7 +123,7 @@ def check_engine(engine: str, directory: Path, repetitions: int, *, editor_only:
         environment[variable] = str(directory / name)
     version = subprocess.check_output([engine, "--version"], text=True, timeout=15).strip()
     steps = []
-    editor_errors = GODOT_44_HEADLESS_ERRORS if version.startswith("4.4.stable.") else set()
+    editor_errors = known_editor_errors(version)
     steps.extend(check_documentation(engine, directory, environment, editor_errors, show_editor=show_editor))
     if docs_only:
         return {"engine": engine, "version": version, "passed": all(step["passed"] for step in steps), "steps": steps}
@@ -142,6 +150,13 @@ def check_engine(engine: str, directory: Path, repetitions: int, *, editor_only:
     if imported["passed"]:
         steps.append(run(engine, suite, "runner", ["--scene", "res://tests_gdscript/runner.tscn"], environment, marker="FINAL SUMMARY: ALL TESTS PASSED (", timeout=360))
     return {"engine": engine, "version": version, "passed": all(step["passed"] for step in steps), "steps": steps}
+
+
+def known_editor_errors(version: str) -> set[str]:
+    errors = set(GODOT_44_HEADLESS_ERRORS) if version.startswith("4.4.stable.") else set()
+    if ".mono." in version:
+        errors |= GODOT_DOTNET_EDITOR_ERRORS
+    return errors
 
 
 def check_documentation(engine: str, directory: Path, environment: dict, editor_errors: set[str], *, show_editor: bool = False) -> list[dict]:
@@ -211,11 +226,11 @@ def run(engine: str, project: Path, name: str, arguments: list[str], environment
             code = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=timeout).returncode
         except subprocess.TimeoutExpired:
             code = "timeout"
-    text = log.read_text(errors="replace")
+    text = ANSI_ESCAPE.sub("", log.read_text(errors="replace"))
     passed = code == 0 and marker in text and "SCRIPT ERROR:" not in text and "Parse Error:" not in text and "leaked" not in text
     errors = [line.strip() for line in text.splitlines() if "ERROR:" in line]
     if clean:
-        passed = passed and not any(line not in (allowed_errors or set()) for line in errors)
+        passed = passed and all(any(fnmatchcase(line, known) for known in allowed_errors or ()) for line in errors)
     if ".stable.mono." in text:
         passed = passed and ".NET: hostfxr initialized" in text
     return {"command": command, "exit": code, "passed": passed, "engine_diagnostics": errors, "log": str(log)}
