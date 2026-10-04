@@ -1,6 +1,6 @@
 # ADR-005: Represent engine signals as typed variants
 
-Status: Accepted
+Status: Overwritten 2026-10-03 by [ADR-009](009-typed-terminal-signals.md)
 Date: 2026-08-30
 
 ## Context

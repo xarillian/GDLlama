@@ -18,9 +18,10 @@ Each record here explains one decision that binds future work on Chorus: its con
 | [002](002-asynchronous-request-lifecycle.md) | Keep inference asynchronous and fence every request lifecycle | Accepted | 2026-07-11 |
 | [003](003-domain-contract-dependencies.md) | Point dependencies toward domain contracts | Accepted | 2026-07-18 |
 | [004](004-structured-logging.md) | Route structured log records to host-owned presentation | Accepted | 2026-08-16 |
-| [005](005-typed-engine-signals.md) | Represent engine signals as typed variants | Accepted | 2026-08-30 |
+| [005](005-typed-engine-signals.md) | Represent engine signals as typed variants | Overwritten | 2026-08-30 |
 | [006](006-express-public-generation-configuration-as-caller-intent.md) | Express public generation configuration as caller intent | Proposed | 2026-09-08 |
 | [007](007-store-defaults-in-project-settings.md) | Persist generation defaults as portable JSON | Proposed | 2026-09-09 |
 | [008](008-parallel-request-preparation.md) | Prepare requests in parallel and publish them in admission order | Proposed | 2026-09-30 |
+| [009](009-typed-terminal-signals.md) | End every request with a typed terminal signal that carries its result | Accepted | 2026-10-03 |
 
 Add a row with each new record, and update a row's status when its record changes.
