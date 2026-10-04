@@ -95,6 +95,10 @@ Tests should not be tautologies. Ensure tests are written where the effect immed
 
 Not every change needs a unit test, and too many unit tests is a lousy signal. Prefer functional and end-to-end tests. Cover both the happy and the unhappy paths. If a bug would slip past those, an additional unit test is justified. A unit test is also justified for regressions or TDD. Do not blindly add tests. If coverage already exists for a changed piece of code, a test is _very likely_ not necessary.
 
+## Builds
+
+Prefer _distributing_ GPU builds: Vulkan on Linux and Windows, Metal on Apple Silicon.
+
 ## Workflow Docs
 
 Specs, plans, process ledgers, and any other agent-workflow files go into a `.gitignored` location. One of:
