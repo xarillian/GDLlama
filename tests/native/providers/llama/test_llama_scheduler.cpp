@@ -12,6 +12,7 @@ class LlamaSchedulerModelTest : public ChorusModelTest {};
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <map>
@@ -29,6 +30,7 @@ struct SchedulerObservation {
     std::condition_variable cv;
     std::vector<Chorus::LlamaBatchRecord> batches;
     std::map<Chorus::RequestId, std::vector<Chorus::ChorusSignal>> terminals;
+    std::map<Chorus::RequestId, size_t> signal_counts;
     std::vector<Chorus::RequestId> terminal_order;
     Chorus::RequestId gate_request_id = -1;
     bool gate_seen = false;
@@ -50,10 +52,10 @@ struct SchedulerObservation {
     }
 
     void handle(const Chorus::ChorusSignal& signal) {
-        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) &&
-            !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
-            return;
         std::lock_guard<std::mutex> lock(mutex);
+        ++signal_counts[signal.request_id];
+        if (!signal.is_terminal())
+            return;
         terminals[signal.request_id].push_back(signal);
         terminal_order.push_back(signal.request_id);
         cv.notify_all();
@@ -151,7 +153,7 @@ TEST_F(LlamaSchedulerModelTest, Malformed_sampler_requests_terminate_and_engine_
         std::get<Chorus::ChorusSignal::Error>(state.terminals[2][0].event).code, Chorus::ChorusError::InvalidRequest
     );
     ASSERT_EQ(state.terminals[3].size(), size_t{1});
-    EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[3][0].event));
+    EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(state.terminals[3][0].event));
 }
 
 TEST_F(LlamaSchedulerModelTest, Unexpected_batch_exception_fences_admission_and_drains_active_and_queued) {
@@ -231,7 +233,7 @@ TEST_F(LlamaSchedulerModelTest, Unexpected_admission_exception_retains_preparing
     EXPECT_FALSE(scheduler.is_healthy());
     scheduler.shutdown();
     ASSERT_EQ(state.terminals[1].size(), size_t{1});
-    EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[1][0].event));
+    EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(state.terminals[1][0].event));
     for (int id : {2, 3, 4}) {
         ASSERT_EQ(state.terminals[id].size(), size_t{1});
         EXPECT_EQ(
@@ -285,7 +287,7 @@ TEST_F(LlamaSchedulerModelTest, Preparing_cancellation_is_consumed_and_late_or_u
     EXPECT_EQ(std::get<Chorus::ChorusSignal::Error>(state.terminals[1][0].event).code, Chorus::ChorusError::Cancelled);
     for (int id : {2, 3}) {
         ASSERT_EQ(state.terminals[id].size(), size_t{1});
-        EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[id][0].event));
+        EXPECT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(state.terminals[id][0].event));
     }
 }
 
@@ -644,6 +646,20 @@ TEST_F(LlamaSchedulerModelTest, Embedding_batches_respect_n_ubatch_and_cancellat
             batched_embeddings = true;
     }
     ASSERT_TRUE(batched_embeddings);
+    for (const auto id : {10, 11, 12, 13}) {
+        SCOPED_TRACE(id);
+        ASSERT_EQ(state.signal_counts[id], size_t{1});
+        ASSERT_EQ(state.terminals[id].size(), size_t{1});
+        const auto* embedding = std::get_if<Chorus::ChorusSignal::Embedding>(&state.terminals[id].front().event);
+        ASSERT_NE(embedding, nullptr);
+        EXPECT_EQ(embedding->values.size(), size_t{768});
+        double norm = 0.0;
+        for (float value : embedding->values) {
+            ASSERT_TRUE(std::isfinite(value));
+            norm += static_cast<double>(value) * value;
+        }
+        EXPECT_NEAR(norm, 1.0, 1e-5);
+    }
 }
 
 TEST_F(LlamaSchedulerModelTest, Embeddings_cancel_while_queued_and_admitted) {
@@ -681,6 +697,7 @@ TEST_F(LlamaSchedulerModelTest, Embeddings_cancel_while_queued_and_admitted) {
 
     {
         std::lock_guard<std::mutex> lock(queued_state.mutex);
+        ASSERT_EQ(queued_state.signal_counts[queued.id], size_t{1});
         ASSERT_EQ(queued_state.terminals[queued.id].size(), size_t{1});
         const auto* error = std::get_if<Chorus::ChorusSignal::Error>(&queued_state.terminals[queued.id][0].event);
         ASSERT_TRUE(error != nullptr && error->code == Chorus::ChorusError::Cancelled);
@@ -706,6 +723,7 @@ TEST_F(LlamaSchedulerModelTest, Embeddings_cancel_while_queued_and_admitted) {
     admitted_engine.shutdown();
 
     std::lock_guard<std::mutex> lock(admitted_state.mutex);
+    ASSERT_EQ(admitted_state.signal_counts[admitted.id], size_t{1});
     ASSERT_EQ(admitted_state.terminals[admitted.id].size(), size_t{1});
     const auto* error = std::get_if<Chorus::ChorusSignal::Error>(&admitted_state.terminals[admitted.id][0].event);
     ASSERT_TRUE(error != nullptr && error->code == Chorus::ChorusError::Cancelled);
@@ -801,8 +819,7 @@ TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
     big.prompt = huge_prompt;
     big.gen_config.max_tokens = 8;
     big.on_event = [&](const Chorus::ChorusSignal& sig) {
-        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) &&
-            !std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
+        if (!sig.is_terminal())
             return;
         std::lock_guard<std::mutex> lock(state.mutex);
         state.oversized_terminals.push_back(sig);
@@ -831,10 +848,7 @@ TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
         std::lock_guard<std::mutex> lock(state.mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
             ++state.recovery_tokens;
-        } else if (
-            std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)
-        ) {
+        } else if (sig.is_terminal()) {
             state.recovery_terminals.push_back(sig);
             state.cv.notify_all();
         }
@@ -860,7 +874,7 @@ TEST_F(LlamaSchedulerModelTest, Transient_decode_failure_recovers) {
 
     ASSERT_TRUE(recovery_finished);
     ASSERT_EQ(state.recovery_terminals.size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.recovery_terminals[0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(state.recovery_terminals[0].event));
     ASSERT_TRUE(state.recovery_tokens > 0);
 }
 
@@ -882,8 +896,7 @@ TEST_F(LlamaSchedulerModelTest, Higher_priority_request_served_first) {
 
     auto make_handler = [&](int64_t id) {
         return [&, id](const Chorus::ChorusSignal& sig) {
-            if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-                std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+            if (sig.is_terminal()) {
                 std::lock_guard<std::mutex> lock(order_mutex);
                 completion_order.push_back(id);
             }
@@ -958,10 +971,7 @@ TEST_F(LlamaSchedulerModelTest, Sequence_id_reusable_after_request_completes) {
             std::lock_guard<std::mutex> lock(result->mutex);
             if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
                 ++result->tokens;
-            } else if (
-                std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-                std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)
-            ) {
+            } else if (sig.is_terminal()) {
                 result->terminals.push_back(sig);
                 result->cv.notify_all();
             }
@@ -991,7 +1001,7 @@ TEST_F(LlamaSchedulerModelTest, Sequence_id_reusable_after_request_completes) {
     ASSERT_TRUE(second_finished);
     for (const auto& result : {first, second}) {
         ASSERT_EQ(result->terminals.size(), size_t{1});
-        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(result->terminals[0].event));
+        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(result->terminals[0].event));
         ASSERT_TRUE(result->tokens > 0);
     }
 }
@@ -1055,7 +1065,7 @@ TEST_F(LlamaSchedulerModelTest, Request_moved_into_a_retired_sequence_slot_conti
         state.release();
         const bool finished = state.wait_for_terminals({blocker.id, anchor.id, moving.id, short_request.id});
         engine.shutdown();
-        if (!finished || !std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[moving.id][0].event))
+        if (!finished || !std::holds_alternative<Chorus::ChorusSignal::Completion>(state.terminals[moving.id][0].event))
             return std::optional<std::string>{};
         return std::optional<std::string>{text};
     };
@@ -1103,8 +1113,7 @@ TEST_F(LlamaSchedulerModelTest, Batch_demand_beyond_capacity_is_clamped_not_over
         req.prompt = long_prompt;
         req.gen_config.max_tokens = 4;
         req.on_event = [&](const Chorus::ChorusSignal& sig) {
-            if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) &&
-                !std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event))
+            if (!sig.is_terminal())
                 return;
             std::lock_guard<std::mutex> lock(state.mutex);
             state.terminals[sig.request_id].push_back(sig);
@@ -1139,10 +1148,7 @@ TEST_F(LlamaSchedulerModelTest, Batch_demand_beyond_capacity_is_clamped_not_over
         std::lock_guard<std::mutex> lock(state.mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
             ++state.recovery_tokens;
-        } else if (
-            std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)
-        ) {
+        } else if (sig.is_terminal()) {
             state.terminals[sig.request_id].push_back(sig);
             state.cv.notify_all();
         }
@@ -1170,6 +1176,6 @@ TEST_F(LlamaSchedulerModelTest, Batch_demand_beyond_capacity_is_clamped_not_over
     }
     ASSERT_TRUE(recovery_finished);
     ASSERT_EQ(state.terminals[small.id].size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.terminals[small.id][0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(state.terminals[small.id][0].event));
     ASSERT_TRUE(state.recovery_tokens > 0);
 }

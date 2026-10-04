@@ -36,6 +36,7 @@ class Conversations {
         std::string text;
         int32_t processed = 0;
         bool completed = false;
+        Chorus::GenerationUsage usage;
         std::vector<float> first_logits;
     };
 
@@ -103,10 +104,12 @@ class Conversations {
             std::lock_guard<std::mutex> lock(_mutex);
             if (const auto* token = std::get_if<Chorus::ChorusSignal::Token>(&signal.event))
                 _turns[id].text += token->text;
-            else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
-                _turns[id].completed = _finished[id] = true;
-            else if (std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+            if (signal.is_terminal()) {
+                _turns[id].completed = std::holds_alternative<Chorus::ChorusSignal::Completion>(signal.event);
+                if (const auto* completion = std::get_if<Chorus::ChorusSignal::Completion>(&signal.event))
+                    _turns[id].usage = completion->usage;
                 _finished[id] = true;
+            }
             _cv.notify_all();
         };
         _engine.submit_request(request);
@@ -193,9 +196,15 @@ TEST_F(LlamaSessionCacheModelTest, A_conversations_next_turn_processes_only_its_
     const std::string second = first + reply.text + "<end_of_turn>\n" + user_turn("And what happened at the keep?");
 
     const auto continued = npc.say("guard", second);
+    ASSERT_TRUE(continued.completed);
+    EXPECT_GT(continued.usage.cached_prompt_tokens, 0);
+    EXPECT_EQ(
+        continued.usage.prompt_tokens - continued.usage.cached_prompt_tokens + continued.usage.generated_tokens - 1,
+        continued.processed
+    );
     const auto reprocessed = fresh(second);
 
-    ASSERT_TRUE(reply.completed && continued.completed);
+    ASSERT_TRUE(reply.completed);
     ASSERT_LT(continued.processed * 3, reprocessed.processed);
     ASSERT_TRUE(predicts_alike(continued, reprocessed));
 }

@@ -138,13 +138,11 @@ class InferenceEngine {
     virtual std::optional<RequestRejection> validate_request(const ChorusRequest& request) const = 0;
 
     /*
-     * Starts work on `chorus_request`.
+     * Starts work under `Chorus::ChorusSignal`'s provider contract.
      *
-     * Exactly one terminal signal, `ChorusSignal::Stop` or
-     * `ChorusSignal::Error`, reaches `ChorusRequest::on_event`. It may arrive
-     * inline before this method returns or later from an engine thread. The
-     * request may outlive this call, so failures are signalled on
-     * `ChorusRequest::on_event` and not returned.
+     * Signals reach `Chorus::ChorusRequest::on_event` inline before this method
+     * returns or later from an engine thread. The request may outlive this call,
+     * so failures are signalled on that callback and not returned.
      */
     virtual void submit_request(Chorus::ChorusRequest chorus_request) = 0;
 

@@ -8,6 +8,22 @@
 
 namespace Chorus {
 namespace {
+std::vector<std::string_view> echo_chunks(std::string_view text) {
+    std::vector<std::string_view> chunks;
+    for (size_t start = 0; start < text.size();) {
+        size_t end = text.find(' ', start);
+        if (end == std::string_view::npos) {
+            end = text.size();
+        } else {
+            while (end < text.size() && text[end] == ' ')
+                ++end;
+        }
+        chunks.push_back(text.substr(start, end - start));
+        start = end;
+    }
+    return chunks;
+}
+
 struct QueuedCancelCallbackFrame {
     EchoEngine* engine;
     QueuedCancelCallbackFrame* previous;
@@ -373,19 +389,14 @@ void EchoEngine::worker_loop() {
             continue;
         }
 
+        ChorusSignal::Event success = ChorusSignal::Completion{};
         if (req.type == RequestType::Embedding) {
-            bool cancelled = false;
-            {
-                std::lock_guard<std::mutex> lock(_queue_mutex);
-                cancelled = _cancelled_ids.count(req.id) > 0 || !_running;
-            }
-            if (!cancelled) {
-                ChorusSignal embedding{req.id, ChorusSignal::Embedding{make_echo_embedding(req.prompt)}};
-                req.on_event(embedding);
-            }
-        } else {
+            success = ChorusSignal::Embedding{make_echo_embedding(req.prompt)};
+        } else if (req.gen_config.max_tokens != 0) {
             const std::string text = select_echo_text(req);
-            emit_echo_tokens(req, text);
+            const auto chunks = echo_chunks(text);
+            const int64_t emitted = emit_echo_tokens(req, chunks);
+            success = ChorusSignal::Completion{GenerationUsage{static_cast<int64_t>(chunks.size()), 0, emitted}};
         }
 
         bool cancelled = false;
@@ -397,7 +408,7 @@ void EchoEngine::worker_loop() {
 
         ChorusSignal terminal =
             cancelled ? ChorusSignal{req.id, ChorusSignal::Error{ChorusError::Cancelled, "Request cancelled."}}
-                      : ChorusSignal{req.id, ChorusSignal::Stop{}};
+                      : ChorusSignal{req.id, std::move(success)};
         req.on_event(terminal);
     }
 }
@@ -412,35 +423,24 @@ std::string EchoEngine::select_echo_text(const ChorusRequest& request) {
     return joined_text(request.messages.back().content).value();
 }
 
-void EchoEngine::emit_echo_tokens(const ChorusRequest& request, const std::string& text) {
-    // Split only on spaces and retain each run so concatenating the emitted
-    // `Chorus::ChorusSignal::Token` content reconstructs the input exactly.
-    size_t start = 0;
-    int32_t chunks = 0;
+int64_t EchoEngine::emit_echo_tokens(const ChorusRequest& request, const std::vector<std::string_view>& chunks) {
+    int64_t emitted = 0;
     const int32_t max_chunks = request.gen_config.max_tokens.value_or(-1);
-    while (start < text.size() && (max_chunks < 0 || chunks < max_chunks)) {
+    for (const auto chunk : chunks) {
+        if (max_chunks >= 0 && emitted >= max_chunks)
+            break;
         {
             std::lock_guard<std::mutex> lock(_queue_mutex);
             if (_cancelled_ids.count(request.id) || !_running)
                 break;
         }
-
-        size_t end = text.find(' ', start);
-        if (end == std::string::npos) {
-            end = text.size();
-        } else {
-            while (end < text.size() && text[end] == ' ')
-                ++end;
-        }
-
         ChorusSignal token_signal{
             request.id,
-            ChorusSignal::Token{TokenChannel::Content, text.substr(start, end - start)},
+            ChorusSignal::Token{TokenChannel::Content, std::string(chunk)},
         };
         request.on_event(token_signal);
-
-        start = end;
-        ++chunks;
+        ++emitted;
     }
+    return emitted;
 }
 } // namespace Chorus

@@ -27,7 +27,7 @@ struct EngineUnderTest {
     // Emits at least two Token signals; the suite paces it by blocking inside
     // the callback rather than by trusting a clock.
     std::function<void(Chorus::ChorusRequest&)> shape_long_request;
-    // Runs to its own Stop quickly.
+    // Completes a generation promptly.
     std::function<void(Chorus::ChorusRequest&)> shape_short_request;
 };
 

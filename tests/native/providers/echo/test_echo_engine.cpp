@@ -54,7 +54,7 @@ TEST(EchoEngine, Echo_progress_cancellation_leaves_no_worker_and_allows_reload) 
     engine.shutdown();
 }
 
-TEST(EchoEngine, Echo_streams_prompt_word_by_word_then_stops) {
+TEST(EchoEngine, Echo_streams_prompt_word_by_word_then_completes) {
     std::mutex sig_mutex;
     std::vector<Chorus::ChorusSignal> sigs;
 
@@ -75,7 +75,7 @@ TEST(EchoEngine, Echo_streams_prompt_word_by_word_then_stops) {
     while (timeout_ms > 0) {
         {
             std::lock_guard<std::mutex> lock(sig_mutex);
-            if (!sigs.empty() && std::holds_alternative<Chorus::ChorusSignal::Stop>(sigs.back().event))
+            if (!sigs.empty() && sigs.back().is_terminal())
                 break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -83,7 +83,7 @@ TEST(EchoEngine, Echo_streams_prompt_word_by_word_then_stops) {
     }
 
     std::lock_guard<std::mutex> lock(sig_mutex);
-    // 3 words -> 3 Token signals + 1 Stop, all carrying the request id.
+    // Three chunks and a completion, all carrying the request id.
     ASSERT_EQ(sigs.size(), 4);
     std::string reassembled;
     for (size_t i = 0; i + 1 < sigs.size(); ++i) {
@@ -92,12 +92,10 @@ TEST(EchoEngine, Echo_streams_prompt_word_by_word_then_stops) {
         reassembled += std::get<Chorus::ChorusSignal::Token>(sigs[i].event).text;
     }
     ASSERT_TRUE(reassembled == "hello chorus seam");
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(sigs.back().event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(sigs.back().event));
     ASSERT_EQ(sigs.back().request_id, 7);
-    const size_t terminals = std::count_if(sigs.begin(), sigs.end(), [](const auto& signal) {
-        return std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-               std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event);
-    });
+    const size_t terminals =
+        std::count_if(sigs.begin(), sigs.end(), [](const auto& signal) { return signal.is_terminal(); });
     ASSERT_EQ(terminals, size_t{1});
 
     engine.shutdown();
@@ -125,13 +123,13 @@ TEST(EchoEngine, Echo_embedding_is_deterministic_normalized_and_lexical) {
         {
             std::unique_lock<std::mutex> lock(mutex);
             EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(2), [&] {
-                return !signals.empty() && std::holds_alternative<Chorus::ChorusSignal::Stop>(signals.back().event);
+                return !signals.empty() && signals.back().is_terminal();
             }));
         }
         engine.shutdown();
-        EXPECT_EQ(signals.size(), size_t{2});
+        EXPECT_EQ(signals.size(), size_t{1});
         if (signals.empty() || !std::holds_alternative<Chorus::ChorusSignal::Embedding>(signals[0].event)) {
-            ADD_FAILURE() << "Echo did not emit an embedding before Stop.";
+            ADD_FAILURE() << "Echo did not emit an embedding terminal.";
             return std::vector<float>{};
         }
         return std::get<Chorus::ChorusSignal::Embedding>(signals[0].event).values;
@@ -336,7 +334,7 @@ TEST(EchoEngine, Echo_max_tokens_counts_word_chunks) {
         {
             std::unique_lock<std::mutex> lock(mutex);
             if (!cv.wait_for(lock, std::chrono::seconds(2), [&] {
-                    return !signals.empty() && std::holds_alternative<Chorus::ChorusSignal::Stop>(signals.back().event);
+                    return !signals.empty() && signals.back().is_terminal();
                 })) {
                 ADD_FAILURE() << "Timed out waiting for Echo generation.";
                 lock.unlock();
@@ -350,23 +348,40 @@ TEST(EchoEngine, Echo_max_tokens_counts_word_chunks) {
 
     const auto zero = run(10, 0);
     ASSERT_EQ(zero.size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(zero[0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(zero[0].event));
+    const auto& zero_usage = std::get<Chorus::ChorusSignal::Completion>(zero[0].event).usage;
+    EXPECT_EQ(zero_usage.prompt_tokens, 0);
+    EXPECT_EQ(zero_usage.cached_prompt_tokens, 0);
+    EXPECT_EQ(zero_usage.generated_tokens, 0);
 
     const auto one = run(11, 1);
     ASSERT_EQ(one.size(), size_t{2});
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Token>(one[0].event));
     ASSERT_EQ(std::get<Chorus::ChorusSignal::Token>(one[0].event).text, std::string("one "));
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(one[1].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(one[1].event));
+    const auto& one_usage = std::get<Chorus::ChorusSignal::Completion>(one[1].event).usage;
+    EXPECT_EQ(one_usage.prompt_tokens, 3);
+    EXPECT_EQ(one_usage.cached_prompt_tokens, 0);
+    EXPECT_EQ(one_usage.generated_tokens, 1);
 
     const auto oversized = run(12, 8);
     ASSERT_EQ(oversized.size(), size_t{4});
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Token>(oversized[0].event));
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Token>(oversized[1].event));
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Token>(oversized[2].event));
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(oversized[3].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(oversized[3].event));
+    const auto& oversized_usage = std::get<Chorus::ChorusSignal::Completion>(oversized[3].event).usage;
+    EXPECT_EQ(oversized_usage.prompt_tokens, 3);
+    EXPECT_EQ(oversized_usage.cached_prompt_tokens, 0);
+    EXPECT_EQ(oversized_usage.generated_tokens, 3);
 
     const auto unbounded = run(13, -1);
     ASSERT_EQ(unbounded.size(), size_t{4});
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(unbounded.back().event));
+    const auto& unbounded_usage = std::get<Chorus::ChorusSignal::Completion>(unbounded.back().event).usage;
+    EXPECT_EQ(unbounded_usage.prompt_tokens, 3);
+    EXPECT_EQ(unbounded_usage.cached_prompt_tokens, 0);
+    EXPECT_EQ(unbounded_usage.generated_tokens, 3);
 }
 
 TEST(EchoEngine, Echo_rejects_max_tokens_below_negative_sentinel) {
@@ -414,7 +429,7 @@ TEST(EchoEngine, Echo_cancels_active_request_reentrantly_once) {
     {
         std::unique_lock<std::mutex> lock(mutex);
         terminal_reached = cv.wait_for(lock, std::chrono::seconds(2), [&] {
-            return !signals.empty() && std::holds_alternative<Chorus::ChorusSignal::Error>(signals.back().event);
+            return !signals.empty() && signals.back().is_terminal();
         });
     }
     engine.shutdown();
@@ -425,10 +440,8 @@ TEST(EchoEngine, Echo_cancels_active_request_reentrantly_once) {
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(signals[1].event));
     ASSERT_TRUE(std::get<Chorus::ChorusSignal::Error>(signals[1].event).code == Chorus::ChorusError::Cancelled);
     ASSERT_EQ(signals[1].request_id, request.id);
-    const size_t terminals = std::count_if(signals.begin(), signals.end(), [](const auto& signal) {
-        return std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-               std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event);
-    });
+    const size_t terminals =
+        std::count_if(signals.begin(), signals.end(), [](const auto& signal) { return signal.is_terminal(); });
     ASSERT_EQ(terminals, size_t{1});
 }
 
@@ -498,8 +511,7 @@ TEST(EchoEngine, Echo_cancels_queued_request_without_affecting_another) {
         std::unique_lock<std::mutex> lock(mutex);
         ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(2), [&] {
             for (const auto& signal : signals)
-                if (signal.request_id == survivor.id &&
-                    std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
+                if (signal.request_id == survivor.id && signal.is_terminal())
                     return true;
             return false;
         }));
@@ -511,11 +523,12 @@ TEST(EchoEngine, Echo_cancels_queued_request_without_affecting_another) {
     bool survivor_stopped = false;
     for (const auto& signal : signals) {
         if (signal.request_id == cancelled.id) {
-            cancelled_terminals += std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event);
-            cancelled_nonterminals += !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event);
+            cancelled_terminals += signal.is_terminal();
+            cancelled_nonterminals += !signal.is_terminal();
+            ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event));
             ASSERT_TRUE(std::get<Chorus::ChorusSignal::Error>(signal.event).code == Chorus::ChorusError::Cancelled);
         }
-        if (signal.request_id == survivor.id && std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
+        if (signal.request_id == survivor.id && std::holds_alternative<Chorus::ChorusSignal::Completion>(signal.event))
             survivor_stopped = true;
     }
     ASSERT_EQ(cancelled_terminals, size_t{1});
@@ -612,7 +625,7 @@ TEST(EchoEngine, Echo_shutdown_drains_active_and_queued_requests_before_returnin
             queued_tokens += signal.request_id == queued.id;
             continue;
         }
-        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event)) {
+        if (std::holds_alternative<Chorus::ChorusSignal::Completion>(signal.event)) {
             ++stops;
             continue;
         }
@@ -836,6 +849,7 @@ TEST(EchoEngine, Echo_messages_echoes_last_user_message) {
     std::string text;
     bool stopped = false;
     size_t terminals = 0;
+    Chorus::GenerationUsage usage;
     Chorus::ChorusRequest request;
     request.id = 1;
     request.messages = {
@@ -848,11 +862,10 @@ TEST(EchoEngine, Echo_messages_echoes_last_user_message) {
         std::lock_guard<std::mutex> lock(mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
             text += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
-        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event)) {
-            stopped = true;
-            ++terminals;
-            cv.notify_all();
-        } else if (std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+        if (sig.is_terminal()) {
+            stopped = std::holds_alternative<Chorus::ChorusSignal::Completion>(sig.event);
+            if (const auto* completion = std::get_if<Chorus::ChorusSignal::Completion>(&sig.event))
+                usage = completion->usage;
             ++terminals;
             cv.notify_all();
         }
@@ -869,6 +882,9 @@ TEST(EchoEngine, Echo_messages_echoes_last_user_message) {
     ASSERT_EQ(terminals, size_t{1});
     ASSERT_TRUE(stopped); // completed, not cancelled
     ASSERT_EQ(text, std::string("second question"));
+    EXPECT_EQ(usage.prompt_tokens, 2);
+    EXPECT_EQ(usage.cached_prompt_tokens, 0);
+    EXPECT_EQ(usage.generated_tokens, 2);
 }
 
 // Echo's binding to the shared port contract. Model-free, so it runs in every

@@ -14,6 +14,7 @@
 - Cancel queued or active requests.
 - Query whether a request is active and which active request owns a session.
 - Deliver exactly one terminal result for every accepted request.
+- Report prompt, cached prompt and generated token counts on completed generations.
 - Release the loaded model before loading its replacement.
 
 ### Structured Output
@@ -97,7 +98,7 @@
 ## Priority Backlog
 ### Request Lifecycle
 - Report whether generation completed through EOS, a caller stop marker, or output-budget exhaustion.
-- Report terminal token usage and monotonic queue, preparation, and inference timings.
+- Report monotonic queue, preparation, and inference timings.
 - Expire stale requests at an optional monotonic deadline with an explicit terminal outcome.
 - Configure a runtime-wide pending-request limit and report overload distinctly from invalid input.
 - Inspect active work and report why admitted requests are waiting.

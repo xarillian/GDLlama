@@ -374,7 +374,7 @@ std::optional<LlamaScheduler::PendingSignal> LlamaScheduler::resolve_pending_req
         pending.resolved.emplace(std::get<Chorus::ResolvedLlamaGeneration>(std::move(resolution)));
     }
     if (pending.resolved->max_tokens == 0)
-        return PendingSignal{pending.request, Chorus::ChorusSignal::Stop{}};
+        return PendingSignal{pending.request, Chorus::ChorusSignal::Completion{}};
     return std::nullopt;
 }
 
@@ -567,6 +567,7 @@ void LlamaScheduler::claim_sequence_id(Sequence& sequence) {
         sequence.id = *parked;
         const int32_t kept = reuse_parked_prefix(*parked, entry.tokens, sequence.prompt_tokens);
         sequence.n_past = kept;
+        sequence.reused_prompt_tokens = kept;
         sequence.prompt_cursor = static_cast<size_t>(kept);
         sequence.cached_tokens.assign(sequence.prompt_tokens.begin(), sequence.prompt_tokens.begin() + kept);
         return;
@@ -930,11 +931,8 @@ void LlamaScheduler::process_embedding_plan(const BatchPlan& plan) {
                 Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "Embedding output was missing or invalid."},
                 signals
             );
-        else {
-            const Chorus::ChorusRequest request = found->second.request;
-            signals.emplace_back(request, Chorus::ChorusSignal::Embedding{std::move(values)});
-            retire_sequence(delta.sequence_id, Chorus::ChorusSignal::Stop{}, signals);
-        }
+        else
+            retire_sequence(delta.sequence_id, Chorus::ChorusSignal::Embedding{std::move(values)}, signals);
     }
     emit_signals(std::move(signals));
 }
@@ -1138,7 +1136,10 @@ void LlamaScheduler::complete_sequence(int sequence_id, bool flush_pending_text)
                     Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, std::move(filtered.safe_text)}
                 );
         }
-        retire_sequence(sequence_id, Chorus::ChorusSignal::Stop{}, signals);
+        const Chorus::GenerationUsage usage{
+            static_cast<int64_t>(sequence.prompt_tokens.size()), sequence.reused_prompt_tokens, sequence.n_decoded
+        };
+        retire_sequence(sequence_id, Chorus::ChorusSignal::Completion{usage}, signals);
     }
     emit_signals(std::move(signals));
 }
@@ -1170,8 +1171,8 @@ void LlamaScheduler::fail_all(Chorus::ChorusError code) {
 }
 
 void LlamaScheduler::emit_signal(PendingSignal pending) {
-    if (std::holds_alternative<Chorus::ChorusSignal::Stop>(pending.event) ||
-        std::holds_alternative<Chorus::ChorusSignal::Error>(pending.event)) {
+    Chorus::ChorusSignal signal{pending.request.id, std::move(pending.event)};
+    if (signal.is_terminal()) {
         std::lock_guard<std::mutex> lock(queue_mutex);
         if (!_terminal_deliveries.erase(pending.request.id))
             return;
@@ -1179,7 +1180,6 @@ void LlamaScheduler::emit_signal(PendingSignal pending) {
     }
     if (!pending.request.on_event)
         return;
-    Chorus::ChorusSignal signal{pending.request.id, std::move(pending.event)};
     pending.request.on_event(signal);
 }
 void LlamaScheduler::emit_signals(std::vector<PendingSignal> pending) {
