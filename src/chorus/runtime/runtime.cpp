@@ -430,81 +430,87 @@ void ChorusRuntime::append_signal_events(const ChorusSignal& signal, std::vector
     if (request == _live_requests.end())
         return;
     LiveRequest& live = request->second;
-    if (const auto* embedding = std::get_if<ChorusSignal::Embedding>(&signal.event)) {
-        if (live.operation != Operation::Embed) {
-            finish_turn(live, TurnOutcome::Errored, "");
-            events.push_back(
-                {id,
-                 live.session_id,
-                 RuntimeEvent::Kind::Error,
-                 "Provider emitted an embedding for a generation request.",
-                 ChorusError::Unknown}
-            );
-            retire_request(id);
-            return;
-        }
-        live.embedding = embedding->values;
-        return;
-    }
-    if (const auto* token = std::get_if<ChorusSignal::Token>(&signal.event)) {
-        if (live.operation != Operation::Generate) {
-            events.push_back(
-                {id,
-                 live.session_id,
-                 RuntimeEvent::Kind::Error,
-                 "Provider emitted a token for an embedding request.",
-                 ChorusError::Unknown}
-            );
-            retire_request(id);
-            return;
-        }
-        if (token->channel == TokenChannel::Reasoning) {
-            live.accumulated_reasoning += token->text;
-            if (live.streaming)
-                events.push_back({id, live.session_id, RuntimeEvent::Kind::StreamedReasoningToken, token->text});
-        } else {
-            live.accumulated_text += token->text;
-            if (live.streaming)
-                events.push_back({id, live.session_id, RuntimeEvent::Kind::StreamedToken, token->text});
-        }
-        return;
-    }
-    if (std::holds_alternative<ChorusSignal::Stop>(signal.event)) {
-        if (live.operation == Operation::Embed) {
-            if (!live.embedding) {
-                events.push_back(
-                    {id,
-                     live.session_id,
-                     RuntimeEvent::Kind::Error,
-                     "Provider stopped an embedding request without a vector.",
-                     ChorusError::Unknown}
-                );
-            } else {
-                RuntimeEvent event{id, live.session_id, RuntimeEvent::Kind::Embedding};
-                event.embedding = std::move(*live.embedding);
-                events.push_back(std::move(event));
-            }
-            retire_request(id);
-            return;
-        }
-        const auto completed_id =
-            live.replaced_reply ? std::optional<MessageId>{live.replaced_reply->value.id} : live.reserved_assistant_id;
-        finish_turn(live, TurnOutcome::Completed, live.accumulated_text);
-        RuntimeEvent event{id, live.session_id, RuntimeEvent::Kind::Complete, std::move(live.accumulated_text)};
-        event.reasoning = std::move(live.accumulated_reasoning);
-        event.message_id = completed_id;
-        events.push_back(std::move(event));
+    std::visit([&](const auto& event) { append_signal_event(id, live, event, events); }, signal.event);
+}
+
+void ChorusRuntime::append_signal_event(
+    RequestId id, LiveRequest& live, const ChorusSignal::Token& token, std::vector<RuntimeEvent>& events
+) {
+    if (live.operation != Operation::Generate) {
+        events.push_back(
+            {id,
+             live.session_id,
+             RuntimeEvent::Kind::Error,
+             "Provider emitted a token for an embedding request.",
+             ChorusError::Unknown}
+        );
         retire_request(id);
         return;
     }
-    if (const auto* error = std::get_if<ChorusSignal::Error>(&signal.event)) {
-        if (live.operation == Operation::Generate)
-            finish_turn(
-                live, error->code == ChorusError::Cancelled ? TurnOutcome::Cancelled : TurnOutcome::Errored, ""
-            );
-        events.push_back({id, live.session_id, RuntimeEvent::Kind::Error, error->message, error->code});
-        retire_request(id);
+    if (token.channel == TokenChannel::Reasoning) {
+        live.accumulated_reasoning += token.text;
+        if (live.streaming)
+            events.push_back({id, live.session_id, RuntimeEvent::Kind::StreamedReasoningToken, token.text});
+    } else {
+        live.accumulated_text += token.text;
+        if (live.streaming)
+            events.push_back({id, live.session_id, RuntimeEvent::Kind::StreamedToken, token.text});
     }
+}
+
+void ChorusRuntime::append_signal_event(
+    RequestId id, LiveRequest& live, const ChorusSignal::Completion& completion, std::vector<RuntimeEvent>& events
+) {
+    if (live.operation != Operation::Generate) {
+        events.push_back(
+            {id,
+             live.session_id,
+             RuntimeEvent::Kind::Error,
+             "Provider emitted a completion for an embedding request.",
+             ChorusError::Unknown}
+        );
+        retire_request(id);
+        return;
+    }
+    const auto completed_id =
+        live.replaced_reply ? std::optional<MessageId>{live.replaced_reply->value.id} : live.reserved_assistant_id;
+    finish_turn(live, TurnOutcome::Completed, live.accumulated_text);
+    RuntimeEvent event{id, live.session_id, RuntimeEvent::Kind::Complete, std::move(live.accumulated_text)};
+    event.reasoning = std::move(live.accumulated_reasoning);
+    event.message_id = completed_id;
+    event.usage = completion.usage;
+    events.push_back(std::move(event));
+    retire_request(id);
+}
+
+void ChorusRuntime::append_signal_event(
+    RequestId id, LiveRequest& live, const ChorusSignal::Embedding& embedding, std::vector<RuntimeEvent>& events
+) {
+    if (live.operation != Operation::Embed) {
+        finish_turn(live, TurnOutcome::Errored, "");
+        events.push_back(
+            {id,
+             live.session_id,
+             RuntimeEvent::Kind::Error,
+             "Provider emitted an embedding for a generation request.",
+             ChorusError::Unknown}
+        );
+        retire_request(id);
+        return;
+    }
+    RuntimeEvent event{id, live.session_id, RuntimeEvent::Kind::Embedding};
+    event.embedding = embedding.values;
+    events.push_back(std::move(event));
+    retire_request(id);
+}
+
+void ChorusRuntime::append_signal_event(
+    RequestId id, LiveRequest& live, const ChorusSignal::Error& error, std::vector<RuntimeEvent>& events
+) {
+    if (live.operation == Operation::Generate)
+        finish_turn(live, error.code == ChorusError::Cancelled ? TurnOutcome::Cancelled : TurnOutcome::Errored, "");
+    events.push_back({id, live.session_id, RuntimeEvent::Kind::Error, error.message, error.code});
+    retire_request(id);
 }
 
 void ChorusRuntime::append_engine_failure(std::vector<RuntimeEvent>& events) {

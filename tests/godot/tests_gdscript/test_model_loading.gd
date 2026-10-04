@@ -184,7 +184,7 @@ static func run_tests(parent: Node) -> void:
 		var old := chorus.generate(ChorusRequest.stateless("old request"))
 		TestReport.check(old.accepted, "expected old request admission")
 		var history := []
-		var on_old := func(id, _session, _message_id, _text, _reasoning):
+		var on_old := func(id, _session, _message_id, _text, _reasoning, _usage):
 			if id == old.request_id:
 				history.append("old")
 				chorus.stop_all()

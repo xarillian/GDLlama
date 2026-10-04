@@ -299,6 +299,25 @@ class ChorusResult : public godot::RefCounted {
     godot::String _message;
 };
 
+class ChorusGenerationUsage : public godot::RefCounted {
+    GDCLASS(ChorusGenerationUsage, godot::RefCounted);
+
+  protected:
+    static void _bind_methods();
+
+  public:
+    ChorusGenerationUsage() = default;
+    ChorusGenerationUsage(int64_t prompt_tokens, int64_t cached_prompt_tokens, int64_t generated_tokens);
+    int64_t get_prompt_tokens() const;
+    int64_t get_cached_prompt_tokens() const;
+    int64_t get_generated_tokens() const;
+
+  private:
+    int64_t _prompt_tokens = 0;
+    int64_t _cached_prompt_tokens = 0;
+    int64_t _generated_tokens = 0;
+};
+
 VARIANT_ENUM_CAST(ChorusLoadPhase::Value);
 VARIANT_ENUM_CAST(ChorusRole::Value);
 VARIANT_ENUM_CAST(ChorusExecution::Value);

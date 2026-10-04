@@ -179,10 +179,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_CPU_placement_avoids_Vulkan_compute_buff
         std::lock_guard<std::mutex> lock(mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             ++token_count;
-        } else if (
-            std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)
-        ) {
+        } else if (signal.is_terminal()) {
             ++terminal_count;
             errored = std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event);
             cv.notify_one();
@@ -241,10 +238,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_batch_controls_create_context_and_genera
         std::lock_guard<std::mutex> lock(mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             ++token_chunks;
-        } else if (
-            std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)
-        ) {
+        } else if (signal.is_terminal()) {
             terminals.push_back(signal);
             cv.notify_all();
         }
@@ -260,7 +254,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_batch_controls_create_context_and_genera
 
     ASSERT_TRUE(completed);
     ASSERT_EQ(terminals.size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(terminals[0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(terminals[0].event));
     ASSERT_EQ(token_chunks, size_t{4});
 }
 
@@ -290,8 +284,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_effective_batch_capacity_contains_oversi
         request.prompt += "hello ";
     request.gen_config.max_tokens = 1;
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
-        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) &&
-            !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+        if (!signal.is_terminal())
             return;
         std::lock_guard<std::mutex> lock(state.mutex);
         state.oversized_terminals.push_back(signal);
@@ -317,8 +310,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_effective_batch_capacity_contains_oversi
     recovery.gen_config.max_tokens = 1;
     recovery.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
     recovery.on_event = [&](const Chorus::ChorusSignal& signal) {
-        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) &&
-            !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+        if (!signal.is_terminal())
             return;
         std::lock_guard<std::mutex> lock(state.mutex);
         state.recovery_terminals.push_back(signal);
@@ -350,7 +342,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_effective_batch_capacity_contains_oversi
     }
     ASSERT_TRUE(recovery_finished);
     ASSERT_EQ(state.recovery_terminals.size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state.recovery_terminals[0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(state.recovery_terminals[0].event));
 }
 
 TEST_F(LlamaIntegrationModelTest, Llama_concurrent_requests_complete_with_multiple_sequences) {
@@ -379,10 +371,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_concurrent_requests_complete_with_multip
             if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
                 std::lock_guard<std::mutex> lock(responses_mutex);
                 responses[request_index] += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
-            } else if (
-                std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-                std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)
-            ) {
+            } else if (sig.is_terminal()) {
                 completed_count++;
             }
         };
@@ -432,10 +421,7 @@ TEST_F(LlamaIntegrationModelTest, Max_tokens_counts_generated_not_prompt_tokens)
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
             token_count++;
-        else if (
-            std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)
-        )
+        else if (sig.is_terminal())
             done = true;
     };
 
@@ -491,10 +477,7 @@ TEST_F(LlamaIntegrationModelTest, Engine_reinitializes_and_generates_after_shutd
     req.on_event = [&](const Chorus::ChorusSignal& sig) {
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
             tokens++;
-        else if (
-            std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)
-        )
+        else if (sig.is_terminal())
             done = true;
     };
     engine.submit_request(req);
@@ -560,10 +543,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_removes_queued_request_befo
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             state->active_started = true;
             state->cv.notify_all();
-        } else if (
-            std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)
-        ) {
+        } else if (signal.is_terminal()) {
             state->active_terminal = true;
             state->cv.notify_all();
         }
@@ -587,8 +567,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_removes_queued_request_befo
     queued.on_event = [state](Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->queued_signals.push_back(signal);
-        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
+        if (signal.is_terminal()) {
             state->active_terminal_when_queued_cancelled = state->active_terminal;
             state->cv.notify_all();
         }
@@ -600,9 +579,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_removes_queued_request_befo
     {
         std::unique_lock<std::mutex> lock(state->mutex);
         queued_terminal = state->cv.wait_for(lock, std::chrono::seconds(5), [&] {
-            return !state->queued_signals.empty() &&
-                   (std::holds_alternative<Chorus::ChorusSignal::Stop>(state->queued_signals.back().event) ||
-                    std::holds_alternative<Chorus::ChorusSignal::Error>(state->queued_signals.back().event));
+            return !state->queued_signals.empty() && state->queued_signals.back().is_terminal();
         });
     }
     engine.shutdown();
@@ -665,8 +642,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_is_idempotent_and_releases_
         std::unique_lock<std::mutex> lock(mutex);
         active_terminal = cv.wait_for(lock, std::chrono::seconds(5), [&] {
             return std::count_if(active_signals.begin(), active_signals.end(), [](const auto& signal) {
-                       return std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-                              std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event);
+                       return signal.is_terminal();
                    }) == 1;
         });
     }
@@ -680,11 +656,10 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_is_idempotent_and_releases_
     reuse.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
     reuse.gen_config.max_tokens = 2;
     reuse.on_event = [&](Chorus::ChorusSignal& signal) {
-        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) &&
-            !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+        if (!signal.is_terminal())
             return;
         std::lock_guard<std::mutex> lock(mutex);
-        reuse_stopped = std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event);
+        reuse_stopped = std::holds_alternative<Chorus::ChorusSignal::Completion>(signal.event);
         cv.notify_all();
     };
     engine.submit_request(reuse);
@@ -699,8 +674,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_is_idempotent_and_releases_
     size_t terminal_count = 0;
     Chorus::ChorusError terminal_code = Chorus::ChorusError::None;
     for (const auto& signal : active_signals) {
-        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
+        if (signal.is_terminal()) {
             ++terminal_count;
             terminal_code = std::get<Chorus::ChorusSignal::Error>(signal.event).code;
         }
@@ -711,7 +685,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_is_idempotent_and_releases_
     ASSERT_TRUE(reuse_completed);
 }
 
-TEST_F(LlamaIntegrationModelTest, Llama_cancellation_from_committed_buffered_token_does_not_replace_Stop) {
+TEST_F(LlamaIntegrationModelTest, Llama_cancellation_from_committed_buffered_token_does_not_replace_Completion) {
 
     struct Result {
         std::mutex mutex;
@@ -740,10 +714,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_from_committed_buffered_tok
                 std::lock_guard<std::mutex> lock(result->mutex);
                 if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event))
                     result->text += std::get<Chorus::ChorusSignal::Token>(signal.event).text;
-                else if (
-                    std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-                    std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)
-                )
+                else if (signal.is_terminal())
                     result->terminals.push_back(signal);
             }
             if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event) && cancel_from_token)
@@ -777,7 +748,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_cancellation_from_committed_buffered_tok
 
     ASSERT_TRUE(reentrant_terminal);
     ASSERT_EQ(reentrant->terminals.size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(reentrant->terminals[0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(reentrant->terminals[0].event));
 }
 
 TEST_F(LlamaIntegrationModelTest, Llama_shutdown_waits_for_active_cancellation_callback_and_drains_queue) {
@@ -807,8 +778,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_shutdown_waits_for_active_cancellation_c
             state->cv.notify_all();
             return;
         }
-        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) &&
-            !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+        if (!signal.is_terminal())
             return;
         state->terminals.push_back(signal);
         if (signal.request_id == 331 && std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event) &&
@@ -945,6 +915,7 @@ struct ConstraintRequestState {
     std::mutex mutex;
     std::condition_variable cv;
     ConstraintRequestResult result;
+    bool terminal = false;
 };
 
 void print_constraint_failure(const ConstraintRequestResult& result) {
@@ -968,21 +939,21 @@ run_constraint_request(Chorus::LlamaEngine& engine, int64_t request_id, Chorus::
         std::lock_guard<std::mutex> lock(state->mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             state->result.response += std::get<Chorus::ChorusSignal::Token>(signal.event).text;
-        } else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event)) {
+        } else if (std::holds_alternative<Chorus::ChorusSignal::Completion>(signal.event)) {
             state->result.completed = true;
-            state->cv.notify_one();
         } else if (std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)) {
             state->result.error = std::get<Chorus::ChorusSignal::Error>(signal.event).code;
             state->result.terminal_error = std::get<Chorus::ChorusSignal::Error>(signal.event).message;
+        }
+        if (signal.is_terminal()) {
+            state->terminal = true;
             state->cv.notify_one();
         }
     };
     engine.submit_request(request);
 
     std::unique_lock<std::mutex> lock(state->mutex);
-    if (!state->cv.wait_for(lock, std::chrono::seconds(30), [&] {
-            return state->result.completed || state->result.error.has_value();
-        })) {
+    if (!state->cv.wait_for(lock, std::chrono::seconds(30), [&] { return state->terminal; })) {
         state->result.timed_out = true;
         state->result.terminal_error = "Timed out waiting for a terminal event.";
     }
@@ -1099,10 +1070,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_conformance_seed_and_temperature) {
             std::lock_guard<std::mutex> lock(sig_mutex);
             if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event)) {
                 text += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
-            } else if (
-                std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event) ||
-                std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)
-            ) {
+            } else if (sig.is_terminal()) {
                 done = true;
                 cv.notify_one();
             }
@@ -1124,7 +1092,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_conformance_seed_and_temperature) {
     ASSERT_EQ(text_a, text_b);
 }
 
-TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_tokens_completes_and_reuses_slot) {
+TEST_F(LlamaIntegrationModelTest, Llama_zero_cap_completes_and_reuses_slot) {
 
     Chorus::ChorusConfig config = make_gguf_config(MODEL_PATH);
     config.provider_options["llama"] = Chorus::ProviderOptionMap{
@@ -1135,7 +1103,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_tokens_completes_and_reuses_sl
     std::mutex mutex;
     std::condition_variable cv;
     std::vector<Chorus::ChorusSignal::Event> zero_events;
-    std::vector<Chorus::ChorusSignal::Event> reuse_events;
+    std::vector<Chorus::ChorusSignal> reuse_events;
     Chorus::LlamaEngine engine;
     ASSERT_TRUE(!engine.initialize(config, {}, {}).has_value());
 
@@ -1154,7 +1122,11 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_tokens_completes_and_reuses_sl
         std::unique_lock<std::mutex> lock(mutex);
         ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return !zero_events.empty(); }));
         ASSERT_EQ(zero_events.size(), size_t{1});
-        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(zero_events[0]));
+        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(zero_events[0]));
+        const auto& usage = std::get<Chorus::ChorusSignal::Completion>(zero_events[0]).usage;
+        EXPECT_EQ(usage.prompt_tokens, 0);
+        EXPECT_EQ(usage.cached_prompt_tokens, 0);
+        EXPECT_EQ(usage.generated_tokens, 0);
     }
 
     Chorus::ChorusRequest reuse;
@@ -1163,9 +1135,8 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_tokens_completes_and_reuses_sl
     reuse.gen_config.max_tokens = 2;
     reuse.on_event = [&](const Chorus::ChorusSignal& signal) {
         std::lock_guard<std::mutex> lock(mutex);
-        reuse_events.push_back(signal.event);
-        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+        reuse_events.push_back(signal);
+        if (signal.is_terminal())
             cv.notify_one();
     };
     engine.submit_request(reuse);
@@ -1173,12 +1144,11 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_tokens_completes_and_reuses_sl
     {
         std::unique_lock<std::mutex> lock(mutex);
         ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(15), [&] {
-            return !reuse_events.empty() && (std::holds_alternative<Chorus::ChorusSignal::Stop>(reuse_events.back()) ||
-                                             std::holds_alternative<Chorus::ChorusSignal::Error>(reuse_events.back()));
+            return !reuse_events.empty() && reuse_events.back().is_terminal();
         }));
-        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(reuse_events.back()));
-        ASSERT_TRUE(std::any_of(reuse_events.begin(), reuse_events.end(), [](const auto& event) {
-            return std::holds_alternative<Chorus::ChorusSignal::Token>(event);
+        ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(reuse_events.back().event));
+        ASSERT_TRUE(std::any_of(reuse_events.begin(), reuse_events.end(), [](const auto& signal) {
+            return std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event);
         }));
     }
     engine.shutdown();
@@ -1196,6 +1166,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_marker_never_emits_and_slot_reuses)
         std::vector<std::string> chunks;
         bool stopped = false;
         bool errored = false;
+        bool terminal = false;
         bool timed_out = false;
     };
 
@@ -1218,18 +1189,19 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_marker_never_emits_and_slot_reuses)
             std::lock_guard<std::mutex> lock(*mutex);
             if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event))
                 result->chunks.push_back(std::get<Chorus::ChorusSignal::Token>(signal.event).text);
-            else if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event))
+            else if (std::holds_alternative<Chorus::ChorusSignal::Completion>(signal.event))
                 result->stopped = true;
             else if (std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
                 result->errored = true;
-            if (result->stopped || result->errored)
+            if (signal.is_terminal()) {
+                result->terminal = true;
                 cv->notify_one();
+            }
         };
         engine.submit_request(request);
 
         std::unique_lock<std::mutex> lock(*mutex);
-        result->timed_out =
-            !cv->wait_for(lock, std::chrono::seconds(15), [&] { return result->stopped || result->errored; });
+        result->timed_out = !cv->wait_for(lock, std::chrono::seconds(15), [&] { return result->terminal; });
         return result;
     };
 
@@ -1305,7 +1277,7 @@ int run_reentry_child(ReentryTrigger trigger) {
         request.gen_config.max_tokens = -2;
     request.on_event = [state, trigger](const Chorus::ChorusSignal& signal) {
         const bool expected = trigger == ReentryTrigger::ZeroBudget
-                                  ? std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event)
+                                  ? std::holds_alternative<Chorus::ChorusSignal::Completion>(signal.event)
                                   : std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event);
         if (!expected)
             return;
@@ -1319,10 +1291,9 @@ int run_reentry_child(ReentryTrigger trigger) {
         followup.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
         followup.gen_config.max_tokens = 2;
         followup.on_event = [state](const Chorus::ChorusSignal& next_signal) {
-            if (std::holds_alternative<Chorus::ChorusSignal::Stop>(next_signal.event) ||
-                std::holds_alternative<Chorus::ChorusSignal::Error>(next_signal.event)) {
+            if (next_signal.is_terminal()) {
                 std::lock_guard<std::mutex> lock(state->mutex);
-                state->followup_stopped = std::holds_alternative<Chorus::ChorusSignal::Stop>(next_signal.event);
+                state->followup_stopped = std::holds_alternative<Chorus::ChorusSignal::Completion>(next_signal.event);
                 state->cv.notify_one();
             }
         };
@@ -1347,11 +1318,11 @@ bool run_reentry_isolated(ReentryTrigger trigger) {
 
 } // namespace
 
-TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_callback_can_submit_followup) {
+TEST_F(LlamaIntegrationModelTest, Llama_zero_cap_completion_callback_can_submit_followup) {
     ASSERT_TRUE(run_reentry_isolated(ReentryTrigger::ZeroBudget));
 }
 
-TEST_F(LlamaIntegrationModelTest, Llama_stop_rejection_callback_can_submit_followup) {
+TEST_F(LlamaIntegrationModelTest, Llama_rejection_callback_can_submit_followup) {
     ASSERT_TRUE(run_reentry_isolated(ReentryTrigger::Rejection));
 }
 
@@ -1363,7 +1334,7 @@ int run_llama_reentry_child_mode(std::string_view child_name) {
     return 64;
 }
 
-TEST_F(LlamaIntegrationModelTest, Llama_stop_completion_releases_callback_resources) {
+TEST_F(LlamaIntegrationModelTest, Llama_completion_releases_callback_resources) {
 
     struct State {
         std::atomic<bool> terminal{false};
@@ -1382,8 +1353,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_completion_releases_callback_resour
     request.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
     request.gen_config.max_tokens = 1;
     request.on_event = [owned, state](const Chorus::ChorusSignal& signal) {
-        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+        if (signal.is_terminal())
             state->terminal = true;
     };
     engine.submit_request(request);
@@ -1400,7 +1370,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_completion_releases_callback_resour
     engine.shutdown();
 }
 
-TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_completes_while_slot_is_occupied) {
+TEST_F(LlamaIntegrationModelTest, Llama_zero_cap_completes_while_slot_is_occupied) {
 
     struct State {
         std::mutex mutex;
@@ -1428,10 +1398,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_completes_while_slot_is_occupi
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             state->busy_started = true;
             state->cv.notify_one();
-        } else if (
-            std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)
-        )
+        } else if (signal.is_terminal())
             state->busy_terminal = true;
     };
     engine.submit_request(busy);
@@ -1455,7 +1422,11 @@ TEST_F(LlamaIntegrationModelTest, Llama_stop_zero_completes_while_slot_is_occupi
     std::unique_lock<std::mutex> lock(state->mutex);
     ASSERT_TRUE(state->cv.wait_for(lock, std::chrono::seconds(1), [&] { return !state->zero_events.empty(); }));
     ASSERT_EQ(state->zero_events.size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state->zero_events[0]));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(state->zero_events[0]));
+    const auto& usage = std::get<Chorus::ChorusSignal::Completion>(state->zero_events[0]).usage;
+    EXPECT_EQ(usage.prompt_tokens, 0);
+    EXPECT_EQ(usage.cached_prompt_tokens, 0);
+    EXPECT_EQ(usage.generated_tokens, 0);
     ASSERT_TRUE(!state->busy_terminal_at_zero);
     lock.unlock();
     engine.shutdown();
@@ -1493,10 +1464,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_one_per_request) {
                     sweep->text[id] += std::get<Chorus::ChorusSignal::Token>(signal.event).text;
                     if (++sweep->tokens[id] == 1 && cancel_on_first_token)
                         do_cancel = true;
-                } else if (
-                    std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-                    std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)
-                ) {
+                } else if (signal.is_terminal()) {
                     sweep->terminals[id].push_back(signal);
                 }
             }
@@ -1511,7 +1479,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_one_per_request) {
 
     const std::string moth_prompt = "<start_of_turn>user\nTell me about moths.<end_of_turn>\n<start_of_turn>model\n";
 
-    // success: a plain bounded completion terminates once with Stop.
+    // success: a plain bounded generation terminates once with completion.
     Chorus::ChorusRequest success;
     success.id = 401;
     success.prompt = moth_prompt;
@@ -1544,7 +1512,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_one_per_request) {
         ASSERT_TRUE(false);
     }
 
-    // zero limit: completes without entering inference, one Stop.
+    // zero limit: completes without entering inference.
     Chorus::ChorusRequest zero;
     zero.id = 403;
     zero.prompt = "This prompt must not enter inference.";
@@ -1595,13 +1563,13 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_one_per_request) {
 
     // Exactly one terminal per accepted request, of the expected kind.
     ASSERT_EQ(sweep->terminals[401].size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(sweep->terminals[401][0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(sweep->terminals[401][0].event));
     ASSERT_EQ(sweep->terminals[402].size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(sweep->terminals[402][0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(sweep->terminals[402][0].event));
     ASSERT_EQ(sweep->terminals[403].size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(sweep->terminals[403][0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(sweep->terminals[403][0].event));
     ASSERT_EQ(sweep->terminals[404].size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(sweep->terminals[404][0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(sweep->terminals[404][0].event));
     ASSERT_EQ(sweep->terminals[405].size(), size_t{1});
     ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Error>(sweep->terminals[405][0].event));
     ASSERT_TRUE(
@@ -1613,6 +1581,125 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_one_per_request) {
         std::get<Chorus::ChorusSignal::Error>(sweep->terminals[406][0].event).code ==
         Chorus::ChorusError::InvalidRequest
     );
+}
+
+TEST_F(LlamaIntegrationModelTest, Llama_completion_usage_counts_sampled_tokens) {
+    struct Observation {
+        int64_t sampling_steps = 0;
+        std::vector<Chorus::ChorusSignal::Token> tokens;
+        std::string text;
+        std::vector<Chorus::ChorusSignal> terminals;
+        bool signal_after_terminal = false;
+    };
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::map<Chorus::RequestId, Observation> observations;
+    Chorus::LlamaEngine engine;
+    auto config = make_gguf_config(MODEL_PATH);
+    config.provider_options["llama"] =
+        Chorus::ProviderOptionMap{{"use_gpu", false}, {"max_concurrent_requests", int64_t{1}}};
+    ASSERT_FALSE(engine.initialize(config, {}, {}).has_value());
+    engine.set_logits_observer([&](Chorus::RequestId id, std::span<const float>) {
+        std::lock_guard lock(mutex);
+        ++observations[id].sampling_steps;
+    });
+    const auto run = [&](Chorus::ChorusRequest request) -> std::optional<Observation> {
+        request.on_event = [&](const Chorus::ChorusSignal& signal) {
+            std::lock_guard lock(mutex);
+            auto& observed = observations[signal.request_id];
+            if (!observed.terminals.empty())
+                observed.signal_after_terminal = true;
+            if (const auto* token = std::get_if<Chorus::ChorusSignal::Token>(&signal.event)) {
+                observed.tokens.push_back(*token);
+                observed.text += token->text;
+            }
+            if (signal.is_terminal())
+                observed.terminals.push_back(signal);
+            cv.notify_all();
+        };
+        engine.submit_request(request);
+        std::unique_lock lock(mutex);
+        if (!cv.wait_for(lock, std::chrono::seconds(30), [&] { return !observations[request.id].terminals.empty(); }))
+            return std::nullopt;
+        return observations[request.id];
+    };
+
+    Chorus::ChorusRequest request;
+    request.id = 501;
+    request.prompt = "<start_of_turn>user\nTell me about moths.<end_of_turn>\n<start_of_turn>model\n";
+    request.gen_config.seed = 42;
+    request.gen_config.temperature = 0.0f;
+    request.gen_config.max_tokens = 16;
+    request.gen_config.provider_options["llama"] = Chorus::ProviderOptionMap{{"ignore_eos", true}};
+    const auto fixed = run(request);
+    ASSERT_TRUE(fixed);
+    ASSERT_EQ(fixed->terminals.size(), size_t{1});
+    const auto* fixed_completion = std::get_if<Chorus::ChorusSignal::Completion>(&fixed->terminals.front().event);
+    ASSERT_NE(fixed_completion, nullptr);
+    EXPECT_EQ(fixed_completion->usage.generated_tokens, 16);
+    EXPECT_EQ(fixed_completion->usage.generated_tokens, fixed->sampling_steps);
+    EXPECT_GT(fixed_completion->usage.prompt_tokens, 0);
+    EXPECT_EQ(fixed_completion->usage.cached_prompt_tokens, 0);
+
+    auto params = llama_model_default_params();
+    params.vocab_only = true;
+    params.n_gpu_layers = 0;
+    std::unique_ptr<llama_model, decltype(&llama_model_free)> vocabulary_model(
+        llama_model_load_from_file(MODEL_PATH.c_str(), params), llama_model_free
+    );
+    ASSERT_NE(vocabulary_model, nullptr);
+    const auto* vocab = llama_model_get_vocab(vocabulary_model.get());
+    const auto eos = llama_vocab_eos(vocab);
+    ASSERT_TRUE(llama_vocab_is_eog(vocab, eos));
+    vocabulary_model.reset();
+
+    auto early_request = request;
+    early_request.id = 502;
+    early_request.gen_config.top_k = 1;
+    early_request.gen_config.provider_options["llama"] =
+        Chorus::ProviderOptionMap{{"logit_bias", Chorus::ProviderOptionMap{{std::to_string(eos), 1'000'000.0}}}};
+    const auto early = run(early_request);
+    ASSERT_TRUE(early);
+    ASSERT_EQ(early->terminals.size(), size_t{1});
+    const auto* early_completion = std::get_if<Chorus::ChorusSignal::Completion>(&early->terminals.front().event);
+    ASSERT_NE(early_completion, nullptr);
+    EXPECT_EQ(early_completion->usage.generated_tokens, 1);
+    EXPECT_EQ(early_completion->usage.generated_tokens, early->sampling_steps);
+    EXPECT_TRUE(early->tokens.empty());
+    EXPECT_TRUE(early->text.empty());
+
+    request.id = 503;
+    request.gen_config.provider_options.clear();
+    const auto reference = run(request);
+    ASSERT_TRUE(reference);
+    ASSERT_EQ(reference->terminals.size(), size_t{1});
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(reference->terminals.front().event));
+    ASSERT_GE(reference->tokens.size(), size_t{4});
+    const auto& chunks = reference->tokens;
+    const std::string marker = chunks[chunks.size() - 2].text + chunks.back().text;
+    const size_t marker_position = reference->text.size() - marker.size();
+    ASSERT_EQ(reference->text.find(marker), marker_position);
+
+    request.id = 504;
+    request.gen_config.max_tokens = 32;
+    request.gen_config.stop = std::vector<std::string>{marker};
+    const auto hidden = run(request);
+    ASSERT_TRUE(hidden);
+    ASSERT_EQ(hidden->terminals.size(), size_t{1});
+    const auto* hidden_completion = std::get_if<Chorus::ChorusSignal::Completion>(&hidden->terminals.front().event);
+    ASSERT_NE(hidden_completion, nullptr);
+    EXPECT_EQ(hidden_completion->usage.generated_tokens, hidden->sampling_steps);
+    EXPECT_GE(hidden_completion->usage.generated_tokens, 2);
+    EXPECT_LT(hidden_completion->usage.generated_tokens, 32);
+    EXPECT_EQ(hidden->text, reference->text.substr(0, marker_position));
+    EXPECT_EQ(hidden->text.find(marker), std::string::npos);
+
+    engine.shutdown();
+    for (const auto& [id, observed] : observations) {
+        SCOPED_TRACE(id);
+        EXPECT_EQ(observed.terminals.size(), size_t{1});
+        EXPECT_FALSE(observed.signal_after_terminal);
+    }
 }
 
 // Terminal invariant: a runtime decode failure ends the request once with an Error.
@@ -1640,8 +1727,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_decode_failure_ends_o
     request.prompt = huge_prompt;
     request.gen_config.max_tokens = 8;
     request.on_event = [&](const Chorus::ChorusSignal& signal) {
-        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) &&
-            !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+        if (!signal.is_terminal())
             return;
         std::lock_guard<std::mutex> lock(mutex);
         terminals.push_back(signal);
@@ -1687,10 +1773,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_terminal_invariant_engine_shutdown_ends_
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             started = true;
             cv.notify_all();
-        } else if (
-            std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)
-        ) {
+        } else if (signal.is_terminal()) {
             terminals.push_back(signal);
             cv.notify_all();
         }
@@ -1747,10 +1830,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_two_sequences_one_cancels_one_completes)
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(signal.event)) {
             state->cancel_started = true;
             state->cv.notify_all();
-        } else if (
-            std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) ||
-            std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event)
-        ) {
+        } else if (signal.is_terminal()) {
             state->cancel_terminals.push_back(signal);
             state->cv.notify_all();
         }
@@ -1761,8 +1841,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_two_sequences_one_cancels_one_completes)
     complete_req.prompt = "<start_of_turn>user\nSay hi.<end_of_turn>\n<start_of_turn>model\n";
     complete_req.gen_config.max_tokens = 8;
     complete_req.on_event = [state](const Chorus::ChorusSignal& signal) {
-        if (!std::holds_alternative<Chorus::ChorusSignal::Stop>(signal.event) &&
-            !std::holds_alternative<Chorus::ChorusSignal::Error>(signal.event))
+        if (!signal.is_terminal())
             return;
         std::lock_guard<std::mutex> lock(state->mutex);
         state->complete_terminals.push_back(signal);
@@ -1800,7 +1879,7 @@ TEST_F(LlamaIntegrationModelTest, Llama_two_sequences_one_cancels_one_completes)
         std::get<Chorus::ChorusSignal::Error>(state->cancel_terminals[0].event).code == Chorus::ChorusError::Cancelled
     );
     ASSERT_EQ(state->complete_terminals.size(), size_t{1});
-    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Stop>(state->complete_terminals[0].event));
+    ASSERT_TRUE(std::holds_alternative<Chorus::ChorusSignal::Completion>(state->complete_terminals[0].event));
 }
 
 // Chat support using the real model.
@@ -2015,10 +2094,8 @@ TEST_F(LlamaIntegrationModelTest, Llama_chat_messages_render_and_generate) {
         std::lock_guard<std::mutex> lock(mutex);
         if (std::holds_alternative<Chorus::ChorusSignal::Token>(sig.event))
             text += std::get<Chorus::ChorusSignal::Token>(sig.event).text;
-        if (std::holds_alternative<Chorus::ChorusSignal::Stop>(sig.event)) {
-            stopped = true;
-            done = true;
-        } else if (std::holds_alternative<Chorus::ChorusSignal::Error>(sig.event)) {
+        if (sig.is_terminal()) {
+            stopped = std::holds_alternative<Chorus::ChorusSignal::Completion>(sig.event);
             done = true;
         }
     };

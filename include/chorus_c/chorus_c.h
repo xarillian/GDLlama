@@ -127,6 +127,13 @@ typedef struct chorus_conversation_message {
     const char* content;
 } chorus_conversation_message;
 
+/* Token counts for one completed generation, as Chorus::GenerationUsage defines them. */
+typedef struct chorus_generation_usage {
+    int64_t prompt_tokens;
+    int64_t cached_prompt_tokens;
+    int64_t generated_tokens;
+} chorus_generation_usage;
+
 /* Runtime-owned pointers remain valid until the next chorus_poll or runtime destruction. */
 typedef struct chorus_event {
     chorus_event_kind kind;
@@ -136,6 +143,8 @@ typedef struct chorus_event {
     chorus_error error;
     const char* reasoning;
     chorus_message_id message_id;
+    /* Valid only for CHORUS_EVENT_COMPLETE. */
+    chorus_generation_usage usage;
     const chorus_message_id* omitted_message_ids;
     size_t omitted_message_id_count;
     const float* embedding;

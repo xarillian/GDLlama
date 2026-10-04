@@ -18,7 +18,7 @@ static func run_tests(parent: Node) -> void:
 	parent.add_child(chorus)
 	await LoadWaiter.load(chorus)
 	var terminals := {}
-	chorus.generation_complete.connect(func(id, session, message_id, text, reasoning): terminals[id] = [id, session, message_id, text, reasoning])
+	chorus.generation_complete.connect(func(id, session, message_id, text, reasoning, usage): terminals[id] = [id, session, message_id, text, reasoning, usage])
 	chorus.embedding_complete.connect(func(id, session, values): terminals[id] = [id, session, values])
 	chorus.prompt_rendered.connect(func(id, session, text, omitted): terminals[id] = [id, session, text, omitted])
 	chorus.message_token_counted.connect(func(id, count): terminals[id] = [id, count])
@@ -33,6 +33,18 @@ static func run_tests(parent: Node) -> void:
 		var event: Array = await wait_for_event(chorus, terminals, result.request_id)
 		TestReport.check(event[0] == result.request_id, "expected generation completion correlation")
 		TestReport.check(event[2] == -1, "expected stateless completion message id to be absent")
+	)
+
+	await TestReport.run("completion carries the provider's token usage", func():
+		var request := ChorusRequest.stateless("one two three")
+		request.max_tokens = 1
+		var result := chorus.generate(request)
+		TestReport.check(result.accepted, "expected capped request to be accepted")
+		var event: Array = await wait_for_event(chorus, terminals, result.request_id)
+		var usage: ChorusGenerationUsage = event[5]
+		TestReport.check(usage.prompt_tokens == 3, "expected Echo to count three prompt chunks")
+		TestReport.check(usage.cached_prompt_tokens == 0, "expected Echo to reuse nothing")
+		TestReport.check(usage.generated_tokens == 1, "expected the cap to bound generated chunks")
 	)
 
 	await TestReport.run("empty chat factory session rejects instead of becoming stateless", func():
@@ -91,7 +103,7 @@ static func run_tests(parent: Node) -> void:
 		parent.add_child(other)
 		await LoadWaiter.load(other)
 		var other_events := {}
-		other.generation_complete.connect(func(id, _session, _message_id, text, _reasoning): other_events[id] = text)
+		other.generation_complete.connect(func(id, _session, _message_id, text, _reasoning, _usage): other_events[id] = text)
 		ProjectSettings.set_setting("chorus/generation/max_tokens", {"value": 0})
 		var first := chorus.generate(ChorusRequest.stateless("first node"))
 		var second := other.generate(ChorusRequest.stateless("second node"))
@@ -225,7 +237,7 @@ static func run_tests(parent: Node) -> void:
 		TestReport.check(result.accepted, "zero and empty selections must pass admission")
 		if result.accepted:
 			var event := await wait_for_event(chorus, terminals, result.request_id)
-			TestReport.check(event.size() == 5 and event[3] == "" and event[4] == "", "zero tokens must produce empty output and no reasoning")
+			TestReport.check(event.size() == 6 and event[3] == "" and event[4] == "", "zero tokens must produce empty output and no reasoning")
 		request.stop = PackedStringArray(["selected stop"])
 		var unsupported := chorus.generate(request)
 		TestReport.check(unsupported.accepted, "unsupported selected stop is a provider error after admission")

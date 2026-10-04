@@ -89,6 +89,7 @@ class LlamaScheduler : public Chorus::RequestPreparation {
         GenerationPhase phase = GenerationPhase::Prefill;
         int32_t n_past = 0;
         int32_t n_decoded = 0;
+        int32_t reused_prompt_tokens = 0;
         int32_t max_tokens = -1;
         std::vector<int32_t> prompt_tokens;
         std::vector<int32_t> cached_tokens;

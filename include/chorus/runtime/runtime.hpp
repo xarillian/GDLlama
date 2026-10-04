@@ -110,6 +110,9 @@ struct RuntimeEvent {
     // Present only on successful sessioned generation completion.
     std::optional<MessageId> message_id;
 
+    // Provider token work, valid only for `Chorus::RuntimeEvent::Kind::Complete`.
+    GenerationUsage usage;
+
     // Stored history message identities omitted from the fitted prompt.
     std::vector<MessageId> omitted_message_ids;
     // Literal content count, valid only for `Chorus::RuntimeEvent::Kind::MessageTokenCount`.
@@ -418,7 +421,20 @@ class ChorusRuntime {
         std::string message
     );
     static void fail_preparation(PreparationState& state);
+    struct LiveRequest;
     void append_signal_events(const ChorusSignal& signal, std::vector<RuntimeEvent>& events);
+    void append_signal_event(
+        RequestId id, LiveRequest& live, const ChorusSignal::Token& token, std::vector<RuntimeEvent>& events
+    );
+    void append_signal_event(
+        RequestId id, LiveRequest& live, const ChorusSignal::Completion& completion, std::vector<RuntimeEvent>& events
+    );
+    void append_signal_event(
+        RequestId id, LiveRequest& live, const ChorusSignal::Embedding& embedding, std::vector<RuntimeEvent>& events
+    );
+    void append_signal_event(
+        RequestId id, LiveRequest& live, const ChorusSignal::Error& error, std::vector<RuntimeEvent>& events
+    );
     void append_engine_failure(std::vector<RuntimeEvent>& events);
     void unload_engine();
     void close_preparation(PreparationState& state);
@@ -446,7 +462,6 @@ class ChorusRuntime {
     MessageNodePtr make_node(ConversationMessage message);
 
     enum class Operation { Generate, Embed, Preview, Count };
-    struct LiveRequest;
     SubmitResult admit_generation(const GenerationRequest& request, Operation operation, bool regenerate = false);
     SubmitResult admit(std::unique_ptr<PreparationJob> job, MessageNodePtr replaced_reply = {});
     void finish_turn(const LiveRequest& live, TurnOutcome outcome, const std::string& text);
@@ -460,7 +475,6 @@ class ChorusRuntime {
         std::string accumulated_text;
         std::optional<SessionId> session_id;
         std::string accumulated_reasoning;
-        std::optional<std::vector<float>> embedding;
         std::optional<MessageId> pending_user_id;
         std::optional<MessageId> reserved_assistant_id;
         MessageNodePtr replaced_reply;

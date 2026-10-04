@@ -12,7 +12,7 @@ static func run_tests(parent: Node) -> void:
 
 	await TestReport.run("cancel_request() reaches one valid terminal outcome", func():
 		var terminal := {"request_id": -1}
-		chorus.generation_complete.connect(func(completed_id: int, _session: StringName, _message_id: int, _content: String, _reasoning: String):
+		chorus.generation_complete.connect(func(completed_id: int, _session: StringName, _message_id: int, _content: String, _reasoning: String, _usage: ChorusGenerationUsage):
 			if completed_id == terminal.request_id:
 				terminal["kind"] = "complete"
 		)

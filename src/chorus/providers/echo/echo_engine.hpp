@@ -9,19 +9,24 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_set>
+#include <vector>
 
 namespace Chorus {
 /*
  * Reference implementation of `Chorus::InferenceEngine`.
  *
- * Echoes each request's prompt in space-delimited `Chorus::ChorusSignal::Token`
- * signals whose concatenation equals the prompt exactly, then emits
- * `Chorus::ChorusSignal::Stop`. A worker thread mirrors the asynchronous engine
- * contract without a model or external dependency, keeping the provider seam
- * compiler-enforced and available to CI and integrations. Echoed prompts do not
- * represent the dialogue quality or pacing of a real provider.
+ * Echoes space-delimited chunks as `Chorus::ChorusSignal::Token` signals, then
+ * emits `Chorus::ChorusSignal::Completion` with usage measured in those chunks.
+ * Prompt counts cover only the echoed text, which for chat is the last user
+ * message, not the conversation. Uncapped output reconstructs that text exactly.
+ *
+ * A worker thread mirrors the asynchronous engine contract without a model or
+ * external dependency, keeping the provider seam compiler-enforced and available
+ * to CI and integrations. Echoed prompts do not represent the dialogue quality
+ * or pacing of a real provider.
  */
 class EchoEngine : public InferenceEngine {
   public:
@@ -44,7 +49,7 @@ class EchoEngine : public InferenceEngine {
   private:
     void worker_loop();
     static std::string select_echo_text(const Chorus::ChorusRequest& request);
-    void emit_echo_tokens(const Chorus::ChorusRequest& request, const std::string& text);
+    int64_t emit_echo_tokens(const Chorus::ChorusRequest& request, const std::vector<std::string_view>& chunks);
 
     std::deque<Chorus::ChorusRequest> _queue;
     std::optional<Chorus::ChorusRequest> _active;

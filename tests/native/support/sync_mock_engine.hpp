@@ -22,14 +22,15 @@ class SyncMockEngine : public Chorus::InferenceEngine {
   public:
     // --- behavior knobs ---
     std::vector<std::string> tokens{"Hello ", "world"};
-    bool emit_stop = true;              // emit Stop after tokens
-    bool emit_duplicate_stop = false;   // broken: second Stop after the first
-    bool emit_token_after_stop = false; // broken: trailing Token after Stop
-    int64_t rogue_extra_id = -1;        // broken: if >= 0, emit a Token for this unknown id
-    bool emit_embedding_event = false;
+    bool emit_duplicate_success = false;   // broken: second success terminal
+    bool emit_token_after_success = false; // broken: trailing token after success
+    int64_t rogue_extra_id = -1;           // broken: if >= 0, emit a token for this unknown id
+    bool emit_wrong_kind_success = false;  // broken: replace success with the other request kind's terminal
+    bool emit_token_on_embedding = false;  // broken: token before an embedding terminal
+    Chorus::GenerationUsage completion_usage;
     std::vector<float> embedding_values{1.0F, 2.0F};
-    Chorus::ChorusError fail_submit_with = Chorus::ChorusError::None; // inline Error instead of tokens
-    bool emit_error_instead_of_stop = false;                 // tokens flow, then Error terminal (partial-output shape)
+    Chorus::ChorusError fail_submit_with = Chorus::ChorusError::None; // inline error instead of tokens
+    bool emit_error_instead_of_success = false;              // error instead of success, after any generation tokens
     std::optional<Chorus::ChorusError> fail_initialize_with; // make initialize() fail
     bool hold_requests = false;                              // accept but emit nothing (request stays in flight)
     bool emit_cancelled_on_cancel = false;                   // emit one Cancelled terminal for a matching held request
@@ -205,28 +206,16 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         }
 
         if (req.type == Chorus::RequestType::Embedding) {
-            if (emit_embedding_event)
-                send(req.on_event, req.id, Chorus::ChorusSignal::Embedding{embedding_values});
-            if (emit_error_instead_of_stop) {
-                send(
-                    req.on_event, req.id, Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "embedding failed"}
-                );
-                return;
-            }
-            if (emit_stop)
-                send(req.on_event, req.id, Chorus::ChorusSignal::Stop{});
+            if (emit_token_on_embedding)
+                send(req.on_event, req.id, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, "wrong kind"});
+            emit_terminal(req);
             return;
         }
 
         if (!scripted_channel_tokens.empty()) {
             for (const auto& [channel, text] : scripted_channel_tokens)
                 send(req.on_event, req.id, Chorus::ChorusSignal::Token{channel, text});
-            if (emit_stop)
-                send(req.on_event, req.id, Chorus::ChorusSignal::Stop{});
-            return;
-        }
-
-        if (!tokens.empty()) {
+        } else if (!tokens.empty()) {
             for (const auto& text : tokens)
                 send(req.on_event, req.id, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, text});
         } else if (!req.messages.empty()) {
@@ -244,22 +233,7 @@ class SyncMockEngine : public Chorus::InferenceEngine {
         }
         if (rogue_extra_id >= 0)
             send(req.on_event, rogue_extra_id, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, "rogue"});
-        if (emit_embedding_event)
-            send(req.on_event, req.id, Chorus::ChorusSignal::Embedding{});
-        if (emit_error_instead_of_stop) {
-            send(
-                req.on_event,
-                req.id,
-                Chorus::ChorusSignal::Error{Chorus::ChorusError::Decode, "failed after partial output"}
-            );
-            return;
-        }
-        if (emit_stop)
-            send(req.on_event, req.id, Chorus::ChorusSignal::Stop{});
-        if (emit_duplicate_stop)
-            send(req.on_event, req.id, Chorus::ChorusSignal::Stop{});
-        if (emit_token_after_stop)
-            send(req.on_event, req.id, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, "late"});
+        emit_terminal(req);
     }
 
     void cancel_request(Chorus::RequestId id) override {
@@ -323,6 +297,29 @@ class SyncMockEngine : public Chorus::InferenceEngine {
     }
 
   private:
+    void emit_terminal(const Chorus::ChorusRequest& req) const {
+        if (emit_error_instead_of_success) {
+            send(
+                req.on_event,
+                req.id,
+                Chorus::ChorusSignal::Error{
+                    Chorus::ChorusError::Decode,
+                    req.type == Chorus::RequestType::Embedding ? "embedding failed" : "failed after partial output"
+                }
+            );
+            return;
+        }
+        const bool embedding = (req.type == Chorus::RequestType::Embedding) != emit_wrong_kind_success;
+        const Chorus::ChorusSignal::Event success =
+            embedding ? Chorus::ChorusSignal::Event{Chorus::ChorusSignal::Embedding{embedding_values}}
+                      : Chorus::ChorusSignal::Event{Chorus::ChorusSignal::Completion{completion_usage}};
+        send(req.on_event, req.id, success);
+        if (emit_duplicate_success)
+            send(req.on_event, req.id, success);
+        if (emit_token_after_success)
+            send(req.on_event, req.id, Chorus::ChorusSignal::Token{Chorus::TokenChannel::Content, "late"});
+    }
+
     static void send(
         const std::function<void(Chorus::ChorusSignal&)>& callback,
         Chorus::RequestId id,

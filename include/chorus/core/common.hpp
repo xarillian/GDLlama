@@ -99,10 +99,31 @@ inline bool operator==(ChorusError value, const InitializationFailure& failure) 
     return failure == value;
 }
 
+/// Token counts for one completed generation.
+struct GenerationUsage {
+    // Tokens in the generation's prompt, special and reused tokens included.
+    int64_t prompt_tokens = 0;
+    // Leading prompt tokens reused from retained KV instead of being evaluated again.
+    int64_t cached_prompt_tokens = 0;
+    // Sampled tokens across both channels, including any end-of-generation or stop-marker token absent from the text.
+    int64_t generated_tokens = 0;
+};
+
 /*
- * An accepted request may emit any number of `ChorusSignal::Token` or
- * `ChorusSignal::Embedding` events, followed by exactly one terminal
- * `ChorusSignal::Stop` or `ChorusSignal::Error` event.
+ * Every accepted request emits exactly one terminal and nothing follows it.
+ *
+ * Generations emit zero or more `Chorus::ChorusSignal::Token` signals, then
+ * `Chorus::ChorusSignal::Completion` with usage. Embedding requests emit only
+ * `Chorus::ChorusSignal::Embedding` with their normalized vector. Failure or
+ * cancellation ends either kind with `Chorus::ChorusSignal::Error`, without
+ * usage or result; only generation tokens may precede it. A signal of the wrong
+ * request kind ends the request with `Chorus::ChorusError::Unknown` at the
+ * runtime boundary.
+ *
+ * Usage counts are nonnegative and `Chorus::GenerationUsage::cached_prompt_tokens`
+ * never exceeds `Chorus::GenerationUsage::prompt_tokens`. A generation capped at
+ * `Chorus::GenerationConfig::max_tokens == 0` completes without running the model
+ * and reports zero for every count, even with a nonempty prompt.
  */
 struct ChorusSignal {
     struct Token {
@@ -110,30 +131,33 @@ struct ChorusSignal {
         std::string text;
     };
 
+    struct Completion {
+        GenerationUsage usage;
+    };
+
     struct Embedding {
         std::vector<float> values;
     };
-
-    struct Stop {};
 
     struct Error {
         ChorusError code;
         std::string message;
     };
 
-    using Event = std::variant<Token, Embedding, Stop, Error>;
+    using Event = std::variant<Token, Completion, Embedding, Error>;
 
     ChorusSignal(RequestId id, Event event) : request_id(id), event(std::move(event)) {}
+
+    /// Whether this signal ends its request.
+    bool is_terminal() const;
 
     RequestId request_id;
     Event event;
 };
 
 /*
- * When `ChorusRequest::messages` is non-empty, the provider renders them
- * through a chat template and ignores `ChorusRequest::prompt`. Every accepted
- * request emits exactly one terminal `ChorusSignal::Stop` or
- * `ChorusSignal::Error`.
+ * When `Chorus::ChorusRequest::messages` is nonempty, the provider renders them
+ * through a chat template and ignores `Chorus::ChorusRequest::prompt`.
  */
 struct ChorusRequest {
     RequestId id;

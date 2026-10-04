@@ -91,8 +91,7 @@ void ChorusRuntime::PreparationState::publish_signal(
     if (control->terminal || signal.request_id != control->id)
         return;
     publish(signal);
-    if (std::holds_alternative<ChorusSignal::Stop>(signal.event) ||
-        std::holds_alternative<ChorusSignal::Error>(signal.event))
+    if (signal.is_terminal())
         control->terminal = true;
 }
 

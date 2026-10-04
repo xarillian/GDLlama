@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -16,11 +17,6 @@ using Chorus::RequestId;
 // Generous enough for a cold model on CPU; every wait is predicate-driven, so
 // a healthy engine never spends it.
 constexpr auto PATIENCE = std::chrono::seconds(20);
-
-bool is_terminal(const ChorusSignal& signal) {
-    return std::holds_alternative<ChorusSignal::Stop>(signal.event) ||
-           std::holds_alternative<ChorusSignal::Error>(signal.event);
-}
 
 /*
  * Thread-safe signal collector.
@@ -52,13 +48,13 @@ class SignalLog {
     size_t terminals_for(RequestId id) const {
         size_t count = 0;
         for (const auto& signal : snapshot())
-            count += static_cast<size_t>(signal.request_id == id && is_terminal(signal));
+            count += static_cast<size_t>(signal.request_id == id && signal.is_terminal());
         return count;
     }
 
     std::optional<ChorusSignal> terminal_for(RequestId id) const {
         for (const auto& signal : snapshot())
-            if (signal.request_id == id && is_terminal(signal))
+            if (signal.request_id == id && signal.is_terminal())
                 return signal;
         return std::nullopt;
     }
@@ -157,6 +153,7 @@ void case_submit_before_initialize_is_refused(const EngineUnderTest& subject) {
     engine->submit_request(request);
 
     // The refusal is synchronous: no wait, and none owed.
+    ASSERT_EQ(log.size(), size_t{1});
     ASSERT_EQ(log.terminals_for(1), size_t{1});
     const auto terminal = log.terminal_for(1);
     ASSERT_TRUE(terminal.has_value());
@@ -177,6 +174,7 @@ void case_submit_after_shutdown_is_refused(const EngineUnderTest& subject) {
     request.on_event = [&log](ChorusSignal& signal) { log.record(signal); };
     engine->submit_request(request);
 
+    ASSERT_EQ(log.size(), size_t{1});
     ASSERT_EQ(log.terminals_for(2), size_t{1});
     const auto terminal = log.terminal_for(2);
     ASSERT_TRUE(terminal.has_value());
@@ -186,7 +184,7 @@ void case_submit_after_shutdown_is_refused(const EngineUnderTest& subject) {
         ASSERT_TRUE(error->code == Chorus::ChorusError::EngineNotReady);
 }
 
-/// A request that runs to completion ends on exactly one Stop.
+/// A completed generation ends on exactly one `Chorus::ChorusSignal::Completion`.
 void case_completed_request_reaches_one_terminal(const EngineUnderTest& subject) {
     auto engine = start_engine(subject);
     ASSERT_TRUE(engine != nullptr);
@@ -197,7 +195,7 @@ void case_completed_request_reaches_one_terminal(const EngineUnderTest& subject)
     engine->submit_request(request);
 
     const bool finished = log.wait_until([](const std::vector<ChorusSignal>& signals) {
-        return !signals.empty() && is_terminal(signals.back());
+        return !signals.empty() && signals.back().is_terminal();
     });
     engine->shutdown();
 
@@ -205,7 +203,72 @@ void case_completed_request_reaches_one_terminal(const EngineUnderTest& subject)
     ASSERT_EQ(log.terminals_for(3), size_t{1});
     const auto terminal = log.terminal_for(3);
     ASSERT_TRUE(terminal.has_value());
-    ASSERT_TRUE(std::holds_alternative<ChorusSignal::Stop>(terminal->event));
+    ASSERT_TRUE(std::holds_alternative<ChorusSignal::Completion>(terminal->event));
+    const auto& usage = std::get<ChorusSignal::Completion>(terminal->event).usage;
+    EXPECT_GE(usage.prompt_tokens, 0);
+    EXPECT_GE(usage.cached_prompt_tokens, 0);
+    EXPECT_LE(usage.cached_prompt_tokens, usage.prompt_tokens);
+    EXPECT_GT(usage.generated_tokens, 0);
+    const auto signals = log.snapshot();
+    ASSERT_TRUE(std::holds_alternative<ChorusSignal::Completion>(signals.back().event));
+    for (size_t index = 0; index + 1 < signals.size(); ++index)
+        EXPECT_TRUE(std::holds_alternative<ChorusSignal::Token>(signals[index].event));
+}
+
+void case_zero_cap_completes_with_zero_usage_and_no_tokens(const EngineUnderTest& subject) {
+    SignalLog log;
+    auto engine = start_engine(subject);
+    ASSERT_NE(engine, nullptr);
+    auto request = short_request(subject, 8);
+    request.gen_config.max_tokens = 0;
+    request.on_event = [&log](ChorusSignal& signal) { log.record(signal); };
+    engine->submit_request(request);
+    const bool finished =
+        log.wait_until([](const auto& signals) { return !signals.empty() && signals.back().is_terminal(); });
+    engine->shutdown();
+
+    ASSERT_TRUE(finished);
+    const auto signals = log.snapshot();
+    ASSERT_EQ(signals.size(), size_t{1});
+    ASSERT_EQ(signals.front().request_id, request.id);
+    const auto* completion = std::get_if<ChorusSignal::Completion>(&signals.front().event);
+    ASSERT_NE(completion, nullptr);
+    EXPECT_EQ(completion->usage.prompt_tokens, 0);
+    EXPECT_EQ(completion->usage.cached_prompt_tokens, 0);
+    EXPECT_EQ(completion->usage.generated_tokens, 0);
+}
+
+void case_embedding_is_one_vector_terminal(const EngineUnderTest& subject) {
+    SignalLog log;
+    auto engine = start_engine(subject);
+    ASSERT_NE(engine, nullptr);
+    if (!engine->capabilities().embeddings)
+        GTEST_SKIP() << subject.label << " loaded without embedding support";
+
+    ChorusRequest request;
+    request.id = 9;
+    request.type = Chorus::RequestType::Embedding;
+    request.prompt = "A cat sleeps on the warm mat.";
+    request.on_event = [&log](ChorusSignal& signal) { log.record(signal); };
+    ASSERT_FALSE(engine->validate_request(request));
+    engine->submit_request(request);
+    const bool finished =
+        log.wait_until([](const auto& signals) { return !signals.empty() && signals.back().is_terminal(); });
+    engine->shutdown();
+
+    ASSERT_TRUE(finished);
+    const auto signals = log.snapshot();
+    ASSERT_EQ(signals.size(), size_t{1});
+    EXPECT_EQ(signals.front().request_id, request.id);
+    const auto* embedding = std::get_if<ChorusSignal::Embedding>(&signals.front().event);
+    ASSERT_NE(embedding, nullptr);
+    ASSERT_FALSE(embedding->values.empty());
+    double norm = 0.0;
+    for (float value : embedding->values) {
+        ASSERT_TRUE(std::isfinite(value));
+        norm += static_cast<double>(value) * value;
+    }
+    EXPECT_NEAR(norm, 1.0, 1e-5);
 }
 
 /*
@@ -247,7 +310,7 @@ void case_cancel_is_idempotent_and_terminal_once(const EngineUnderTest& subject)
     gate.open();
 
     const bool finished = log.wait_until([](const std::vector<ChorusSignal>& signals) {
-        return !signals.empty() && is_terminal(signals.back());
+        return !signals.empty() && signals.back().is_terminal();
     });
     engine->shutdown();
 
@@ -260,6 +323,10 @@ void case_cancel_is_idempotent_and_terminal_once(const EngineUnderTest& subject)
     if (error)
         ASSERT_TRUE(error->code == Chorus::ChorusError::Cancelled);
     ASSERT_EQ(log.terminals_for(9999), size_t{0}); // the stranger got nothing
+    const auto signals = log.snapshot();
+    ASSERT_TRUE(std::holds_alternative<ChorusSignal::Error>(signals.back().event));
+    for (size_t index = 0; index + 1 < signals.size(); ++index)
+        EXPECT_TRUE(std::holds_alternative<ChorusSignal::Token>(signals[index].event));
 }
 
 /*
@@ -357,7 +424,7 @@ void case_shutdown_is_idempotent(const EngineUnderTest& subject) {
     request.on_event = [&log](ChorusSignal& signal) { log.record(signal); };
     engine->submit_request(request);
     ASSERT_TRUE(log.wait_until([](const std::vector<ChorusSignal>& signals) {
-        return !signals.empty() && is_terminal(signals.back());
+        return !signals.empty() && signals.back().is_terminal();
     }));
 
     engine->shutdown();
@@ -402,6 +469,14 @@ TEST_P(EngineContractTest, contract_submit_after_shutdown_is_refused) {
 
 TEST_P(EngineContractTest, contract_completed_request_reaches_one_terminal) {
     case_completed_request_reaches_one_terminal(GetParam());
+}
+
+TEST_P(EngineContractTest, contract_zero_cap_completes_with_zero_usage_and_no_tokens) {
+    case_zero_cap_completes_with_zero_usage_and_no_tokens(GetParam());
+}
+
+TEST_P(EngineContractTest, contract_embedding_is_one_vector_terminal) {
+    case_embedding_is_one_vector_terminal(GetParam());
 }
 
 TEST_P(EngineContractTest, contract_cancel_is_idempotent_and_terminal_once) {

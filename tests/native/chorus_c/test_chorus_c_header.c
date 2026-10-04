@@ -10,7 +10,7 @@ int chorus_c_header_smoke(void) {
     chorus_load_id (*active_load)(const chorus_runtime*) = chorus_active_load_id;
     chorus_error (*render)(chorus_runtime*, const chorus_request*, chorus_submit_result*) = chorus_render_prompt;
 
-    if (chorus_abi_version() != 9 || strcmp(chorus_error_name(CHORUS_ERR_SESSION_BUSY), "SessionBusy") != 0)
+    if (chorus_abi_version() != 10 || strcmp(chorus_error_name(CHORUS_ERR_SESSION_BUSY), "SessionBusy") != 0)
         return 1;
     if (chorus_request_set_prompt(NULL, "prompt") != CHORUS_ERR_INVALID_REQUEST)
         return 2;

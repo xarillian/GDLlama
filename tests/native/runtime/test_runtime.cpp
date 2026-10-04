@@ -203,6 +203,37 @@ TEST(Runtime, Runtime_non_streaming_yields_only_Complete) {
     ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
 }
 
+TEST(Runtime, Runtime_completion_preserves_provider_usage_including_regeneration) {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
+    auto* observed = engine.get();
+    engine->completion_usage = {17, 5, 9};
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
+    auto request = make_request("hi");
+    request.session_id = "usage";
+    const auto submitted = runtime.submit(request);
+    ASSERT_TRUE(submitted.ok());
+    const auto events = drain_runtime_events(runtime);
+    ASSERT_EQ(events.size(), size_t{1});
+    ASSERT_EQ(events.front().kind, Chorus::RuntimeEvent::Kind::Complete);
+    EXPECT_EQ(events.front().usage.prompt_tokens, 17);
+    EXPECT_EQ(events.front().usage.cached_prompt_tokens, 5);
+    EXPECT_EQ(events.front().usage.generated_tokens, 9);
+    EXPECT_EQ(events.front().message_id, submitted.response_message_id);
+
+    observed->completion_usage = {23, 11, 4};
+    request.prompt.clear();
+    const auto regenerated = runtime.regenerate(request);
+    ASSERT_TRUE(regenerated.ok());
+    const auto regenerated_events = drain_runtime_events(runtime);
+    ASSERT_EQ(regenerated_events.size(), size_t{1});
+    ASSERT_EQ(regenerated_events.front().kind, Chorus::RuntimeEvent::Kind::Complete);
+    EXPECT_EQ(regenerated_events.front().usage.prompt_tokens, 23);
+    EXPECT_EQ(regenerated_events.front().usage.cached_prompt_tokens, 11);
+    EXPECT_EQ(regenerated_events.front().usage.generated_tokens, 4);
+    EXPECT_EQ(regenerated_events.front().message_id, submitted.response_message_id);
+}
+
 TEST(Runtime, Runtime_streaming_yields_tokens_then_Complete) {
     Chorus::ChorusRuntime runtime;
     load_runtime(runtime, std::make_unique<SyncMockEngine>(), make_config());
@@ -256,7 +287,7 @@ TEST(Runtime, Runtime_inline_rejection_delivered_on_next_poll) {
 TEST(Runtime, Runtime_error_after_tokens_discards_partial) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
-    engine->emit_error_instead_of_stop = true; // "Hello ", "world", then Error
+    engine->emit_error_instead_of_success = true; // "Hello ", "world", then Error
     load_runtime(runtime, std::move(engine), make_config());
 
     auto result = runtime.submit(make_request("hi", /*stream=*/false));
@@ -278,22 +309,26 @@ struct BrokenEventCase {
     BrokenEventDefect defect;
 };
 
+static void inject_defect(SyncMockEngine& engine, BrokenEventDefect defect) {
+    switch (defect) {
+    case BrokenEventDefect::DuplicateTerminal:
+        engine.emit_duplicate_success = true;
+        break;
+    case BrokenEventDefect::TokenAfterTerminal:
+        engine.emit_token_after_success = true;
+        break;
+    case BrokenEventDefect::UnknownRequestId:
+        engine.rogue_extra_id = 999999;
+        break;
+    }
+}
+
 class RuntimeBrokenEventDefense : public ::testing::TestWithParam<BrokenEventCase> {};
 
 TEST_P(RuntimeBrokenEventDefense, Surfaces_only_the_accepted_request_stream_and_terminal) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
-    switch (GetParam().defect) {
-    case BrokenEventDefect::DuplicateTerminal:
-        engine->emit_duplicate_stop = true;
-        break;
-    case BrokenEventDefect::TokenAfterTerminal:
-        engine->emit_token_after_stop = true;
-        break;
-    case BrokenEventDefect::UnknownRequestId:
-        engine->rogue_extra_id = 999999;
-        break;
-    }
+    inject_defect(*engine, GetParam().defect);
     const auto load_error = load_runtime(runtime, std::move(engine), make_config());
     ASSERT_TRUE(load_error.ok());
 
@@ -326,10 +361,39 @@ INSTANTIATE_TEST_SUITE_P(
     [](const ::testing::TestParamInfo<BrokenEventCase>& info) { return info.param.name; }
 );
 
-TEST(Runtime, Runtime_embedding_waits_for_Stop_then_emits_its_vector) {
+class RuntimeBrokenEmbeddingDefense : public ::testing::TestWithParam<BrokenEventCase> {};
+
+TEST_P(RuntimeBrokenEmbeddingDefense, Surfaces_only_the_accepted_vector_terminal) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
-    engine->emit_embedding_event = true;
+    inject_defect(*engine, GetParam().defect);
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
+
+    const auto result = runtime.submit(make_embedding_request("hi"));
+    ASSERT_TRUE(result.ok());
+    const auto events = drain_runtime_events(runtime);
+
+    ASSERT_EQ(events.size(), size_t{1});
+    ASSERT_EQ(events[0].request_id, result.request_id);
+    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Embedding);
+    ASSERT_EQ(events[0].embedding, std::vector<float>({1.0F, 2.0F}));
+    ASSERT_FALSE(runtime.is_request_active(result.request_id));
+    ASSERT_TRUE(runtime.poll().empty());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ProviderDefects,
+    RuntimeBrokenEmbeddingDefense,
+    ::testing::Values(
+        BrokenEventCase{"DuplicateTerminal", BrokenEventDefect::DuplicateTerminal},
+        BrokenEventCase{"TokenAfterTerminal", BrokenEventDefect::TokenAfterTerminal}
+    ),
+    [](const ::testing::TestParamInfo<BrokenEventCase>& info) { return info.param.name; }
+);
+
+TEST(Runtime, Runtime_embedding_delivers_its_vector_without_another_signal) {
+    Chorus::ChorusRuntime runtime;
+    auto engine = std::make_unique<SyncMockEngine>();
     engine->embedding_values = {3.0F, 4.0F};
     auto load_err = load_runtime(runtime, std::move(engine), make_config());
     ASSERT_TRUE(load_err.ok());
@@ -344,43 +408,60 @@ TEST(Runtime, Runtime_embedding_waits_for_Stop_then_emits_its_vector) {
     ASSERT_EQ(events[0].embedding, std::vector<float>({3.0F, 4.0F}));
     ASSERT_TRUE(events[0].text.empty());
     ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
+    EXPECT_FALSE(runtime.is_request_active(result.request_id));
+    EXPECT_TRUE(runtime.poll().empty());
 }
 
-TEST(Runtime, Runtime_embedding_error_discards_a_pending_vector) {
+static void expect_embedding_ends_with_Unknown(std::unique_ptr<SyncMockEngine> engine) {
     Chorus::ChorusRuntime runtime;
-    auto engine = std::make_unique<SyncMockEngine>();
-    engine->emit_embedding_event = true;
-    engine->emit_error_instead_of_stop = true;
-    auto load_err = load_runtime(runtime, std::move(engine), make_config());
-    ASSERT_TRUE(load_err.ok());
+    ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
+    auto request = make_embedding_request("hi");
+    request.session_id = "embedding";
 
-    const auto result = runtime.submit(make_embedding_request("hi"));
-    ASSERT_TRUE(result.ok());
+    const auto submitted = runtime.submit(request);
+    ASSERT_TRUE(submitted.ok());
     const auto events = drain_runtime_events(runtime);
 
     ASSERT_EQ(events.size(), size_t{1});
-    ASSERT_TRUE(events[0].kind == Chorus::RuntimeEvent::Kind::Error);
-    ASSERT_TRUE(events[0].embedding.empty());
-    ASSERT_TRUE(events[0].error == Chorus::ChorusError::Decode);
-    ASSERT_EQ(terminal_count(events, result.request_id), size_t{1});
+    EXPECT_EQ(events.front().request_id, submitted.request_id);
+    EXPECT_EQ(events.front().kind, Chorus::RuntimeEvent::Kind::Error);
+    EXPECT_EQ(events.front().error, Chorus::ChorusError::Unknown);
+    EXPECT_TRUE(events.front().embedding.empty());
+    EXPECT_FALSE(runtime.is_request_active(submitted.request_id));
+    EXPECT_FALSE(runtime.active_request_for_session("embedding"));
+    EXPECT_TRUE(runtime.list_conversations().empty());
+    EXPECT_TRUE(runtime.poll().empty());
+}
+
+TEST(Runtime, Runtime_token_on_an_embedding_ends_with_Unknown) {
+    auto engine = std::make_unique<SyncMockEngine>();
+    engine->emit_token_on_embedding = true;
+    expect_embedding_ends_with_Unknown(std::move(engine));
+}
+
+TEST(Runtime, Runtime_completion_on_an_embedding_ends_with_Unknown) {
+    auto engine = std::make_unique<SyncMockEngine>();
+    engine->emit_wrong_kind_success = true;
+    expect_embedding_ends_with_Unknown(std::move(engine));
 }
 
 TEST(Runtime, Runtime_embedding_does_not_create_conversation_history) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
-    engine->emit_embedding_event = true;
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
 
     const auto result = runtime.submit(make_embedding_request("hi"));
     ASSERT_TRUE(result.ok());
-    (void)runtime.poll();
+    const auto events = drain_runtime_events(runtime);
+    ASSERT_EQ(events.size(), size_t{1});
+    ASSERT_EQ(events.front().kind, Chorus::RuntimeEvent::Kind::Embedding);
     ASSERT_TRUE(runtime.list_conversations().empty());
 }
 
 TEST(Runtime, Runtime_mismatched_embedding_rolls_back_the_generation_turn) {
     Chorus::ChorusRuntime runtime;
     auto engine = std::make_unique<SyncMockEngine>();
-    engine->emit_embedding_event = true;
+    engine->emit_wrong_kind_success = true;
     ASSERT_TRUE(load_runtime(runtime, std::move(engine), make_config()).ok());
 
     auto request = make_request("discard this user turn");

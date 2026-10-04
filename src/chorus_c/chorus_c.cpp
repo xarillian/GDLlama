@@ -150,7 +150,7 @@ using namespace chorus_c;
 
 namespace {
 
-constexpr uint32_t kAbiVersion = 9;
+constexpr uint32_t kAbiVersion = 10;
 // Keeps the waiting thread's deadline arithmetic far from clock overflow.
 constexpr uint64_t kLongestWaitMicroseconds = 86'400'000'000;
 
@@ -548,6 +548,9 @@ const chorus_event* chorus_poll(chorus_runtime* rt, size_t* out_count) {
             event.error = to_c_error(source.error);
             event.reasoning = source.kind == Chorus::RuntimeEvent::Kind::Complete ? source.reasoning.c_str() : nullptr;
             event.message_id = source.message_id.value_or(-1);
+            event.usage = {
+                source.usage.prompt_tokens, source.usage.cached_prompt_tokens, source.usage.generated_tokens
+            };
             event.omitted_message_ids =
                 source.omitted_message_ids.empty() ? nullptr : source.omitted_message_ids.data();
             event.omitted_message_id_count = source.omitted_message_ids.size();

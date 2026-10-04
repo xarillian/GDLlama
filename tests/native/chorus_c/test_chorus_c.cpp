@@ -65,6 +65,7 @@ struct EventSnapshot {
     chorus_event_kind kind;
     chorus_error error;
     std::string text;
+    chorus_generation_usage usage;
 };
 
 std::vector<EventSnapshot> wait_events(chorus_runtime* runtime, size_t expected = 1) {
@@ -74,16 +75,16 @@ std::vector<EventSnapshot> wait_events(chorus_runtime* runtime, size_t expected 
         size_t count = 0;
         const auto* events = chorus_poll(runtime, &count);
         for (size_t i = 0; i < count; ++i)
-            result.push_back({events[i].request_id, events[i].kind, events[i].error, events[i].text});
+            result.push_back({events[i].request_id, events[i].kind, events[i].error, events[i].text, events[i].usage});
         std::this_thread::yield();
     }
     EXPECT_EQ(result.size(), expected);
     return result;
 }
 
-TEST(ChorusC, Header_is_pure_c_and_uses_abi_nine) {
+TEST(ChorusC, Header_is_pure_c_and_uses_abi_ten) {
     ASSERT_EQ(chorus_c_header_smoke(), 0);
-    ASSERT_EQ(chorus_abi_version(), uint32_t{9});
+    ASSERT_EQ(chorus_abi_version(), uint32_t{10});
 }
 
 TEST(ChorusC, Builder_local_clears_restore_fresh_echo_request_behavior) {
@@ -517,6 +518,22 @@ TEST(ChorusC, Sessioned_generation_reports_reserved_and_completion_message_ids) 
     ASSERT_EQ(count, size_t{1});
     ASSERT_EQ(events[0].kind, CHORUS_EVENT_COMPLETE);
     ASSERT_EQ(events[0].message_id, submission.response_message_id);
+}
+
+TEST(ChorusC, Completion_reports_the_providers_token_usage) {
+    RuntimePtr runtime = loaded_runtime();
+    RequestPtr request = request_with_prompt("one two three");
+    ASSERT_EQ(chorus_request_set_max_tokens(request.get(), 1), CHORUS_OK);
+    chorus_submit_result submission{};
+    ASSERT_EQ(chorus_generate(runtime.get(), request.get(), &submission), CHORUS_OK);
+    ASSERT_EQ(submission.error, CHORUS_OK);
+
+    const auto events = wait_events(runtime.get());
+    ASSERT_EQ(events.size(), size_t{1});
+    ASSERT_EQ(events[0].kind, CHORUS_EVENT_COMPLETE);
+    EXPECT_EQ(events[0].usage.prompt_tokens, 3);
+    EXPECT_EQ(events[0].usage.cached_prompt_tokens, 0);
+    EXPECT_EQ(events[0].usage.generated_tokens, 1);
 }
 
 TEST(ChorusC, Sessioned_embedding_reports_session_and_occupies_its_lane) {
