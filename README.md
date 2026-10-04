@@ -169,7 +169,7 @@ func _ready() -> void:
     chorus.model_loaded.connect(func(_id, _model):
         chorus.generate(ChorusRequest.chat(&"guard", "Greet a traveler.")))
 
-    chorus.generation_complete.connect(func(_id, _session, _message, content, _reasoning):
+    chorus.generation_complete.connect(func(_id, _session, _message, content, _reasoning, _usage):
         print(content))
 
     chorus.load_model()

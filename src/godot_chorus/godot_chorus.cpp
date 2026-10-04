@@ -288,7 +288,10 @@ void GodotChorus::_process(double /*delta*/) {
                 session,
                 event.message_id.value_or(-1),
                 to_godot_string(event.text),
-                to_godot_string(event.reasoning)
+                to_godot_string(event.reasoning),
+                Ref<ChorusGenerationUsage>(memnew(ChorusGenerationUsage(
+                    event.usage.prompt_tokens, event.usage.cached_prompt_tokens, event.usage.generated_tokens
+                )))
             );
             break;
         case Chorus::RuntimeEvent::Kind::Embedding: {
@@ -813,7 +816,8 @@ void GodotChorus::_bind_methods() {
         PropertyInfo(Variant::STRING_NAME, "session"),
         PropertyInfo(Variant::INT, "message_id"),
         PropertyInfo(Variant::STRING, "content"),
-        PropertyInfo(Variant::STRING, "reasoning")
+        PropertyInfo(Variant::STRING, "reasoning"),
+        PropertyInfo(Variant::OBJECT, "usage", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT, "ChorusGenerationUsage")
     ));
     ADD_SIGNAL(MethodInfo(
         "embedding_complete",

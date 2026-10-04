@@ -559,3 +559,36 @@ void ChorusResult::_bind_methods() {
     );
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ok", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY), "", "get_ok");
 }
+ChorusGenerationUsage::ChorusGenerationUsage(
+    int64_t prompt_tokens, int64_t cached_prompt_tokens, int64_t generated_tokens
+)
+    : _prompt_tokens(prompt_tokens), _cached_prompt_tokens(cached_prompt_tokens), _generated_tokens(generated_tokens) {}
+int64_t ChorusGenerationUsage::get_prompt_tokens() const {
+    return _prompt_tokens;
+}
+int64_t ChorusGenerationUsage::get_cached_prompt_tokens() const {
+    return _cached_prompt_tokens;
+}
+int64_t ChorusGenerationUsage::get_generated_tokens() const {
+    return _generated_tokens;
+}
+void ChorusGenerationUsage::_bind_methods() {
+    ClassDB::bind_method(D_METHOD("get_prompt_tokens"), &ChorusGenerationUsage::get_prompt_tokens);
+    ClassDB::bind_method(D_METHOD("get_cached_prompt_tokens"), &ChorusGenerationUsage::get_cached_prompt_tokens);
+    ClassDB::bind_method(D_METHOD("get_generated_tokens"), &ChorusGenerationUsage::get_generated_tokens);
+    ADD_PROPERTY(
+        PropertyInfo(Variant::INT, "prompt_tokens", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY),
+        "",
+        "get_prompt_tokens"
+    );
+    ADD_PROPERTY(
+        PropertyInfo(Variant::INT, "cached_prompt_tokens", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY),
+        "",
+        "get_cached_prompt_tokens"
+    );
+    ADD_PROPERTY(
+        PropertyInfo(Variant::INT, "generated_tokens", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_READ_ONLY),
+        "",
+        "get_generated_tokens"
+    );
+}

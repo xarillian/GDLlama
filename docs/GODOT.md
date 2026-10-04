@@ -124,7 +124,7 @@ func _on_model_load_failed(id: int, _model_id: String, code: int, message: Strin
 
 
 func _on_generation_complete(id: int, _session: StringName, _message_id: int,
-        content: String, _reasoning: String) -> void:
+        content: String, _reasoning: String, _usage: ChorusGenerationUsage) -> void:
     if id != request_id:
         return
     request_id = -1

@@ -55,7 +55,7 @@ static func run_tests(parent: Node) -> void:
 	parent.add_child(chorus)
 	await LoadWaiter.load(chorus)
 	var terminal_ids: Array[int] = []
-	chorus.generation_complete.connect(func(id, _session, _message_id, _text, _reasoning): terminal_ids.append(id))
+	chorus.generation_complete.connect(func(id, _session, _message_id, _text, _reasoning, _usage): terminal_ids.append(id))
 	chorus.generation_error.connect(func(id, _session, _error, _message): terminal_ids.append(id))
 
 	await TestReport.run("option conversion rejects dictionary self-cycles in requests and defaults", func():

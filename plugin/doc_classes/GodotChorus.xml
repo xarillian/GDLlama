@@ -26,7 +26,7 @@ func _on_model_loaded(_load_id, _model_id):
 func _on_model_load_failed(_load_id, _model_id, _error, message):
     push_error(message)
 
-func _on_generation_complete(_request_id, _session, _message_id, content, _reasoning):
+func _on_generation_complete(_request_id, _session, _message_id, content, _reasoning, _usage):
     print(content)
 
 func _on_generation_error(_request_id, _session, _error, message):
@@ -210,7 +210,8 @@ func _on_generation_error(_request_id, _session, _error, message):
 			<param index="2" name="message_id" type="int" />
 			<param index="3" name="content" type="String" />
 			<param index="4" name="reasoning" type="String" />
-			<description>Terminal generation success with full visible content and exposed reasoning. The message ID is the durable assistant reply ID for a sessioned request, or [code]-1[/code] for stateless work. Stored history contains visible content, not reasoning.</description>
+			<param index="5" name="usage" type="ChorusGenerationUsage" />
+			<description>Terminal generation success with full visible content, exposed reasoning and the generation's token counts. The message ID is the durable assistant reply ID for a sessioned request, or [code]-1[/code] for stateless work. Stored history contains visible content, not reasoning.</description>
 		</signal>
 		<signal name="embedding_complete">
 			<param index="0" name="request_id" type="int" />

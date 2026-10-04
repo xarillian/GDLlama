@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="ChorusGenerationUsage" inherits="RefCounted" api_type="extension">
+	<brief_description>Token counts for one completed generation.</brief_description>
+	<description>Read-only token counts delivered with [signal GodotChorus.generation_complete]. They come from the provider's own bookkeeping, not from the requested limits or the returned text. A request capped at zero tokens runs no model and reports zero for every count. The Echo provider counts the space-delimited chunks of the text it echoes instead of model tokens.</description>
+	<members>
+		<member name="cached_prompt_tokens" type="int" setter="" getter="get_cached_prompt_tokens">Leading prompt tokens reused from the provider's retained cache instead of being evaluated again. Never exceeds [member prompt_tokens].</member>
+		<member name="generated_tokens" type="int" setter="" getter="get_generated_tokens">Tokens the model sampled across visible content and reasoning, including end-of-generation and stop-marker tokens that never appear in the text.</member>
+		<member name="prompt_tokens" type="int" setter="" getter="get_prompt_tokens">Tokens in the generation's prompt, including special tokens and tokens reused from the cache.</member>
+	</members>
+</class>
