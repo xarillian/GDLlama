@@ -4,9 +4,7 @@
 
 **Chorus** is a high-performance embeddable LLM runtime for native applications, simulations, and games.
 
-Chorus is built for interactive workloads where one model serves many independently scheduled agents. On an RTX 4070, the benchmark configuration below produces 114 tok/s for one active response and 1,421 aggregate tok/s across 40 concurrent responses, using 5.3 GiB of VRAM at 40-way concurrency.
-
-It runs local inference directly inside your process with continuous batching, priority scheduling, persistent conversation state, and a native C++ API and stable C ABI. No CUDA, Python runtime, cloud service, or separate inference server is required.
+Chorus is built for interactive workloads where one model serves many independently scheduled agents. It runs local inference directly inside your process with continuous batching, priority scheduling, persistent conversation state, and a native C++ API and stable C ABI. No CUDA, Python runtime, cloud service, or separate inference server is required.
 
 The current local provider is built on `llama.cpp`, with Vulkan on Linux and Windows and Metal on Apple Silicon. Chorus owns the application-level scheduler, request preparation, sampling, conversation lifecycle, and batch layout around that provider. It is embeddable by default, but its C ABI can also be hosted out-of-process when crash isolation or fault containment matters. Godot 4.4+ is the first supported engine integration.
 
